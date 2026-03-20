@@ -74,9 +74,8 @@ def main():
         content = generate_post(gemini_api_key)
         print(f"\nGenerated text ({len(content)} chars):\n---\n{content}\n---\n")
         
-        # Uncomment this to actually post when we run it automatically
-        # print("Posting to Bluesky...")
-        # post_to_bluesky(bsky_username, bsky_password, content)
+        print("Posting to Bluesky...")
+        post_to_bluesky(bsky_username, bsky_password, content)
     except Exception as e:
         print(f"Error occurred: {e}")
 
