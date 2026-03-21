@@ -21,6 +21,7 @@ def generate_post(api_key: str) -> tuple[str, str]:
     
     today = datetime.now()
     date_str = today.strftime("%B %d") # e.g., March 20
+    weekday = today.weekday() # 0 = Monday, 6 = Sunday
     
     language = random.choice(["English", "Dutch"])
     
@@ -32,11 +33,22 @@ def generate_post(api_key: str) -> tuple[str, str]:
     Replace YYYY with the actual year in both cases.
     """
     
-    prompt_tip = """
-    Share a "Nice to know" or positive tip related to IT, business, productivity, or just a good life lesson.
-    """
+    themes = {
+        0: "Motivational Monday: Share a brief, positive piece of IT/business advice or a good life lesson to start the week strong.",
+        1: "Tool Tuesday: Highlight a fantastic, highly useful open-source tool or software.",
+        2: "Positive Wednesday: Share a genuinely uplifting piece of historical or recent technology/science news.",
+        3: prompt_on_that_day,  # Throwback Thursday
+        4: "Failure Friday: Briefly discuss a famous tech or business failure, and the positive lesson learned from it.",
+        5: "Shoutout Saturday: Write a positive shoutout praising the creators or maintainers of a well-known open-source project.",
+        6: "Sunday Reset: Share a tip about work/life balance, disconnecting, or personal hobbies for busy IT professionals."
+    }
     
-    chosen_topic = random.choice([prompt_on_that_day, prompt_on_that_day, prompt_tip]) # Higher chance for historical fact
+    chosen_topic = themes.get(weekday)
+    
+    # Idea 1: Interactive Question (50% chance)
+    interactive_prompt = ""
+    if random.random() < 0.5:
+        interactive_prompt = "\n    - End the post with a short, engaging question related to the topic to encourage readers to reply and share their experiences."
     
     prompt = f"""
     You are writing a Bluesky post for the account 'askfred.be'.
@@ -49,7 +61,7 @@ def generate_post(api_key: str) -> tuple[str, str]:
     - Keep it professional, positive, interesting, and helpful.
     - It should make the reader feel good.
     - Mimic the following personal writing style and tone:
-    {STYLE_GUIDELINES}
+    {STYLE_GUIDELINES}{interactive_prompt}
     
     Write the exact final text for the post. Do not add any internal thoughts or surrounding quotes.
     The post must be strictly under 300 characters.
