@@ -5,8 +5,10 @@ This is an automated Python script that generates and posts daily content to Blu
 ## Features
 
 - **Automated Content Generation**: Uses Google's Gemini (gemini-2.5-flash) to write engaging daily posts.
+- **Daily Themed Schedule**: Automatically selects a topic based on the day of the week (Motivational Monday, Tool Tuesday, Positive Wednesday, Throwback Thursday, Failure Friday, Shoutout Saturday, and Sunday Reset).
+- **Interactive Prompts**: 50% chance to append a conversation-starting question to posts to boost engagement.
 - **Bilingual Delivery**: Posts are randomly generated in either **English** or **Dutch** (50/50 chance).
-- **AI Image Attachments**: Approximately 20% of the time, the script will automatically draft an image prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image to attach to the post.
+- **AI Image Attachments**: Approximately 20% of the time, the script will draft a prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image attachment.
 - **Fully Automated**: Runs daily via a GitHub Actions scheduled workflow at 08:00 UTC (09:00 CET / 10:00 CEST).
 
 ## Prerequisites
