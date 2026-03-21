@@ -1,3 +1,5 @@
 atproto
 google-generativeai
 python-dotenv
+openai
+requests
