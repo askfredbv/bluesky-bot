@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 from datetime import datetime
 import google.generativeai as genai
@@ -7,6 +8,9 @@ from dotenv import load_dotenv
 import requests
 
 load_dotenv()
+
+MAX_POST_LENGTH = 300
+MAX_GENERATION_RETRIES = 3
 
 STYLE_GUIDELINES = """
 Tone: Conversational, down-to-earth, slightly humorous, and highly practical.
@@ -64,11 +68,18 @@ def generate_post(api_key: str) -> tuple[str, str]:
     {STYLE_GUIDELINES}{interactive_prompt}
     
     Write the exact final text for the post. Do not add any internal thoughts or surrounding quotes.
-    The post must be strictly under 300 characters.
+    The post must be strictly under {MAX_POST_LENGTH} characters.
     """
     
-    response = model.generate_content(prompt)
-    return response.text.strip(), chosen_topic
+    # Retry if Gemini generates text that exceeds the character limit
+    for attempt in range(1, MAX_GENERATION_RETRIES + 1):
+        response = model.generate_content(prompt)
+        content = response.text.strip()
+        if len(content) <= MAX_POST_LENGTH:
+            return content, chosen_topic
+        print(f"Attempt {attempt}/{MAX_GENERATION_RETRIES}: Generated text is {len(content)} chars (limit {MAX_POST_LENGTH}). Retrying...")
+    
+    raise ValueError(f"Failed to generate a post under {MAX_POST_LENGTH} characters after {MAX_GENERATION_RETRIES} attempts. Last attempt was {len(content)} chars.")
 
 def generate_image(openai_api_key: str, image_prompt: str) -> bytes:
     """Generates an image using OpenAI DALL-E 3 and returns the image bytes."""
@@ -105,7 +116,7 @@ def main():
     if not all([gemini_api_key, bsky_username, bsky_password]):
         print("Error: Missing required environment variables (.env file).")
         print("Please ensure GEMINI_API_KEY and BLUESKY_PASSWORD are set.")
-        return
+        sys.exit(1)
 
     print("Generating post content...")
     try:
@@ -129,6 +140,8 @@ def main():
         post_to_bluesky(bsky_username, bsky_password, content, image_data)
     except Exception as e:
         print(f"Error occurred: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
+
