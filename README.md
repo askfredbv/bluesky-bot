@@ -9,6 +9,9 @@ This is an automated Python script that generates and posts daily content to Blu
 - **Interactive Prompts**: 50% chance to append a conversation-starting question to posts to boost engagement.
 - **Bilingual Delivery**: Posts are randomly generated in either **English** or **Dutch** (50/50 chance).
 - **AI Image Attachments**: Approximately 20% of the time, the script will draft a prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image attachment.
+- **Duplicate Post Guard**: Checks the Bluesky feed before posting and skips if a post was already made today (UTC).
+- **Content Repetition Prevention**: Feeds the last 7 posts into the AI prompt to avoid repeating similar topics or phrasing.
+- **Robust Error Handling**: Retries content generation if it exceeds the character limit, and exits with a non-zero code on failure so GitHub Actions properly reports errors.
 - **Fully Automated**: Runs daily via a GitHub Actions scheduled workflow at 08:00 UTC (09:00 CET / 10:00 CEST).
 
 ## Prerequisites
