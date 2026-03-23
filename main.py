@@ -1,7 +1,7 @@
 import os
 import sys
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 import google.generativeai as genai
 from atproto import Client
 from dotenv import load_dotenv
@@ -11,6 +11,7 @@ load_dotenv()
 
 MAX_POST_LENGTH = 300
 MAX_GENERATION_RETRIES = 3
+RECENT_POSTS_LIMIT = 7
 
 STYLE_GUIDELINES = """
 Tone: Conversational, down-to-earth, slightly humorous, and highly practical.
@@ -18,7 +19,27 @@ Values: Emphasizes work/life balance, continuous learning, working smart/efficie
 Voice: Human-centric, relatable, engaging, direct, and positive. Avoids overly formal corporate jargon; sounds like a friendly, experienced independent consultant/entrepreneur chatting.
 """
 
-def generate_post(api_key: str) -> tuple[str, str]:
+def get_recent_posts(username: str, limit: int = RECENT_POSTS_LIMIT) -> list[str]:
+    """Fetch recent post texts from the public Bluesky API."""
+    url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor={username}&limit={limit}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    feed = resp.json().get("feed", [])
+    return [item["post"]["record"]["text"] for item in feed if "post" in item and "record" in item["post"]]
+
+def has_posted_today(username: str) -> bool:
+    """Check if a post was already made today (UTC)."""
+    url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor={username}&limit=1"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    feed = resp.json().get("feed", [])
+    if not feed:
+        return False
+    latest_date = feed[0]["post"]["record"]["createdAt"][:10]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return latest_date == today
+
+def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[str, str]:
     """Generates a professional, positive post."""
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
@@ -71,6 +92,11 @@ def generate_post(api_key: str) -> tuple[str, str]:
     The post must be strictly under {MAX_POST_LENGTH} characters.
     """
     
+    # Add recent posts context to avoid content repetition
+    if recent_posts:
+        recent_list = "\n".join(f"- {p}" for p in recent_posts)
+        prompt += f"\n    IMPORTANT: Do NOT repeat or closely paraphrase any of these recent posts:\n{recent_list}\n"
+    
     # Retry if Gemini generates text that exceeds the character limit
     for attempt in range(1, MAX_GENERATION_RETRIES + 1):
         response = model.generate_content(prompt)
@@ -118,9 +144,20 @@ def main():
         print("Please ensure GEMINI_API_KEY and BLUESKY_PASSWORD are set.")
         sys.exit(1)
 
+    # Check if we already posted today
+    print("Checking for existing post today...")
+    if has_posted_today(bsky_username):
+        print("Already posted today, skipping.")
+        return
+
+    # Fetch recent posts for content repetition prevention
+    print("Fetching recent posts for context...")
+    recent_posts = get_recent_posts(bsky_username)
+    print(f"Found {len(recent_posts)} recent posts to use as context.")
+
     print("Generating post content...")
     try:
-        content, chosen_topic = generate_post(gemini_api_key)
+        content, chosen_topic = generate_post(gemini_api_key, recent_posts)
         print(f"\nGenerated text ({len(content)} chars):\n---\n{content}\n---\n")
         
         image_data = None
