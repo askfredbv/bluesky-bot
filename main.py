@@ -156,12 +156,12 @@ def generate_image(openai_api_key: str, image_prompt: str) -> bytes:
     img_resp.raise_for_status()
     return img_resp.content
 
-def post_to_bluesky(username: str, password: str, text: str, image_data: bytes | None = None):
+def post_to_bluesky(username: str, password: str, text: str, image_data: bytes | None = None, image_alt: str = "AI generated image"):
     """Authenticates and creates a post on Bluesky."""
     client = Client()
     client.login(username, password)
     if image_data:
-        client.send_image(text=text, image=image_data, image_alt="AI generated image")
+        client.send_image(text=text, image=image_data, image_alt=image_alt)
     else:
         client.send_post(text)
     print("Post successfully sent to Bluesky!")
@@ -192,24 +192,37 @@ def main():
     try:
         content, chosen_topic = generate_post(gemini_api_key, recent_posts)
         print(f"\nGenerated text ({len(content)} chars):\n---\n{content}\n---\n")
-        
+
+        # Append 2-3 relevant hashtags if they fit within the character limit
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        hashtag_instruction = (
+            f"Based on this Bluesky post, suggest 2-3 relevant hashtags to maximise discovery. "
+            f"Return only the hashtags separated by spaces (e.g. #opensource #devlife), nothing else:\n{content}"
+        )
+        hashtags = model.generate_content(hashtag_instruction).text.strip()
+        if len(content) + 1 + len(hashtags) <= MAX_POST_LENGTH:
+            content = f"{content} {hashtags}"
+            print(f"Hashtags appended: {hashtags}")
+        else:
+            print(f"Hashtags skipped (would exceed {MAX_POST_LENGTH} chars): {hashtags}")
+
         image_data = None
+        image_alt = "AI generated image"
         if not openai_api_key:
             print("Warning: OPENAI_API_KEY is not set — image generation is disabled.")
         if openai_api_key and random.random() < 0.5:
             print("Decided to generate an accompanying image. Drafting prompt...")
-            genai.configure(api_key=gemini_api_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
             img_instruction = f"Based on this topic: '{chosen_topic}', write a short, highly descriptive English prompt for an AI image generator like DALL-E to create a beautiful, professional accompaniment image. No wrapping text."
-            img_prompt_req = model.generate_content(img_instruction)
-            image_prompt = img_prompt_req.text.strip()
-            
+            image_prompt = model.generate_content(img_instruction).text.strip()
+            image_alt = image_prompt
+
             print(f"Image prompt: {image_prompt}\nGenerating image...")
             image_data = generate_image(openai_api_key, image_prompt)
             print("Image generated and downloaded successfully.")
 
         print("Posting to Bluesky...")
-        post_to_bluesky(bsky_username, bsky_password, content, image_data)
+        post_to_bluesky(bsky_username, bsky_password, content, image_data, image_alt)
     except Exception as e:
         print(f"Error occurred: {e}")
         sys.exit(1)
