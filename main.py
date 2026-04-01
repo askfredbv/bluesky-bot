@@ -11,7 +11,32 @@ load_dotenv()
 
 MAX_POST_LENGTH = 300
 MAX_GENERATION_RETRIES = 3
-RECENT_POSTS_LIMIT = 7
+RECENT_POSTS_LIMIT = 20
+
+SECONDARY_TOPICS = [
+    "mental health and burnout prevention",
+    "open-source culture and community",
+    "privacy and digital sovereignty",
+    "sustainable tech practices",
+    "remote work productivity",
+    "creative hobbies and maker culture",
+    "automation and scripting tips",
+    "AI ethics and responsible use",
+    "side projects and indie hacking",
+    "continuous learning and skill building",
+    "Linux and FOSS tools",
+    "self-hosting and homelab adventures",
+    "technical debt and code quality",
+    "documentation and knowledge sharing",
+    "cybersecurity basics for developers",
+    "low-tech solutions to high-tech problems",
+    "career growth and freelancing",
+    "retro technology and computing history",
+    "pair programming and code reviews",
+    "asynchronous communication and deep work",
+    "digital minimalism and focus",
+    "curiosity and lifelong learning",
+]
 
 STYLE_GUIDELINES = """
 Tone: Conversational, down-to-earth, slightly humorous, and highly practical.
@@ -69,25 +94,33 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     }
     
     chosen_topic = themes.get(weekday)
-    
+
+    # Pick 1–2 secondary themes to enrich the post and prevent topic staleness
+    secondary = random.sample(SECONDARY_TOPICS, k=random.randint(1, 2))
+    secondary_str = " and ".join(secondary)
+
     # Idea 1: Interactive Question (50% chance)
     interactive_prompt = ""
     if random.random() < 0.5:
         interactive_prompt = "\n    - End the post with a short, engaging question related to the topic to encourage readers to reply and share their experiences."
-    
+
     prompt = f"""
     You are writing a Bluesky post for the account 'askfred.be'.
-    
-    Topic instructions:
+
+    Primary topic instructions:
     {chosen_topic}
-    
+
+    Secondary themes to naturally weave in (they should complement, not overshadow the primary topic):
+    {secondary_str}
+
     Guidelines:
     - Write the entire post naturally in {language}.
+    - Touch on multiple angles — do NOT focus on a single narrow idea. The post should feel rich and varied.
     - Keep it professional, positive, interesting, and helpful.
     - It should make the reader feel good.
     - Mimic the following personal writing style and tone:
     {STYLE_GUIDELINES}{interactive_prompt}
-    
+
     Write the exact final text for the post. Do not add any internal thoughts or surrounding quotes.
     The post must be strictly under {MAX_POST_LENGTH} characters.
     """
@@ -161,7 +194,9 @@ def main():
         print(f"\nGenerated text ({len(content)} chars):\n---\n{content}\n---\n")
         
         image_data = None
-        if openai_api_key and random.random() < 0.2:
+        if not openai_api_key:
+            print("Warning: OPENAI_API_KEY is not set — image generation is disabled.")
+        if openai_api_key and random.random() < 0.5:
             print("Decided to generate an accompanying image. Drafting prompt...")
             genai.configure(api_key=gemini_api_key)
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -181,4 +216,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
