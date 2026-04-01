@@ -8,7 +8,8 @@ This is an automated Python script that generates and posts daily content to Blu
 - **Daily Themed Schedule**: Automatically selects a topic based on the day of the week (Motivational Monday, Tool Tuesday, Positive Wednesday, Throwback Thursday, Failure Friday, Shoutout Saturday, and Sunday Reset).
 - **Interactive Prompts**: 50% chance to append a conversation-starting question to posts to boost engagement.
 - **Bilingual Delivery**: Posts are randomly generated in either **English** or **Dutch** (50/50 chance).
-- **AI Image Attachments**: Approximately 50% of the time, the script will draft a prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image attachment.
+- **AI Image Attachments**: Approximately 50% of the time, the script will draft a prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image attachment. The image prompt is used as the alt text for improved accessibility and discoverability.
+- **Hashtags**: After each post is generated, Gemini suggests 2–3 relevant hashtags that are appended automatically if they fit within the character limit.
 - **Duplicate Post Guard**: Checks the Bluesky feed before posting and skips if a post was already made today (UTC).
 - **Content Repetition Prevention**: Feeds the last 20 posts into the AI prompt to avoid repeating similar topics or phrasing. Each post also blends 1–2 randomly chosen secondary themes (from a pool of 22) alongside the main weekday topic, ensuring variety across multiple subjects.
 - **Robust Error Handling**: Retries content generation if it exceeds the character limit, and exits with a non-zero code on failure so GitHub Actions properly reports errors.
