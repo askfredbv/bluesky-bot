@@ -50,7 +50,7 @@ def get_recent_posts(username: str, limit: int = RECENT_POSTS_LIMIT) -> list[str
     resp = requests.get(url)
     resp.raise_for_status()
     feed = resp.json().get("feed", [])
-    return [item["post"]["record"]["text"] for item in feed if "post" in item and "record" in item["post"]]
+    return [item["post"]["record"].get("text", "") for item in feed if "post" in item and isinstance(item["post"].get("record"), dict) and "text" in item["post"].get("record", {})]
 
 def has_posted_today(username: str) -> bool:
     """Check if a post was already made today (UTC)."""
@@ -60,7 +60,8 @@ def has_posted_today(username: str) -> bool:
     feed = resp.json().get("feed", [])
     if not feed:
         return False
-    latest_date = feed[0]["post"]["record"]["createdAt"][:10]
+    record = feed[0]["post"].get("record", {})
+    latest_date = record.get("createdAt", "")[:10]
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return latest_date == today
 
@@ -122,7 +123,7 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     {STYLE_GUIDELINES}{interactive_prompt}
 
     Write the exact final text for the post. Do not add any internal thoughts or surrounding quotes.
-    The post must be strictly under {MAX_POST_LENGTH} characters.
+    CRITICAL: The post must be VERY concise (like a short tweet). It MUST be strictly under {MAX_POST_LENGTH} characters.
     """
     
     # Add recent posts context to avoid content repetition
@@ -213,13 +214,17 @@ def main():
             print("Warning: OPENAI_API_KEY is not set — image generation is disabled.")
         if openai_api_key and random.random() < 0.5:
             print("Decided to generate an accompanying image. Drafting prompt...")
-            img_instruction = f"Based on this topic: '{chosen_topic}', write a short, highly descriptive English prompt for an AI image generator like DALL-E to create a beautiful, professional accompaniment image. No wrapping text."
+            # Base the image on the exact generated text so it matches perfectly
+            img_instruction = f"Based on this final post: '{content}', write a short, highly descriptive English prompt for an AI image generator like DALL-E to create a beautiful, professional accompaniment image. No wrapping text."
             image_prompt = model.generate_content(img_instruction).text.strip()
             image_alt = image_prompt
-
             print(f"Image prompt: {image_prompt}\nGenerating image...")
-            image_data = generate_image(openai_api_key, image_prompt)
-            print("Image generated and downloaded successfully.")
+            try:
+                image_data = generate_image(openai_api_key, image_prompt)
+                print("Image generated and downloaded successfully.")
+            except Exception as img_err:
+                print(f"Image generation failed: {img_err}. Proceeding without image.")
+                image_data = None
 
         print("Posting to Bluesky...")
         post_to_bluesky(bsky_username, bsky_password, content, image_data, image_alt)
