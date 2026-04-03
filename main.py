@@ -42,6 +42,7 @@ STYLE_GUIDELINES = """
 Tone: Conversational, down-to-earth, slightly humorous, and highly practical.
 Values: Emphasizes work/life balance, continuous learning, working smart/efficiency, and making time for personal hobbies/play.
 Voice: Human-centric, relatable, engaging, direct, and positive. Avoids overly formal corporate jargon; sounds like a friendly, experienced independent consultant/entrepreneur chatting.
+Formatting: Use 1-3 relevant emojis to make the post visually appealing, but don't overdo it. DO NOT include hashtags in the text block.
 """
 
 def get_recent_posts(username: str, limit: int = RECENT_POSTS_LIMIT) -> list[str]:
@@ -85,13 +86,13 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     """
     
     themes = {
-        0: "Motivational Monday: Share a brief, positive piece of IT/business advice or a good life lesson to start the week strong.",
-        1: "Tool Tuesday: Highlight a fantastic, highly useful open-source tool or software.",
-        2: "Positive Wednesday: Share a genuinely uplifting piece of historical or recent technology/science news.",
+        0: "Mythbusting Monday: Debunk a common misconception about IT/tech or share a counterintuitive productivity tip.",
+        1: "Tool Tuesday: Highlight a fantastic, highly useful open-source tool or software. What makes it special?",
+        2: "Wisdom Wednesday: Share a quick 'Did you know?' tip or a simple workflow improvement.",
         3: prompt_on_that_day,  # Throwback Thursday
         4: "Failure Friday: Briefly discuss a famous tech or business failure, and the positive lesson learned from it.",
         5: "Shoutout Saturday: Write a positive shoutout praising the creators or maintainers of a well-known open-source project.",
-        6: "Sunday Reset: Share a tip about work/life balance, disconnecting, or personal hobbies for busy IT professionals."
+        6: "Sunday Reset: Share a contrarian or highly practical tip about disconnecting and work/life balance."
     }
     
     chosen_topic = themes.get(weekday)
@@ -100,10 +101,10 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     secondary = random.sample(SECONDARY_TOPICS, k=random.randint(1, 2))
     secondary_str = " and ".join(secondary)
 
-    # Idea 1: Interactive Question (50% chance)
+    # Idea 1: Interactive Question (90% chance to drive engagement)
     interactive_prompt = ""
-    if random.random() < 0.5:
-        interactive_prompt = "\n    - End the post with a short, engaging question related to the topic to encourage readers to reply and share their experiences."
+    if random.random() < 0.9:
+        interactive_prompt = "\n    - End the post with a short, open question like 'What is your go-to?' or 'Have you ever tried this?' to invite organic replies."
 
     prompt = f"""
     You are writing a Bluesky post for the account 'askfred.be'.
@@ -116,14 +117,12 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
 
     Guidelines:
     - Write the entire post naturally in {language}.
-    - Touch on multiple angles — do NOT focus on a single narrow idea. The post should feel rich and varied.
     - Keep it professional, positive, interesting, and helpful.
-    - It should make the reader feel good.
     - Mimic the following personal writing style and tone:
     {STYLE_GUIDELINES}{interactive_prompt}
 
     Write the exact final text for the post. Do not add any internal thoughts or surrounding quotes.
-    CRITICAL: The post must be VERY concise (like a short tweet). It MUST be strictly under {MAX_POST_LENGTH} characters.
+    CRITICAL: Write exactly ONE concise, punchy main sentence. Then add ONE engaging question at the end. Keep the entire text under 250 characters.
     """
     
     # Add recent posts context to avoid content repetition
@@ -222,7 +221,8 @@ def main():
         image_alt = "AI generated image"
         if not openai_api_key:
             print("Warning: OPENAI_API_KEY is not set — image generation is disabled.")
-        if openai_api_key and random.random() < 0.5:
+        # Lower image chance to 20% to feel more organic/human rather than a bot spamming AI art
+        if openai_api_key and random.random() < 0.2:
             print("Decided to generate an accompanying image. Drafting prompt...")
             # Base the image on the exact generated text so it matches perfectly
             img_instruction = f"Based on this final post: '{content}', write a short, highly descriptive English prompt for an AI image generator like DALL-E to create a beautiful, professional accompaniment image. No wrapping text."
