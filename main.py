@@ -229,8 +229,19 @@ def main():
         print("Posting to Bluesky...")
         post_to_bluesky(bsky_username, bsky_password, content, image_data, image_alt)
     except Exception as e:
+        import traceback
+        error_msg = str(e).replace("\n", "%0A")
+        traceback_str = traceback.format_exc().replace("\n", "%0A")
+        print(f"::error::Error occurred: {error_msg}%0ATraceback:%0A{traceback_str}")
         print(f"Error occurred: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        error_msg = str(e).replace("\n", "%0A")
+        traceback_str = traceback.format_exc().replace("\n", "%0A")
+        print(f"::error::Unhandled Exception: {error_msg}%0ATraceback:%0A{traceback_str}")
+        sys.exit(1)
