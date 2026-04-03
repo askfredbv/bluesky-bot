@@ -139,7 +139,17 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
             return content, chosen_topic
         print(f"Attempt {attempt}/{MAX_GENERATION_RETRIES}: Generated text is {len(content)} chars (limit {MAX_POST_LENGTH}). Retrying...")
     
-    raise ValueError(f"Failed to generate a post under {MAX_POST_LENGTH} characters after {MAX_GENERATION_RETRIES} attempts. Last attempt was {len(content)} chars.")
+    # If still too long, gracefully truncate to a sentence or word boundary
+    print(f"Warning: Failed to naturally generate under {MAX_POST_LENGTH} chars. Forcibly truncating.")
+    truncated = content[:MAX_POST_LENGTH]
+    last_period = truncated.rfind(".")
+    if last_period > len(truncated) * 0.5: # Only cut if we don't lose too much
+        content = truncated[:last_period + 1]
+    else:
+        content = truncated.rsplit(" ", 1)[0] + "..."
+    if len(content) > MAX_POST_LENGTH: 
+        content = content[:MAX_POST_LENGTH]
+    return content, chosen_topic
 
 def generate_image(openai_api_key: str, image_prompt: str) -> bytes:
     """Generates an image using OpenAI DALL-E 3 and returns the image bytes."""
