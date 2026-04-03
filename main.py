@@ -85,17 +85,24 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     Replace YYYY with the actual year in both cases.
     """
     
-    themes = {
-        0: "Mythbusting Monday: Debunk a common misconception about IT/tech or share a counterintuitive productivity tip.",
-        1: "Tool Tuesday: Highlight a fantastic, highly useful open-source tool or software. What makes it special?",
-        2: "Wisdom Wednesday: Share a quick 'Did you know?' tip or a simple workflow improvement.",
-        3: prompt_on_that_day,  # Throwback Thursday
-        4: "Failure Friday: Briefly discuss a famous tech or business failure, and the positive lesson learned from it.",
-        5: "Shoutout Saturday: Write a positive shoutout praising the creators or maintainers of a well-known open-source project.",
-        6: "Sunday Reset: Share a contrarian or highly practical tip about disconnecting and work/life balance."
-    }
+    core_themes = [
+        "Debunk a common misconception about IT/tech or share a counterintuitive productivity tip.",
+        "Highlight a fantastic, highly useful open-source tool or software. What makes it special?",
+        "Share a quick 'Did you know?' tip or a simple workflow improvement.",
+        "Briefly discuss a famous tech or business failure, and the positive lesson learned from it.",
+        "Write a positive shoutout praising the creators or maintainers of a well-known open-source project.",
+        "Share a slightly humorous, relatable moment or 'gotcha' that IT professionals experience often.",
+        "Give a concise, positive piece of career advice for junior developers or tech enthusiasts.",
+        "Mention an underrated keyboard shortcut, terminal command, or tiny trick that saves time.",
+        "Discuss the value of 'low-tech' hobbies for tech workers to prevent burnout.",
+    ]
     
-    chosen_topic = themes.get(weekday)
+    if weekday == 6:  # Sunday
+        chosen_topic = "Share a highly practical tip about disconnecting and work/life balance to recharge for the week ahead."
+    elif weekday == 3: # Thursday
+        chosen_topic = prompt_on_that_day
+    else:
+        chosen_topic = random.choice(core_themes)
 
     # Pick 1–2 secondary themes to enrich the post and prevent topic staleness
     secondary = random.sample(SECONDARY_TOPICS, k=random.randint(1, 2))
@@ -118,6 +125,7 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     Guidelines:
     - Write the entire post naturally in {language}.
     - Keep it professional, positive, interesting, and helpful.
+    - NEVER use robotic phrases like "Happy Monday", "Tool Tuesday", or explicitly state the theme name. It should sound like a truly spontaneous, organic thought from a real person.
     - Mimic the following personal writing style and tone:
     {STYLE_GUIDELINES}{interactive_prompt}
 
