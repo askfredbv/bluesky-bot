@@ -1,11 +1,13 @@
 import os
 import sys
 import random
+import io
 from datetime import datetime, timezone
 import google.generativeai as genai
 from atproto import Client
 from dotenv import load_dotenv
 import requests
+from PIL import Image
 
 load_dotenv()
 
@@ -174,6 +176,49 @@ def generate_image(openai_api_key: str, image_prompt: str) -> bytes:
     img_resp.raise_for_status()
     return img_resp.content
 
+def compress_image(image_data: bytes, max_size_bytes: int = 950000) -> bytes:
+    """Compresses an image to stay under the specified byte limit (default 950KB)."""
+    if len(image_data) <= max_size_bytes:
+        return image_data
+
+    print(f"Image is over {max_size_bytes} bytes ({len(image_data)} bytes). Compressing...")
+    img = Image.open(io.BytesIO(image_data))
+    
+    # Ensure image is in RGB for JPEG compression
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+        
+    quality = 90
+    step = 5
+    while quality >= 20:
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=quality)
+        compressed_data = buffer.getvalue()
+        if len(compressed_data) <= max_size_bytes:
+            print(f"Compressed image to {len(compressed_data)} bytes (quality={quality}).")
+            return compressed_data
+        quality -= step
+
+    # If quality reaches 20 and it's still too large, resize the image
+    print("Quality reduction alone wasn't enough. Resizing...")
+    width, height = img.size
+    while width > 512: # Minimal practical width for Bluesky
+        width = int(width * 0.9)
+        height = int(height * 0.9)
+        resized_img = img.resize((width, height), Image.LANCZOS)
+        
+        quality = 85
+        while quality >= 20:
+            buffer = io.BytesIO()
+            resized_img.save(buffer, format="JPEG", quality=quality)
+            compressed_data = buffer.getvalue()
+            if len(compressed_data) <= max_size_bytes:
+                print(f"Resized and compressed image to {len(compressed_data)} bytes (size={width}x{height}, quality={quality}).")
+                return compressed_data
+            quality -= 5
+
+    return compressed_data # Return the smallest version we could get
+
 def post_to_bluesky(username: str, password: str, text: str, image_data: bytes | None = None, image_alt: str = "AI generated image"):
     """Authenticates and creates a post on Bluesky."""
     client = Client()
@@ -239,7 +284,8 @@ def main():
             print(f"Image prompt: {image_prompt}\nGenerating image...")
             try:
                 image_data = generate_image(openai_api_key, image_prompt)
-                print("Image generated and downloaded successfully.")
+                print(f"Image generated and downloaded successfully ({len(image_data)} bytes).")
+                image_data = compress_image(image_data)
             except Exception as img_err:
                 print(f"Image generation failed: {img_err}. Proceeding without image.")
                 image_data = None
