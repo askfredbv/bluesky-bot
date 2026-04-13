@@ -1,41 +1,45 @@
-# AskFred: The Multi-Channel Tech Mentor (v4.0.0) 🚀
+# AskFred: The Scholar-Level Tech Mentor (v4.1.0) 🎓
 
-AskFred is a sophisticated, autonomous content engine designed to manage a professional technical presence across the decentralized web (**Bluesky** and **Mastodon**). It functions as a dual-purpose agent, alternating between technical curation and professional mentorship.
+AskFred is a sophisticated, autonomous content engine designed to manage a professional technical presence across the decentralized web (**Bluesky** and **Mastodon**). 
 
-## 🌟 New in v4.0: "The Multi-Channel Expansion"
+Starting with v4.1 (The Scholar Update), AskFred has evolved from a news aggregator into a **Technical Authority**, prioritizing peer-reviewed academic research over general industry news.
 
-- **Multi-Platform Broadcasting**: Simultaneous automated posting to **Bluesky** and **Mastodon**.
-- **Smart Threading Engine**: AI-driven logic that identifies complex technical updates and automatically generates a linked **3-5 post thread** to provide deep context without hitting character limits.
-- **Improved Interaction Loop**: Monitors notifications and handles replies in the "Mentor" persona, fostering genuine community growth.
-- **Accessibility Suite**:
-    - **CamelCase Hashtags**: All hashtags are formatted for screen-reader compatibility (e.g., `#OpenSource`).
-    - **AI-Enhanced Alt Text**: Context-aware accessibility descriptions are generated for every AI image using a dedicated vision-pass.
+## 🚀 Key Features
 
-## 🤖 Core Personas (Gemini 3.1 Flash)
+### 🎓 The Scholar Engine (v4.1)
+*   **Academic Priority**: Automatically prioritizes and surfaces papers from **arXiv** (`cs.AI`, `cs.LG`, `cs.RO`) over standard tech blogs.
+*   **Scholar Highlight**: Specialized synthesis logic that translates complex research into pragmatics for IT leadership and business strategy.
 
-- **The Curator (Morning Slot - 08:00 UTC)**: Synthesizes breaking tech and AI news from 15+ top-tier RSS feeds.
-- **The Mentor (Afternoon Slot - 14:00 UTC)**: Shares professional wisdom, daily themed advice, and historical "On this day" facts in **English** or **Dutch**.
+### 📡 Multi-Channel Broadcasting (v4.0)
+*   **Dual-Platform Sync**: Concurrent broadcasting to Bluesky and Mastodon with platform-specific character optimizations.
+*   **Smart Threading**: AI-driven logic that identifies complex updates and automatically generates a linked **3-5 post thread** to provide deep context.
 
-## 🛠️ Prerequisites
+### 🤖 Dual-Persona Intelligence
+*   **Morning Run (08:00 UTC)**: **The Curator** — High-signal tech and research synthesis.
+*   **Afternoon Run (14:00 UTC)**: **The Mentor** — Professional IT wisdom, career advice, and work-life balance tips.
 
-- Python 3.11+
-- [Bluesky](https://bsky.app/) account & App Password.
-- [Mastodon](https://mastodon.social/) account & Access Token.
-- [Google Gemini API Key](https://aistudio.google.com/)
-- (Optional) [OpenAI API Key](https://platform.openai.com/) for images.
+### 🦾 Improved Interaction Loop
+*   **Continuous Engagement**: Monitors notifications and handles replies in the "Mentor" persona, fostering genuine community growth.
 
-## 🚀 Setup & Automation
+## 🛠️ Setup & Configuration
 
-1. **GitHub Secrets**: Add the following to your repo settings:
-   - `GEMINI_API_KEY`, `BLUESKY_USERNAME`, `BLUESKY_APP_PASSWORD`
-   - `MASTODON_ACCESS_TOKEN`, `MASTODON_API_BASE_URL` (usually `https://mastodon.social`)
-   - `OPENAI_API_KEY` (Optional)
+### Environment Variables
+Add the following to your GitHub repo settings:
 
-2. **Persistence**: The bot automatically commits its internal "memory" (`seen_articles.json`, `replied_to.json`) back to the repo using GitHub Actions.
+| Secret | Description |
+| :--- | :--- |
+| `GEMINI_API_KEY` | Google AI Studio key for content generation. |
+| `BLUESKY_USERNAME` | Your Bluesky handle (e.g., askfred.be). |
+| `BLUESKY_APP_PASSWORD` | App-specific password for your Bluesky account. |
+| `MASTODON_ACCESS_TOKEN` | Access token from your Mastodon instance. |
+| `MASTODON_API_BASE_URL` | Your Mastodon instance URL (usually `https://mastodon.social`). |
+| `OPENAI_API_KEY` | (Optional) Used for DALL-E 3 image generation. |
 
-## 👨‍💻 Local Usage
-
+### Installation
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
+
+## ⚖️ License
+MIT License. Built with ❤️ for the technical community.
