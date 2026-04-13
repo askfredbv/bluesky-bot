@@ -73,7 +73,8 @@ pytest
 │   └── utils.py               # Async RSS fetching, retry logic, image utils
 ├── tests/
 │   ├── conftest.py            # Pytest async configuration
-│   └── test_ranking.py        # Unit tests for Scholar Gem ranking & deduplication
+│   ├── test_ranking.py        # Unit tests for Scholar Gem ranking & deduplication
+│   └── test_protection.py     # Unit tests for security & resilience logic
 ├── .github/
 │   ├── workflows/daily_post.yml  # GitHub Actions schedule (08:00 & 14:30 UTC)
 │   └── dependabot.yml            # Automated dependency vulnerability scanning
