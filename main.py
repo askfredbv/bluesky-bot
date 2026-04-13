@@ -59,7 +59,7 @@ async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
         SafeLogger.error("Failed to update status dashboard", e)
 
 async def main():
-    print("--- Daily Poster Engine v4.3 Elite (Async) ---")
+    print("--- Daily Poster Engine v4.4 Fortress (Async) ---")
     
     # Environment Check
     creds = {

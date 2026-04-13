@@ -93,7 +93,7 @@ async def update_profile_bio(client: AsyncClient, bio_text: str):
             rkey='self',
             record=profile_dict
         )
-        print("Updated Bluesky profile bio (v4.3 Async Sync).")
+        print("Updated Bluesky profile bio.")
     except Exception as e:
         SafeLogger.error("Failed to update Bluesky bio", e)
 
