@@ -101,8 +101,7 @@ async def main():
     content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
 
     # 5. Sage Parallel Broadcasting
-    print(f"Initiating Concurrent Delivery to Bluesky, Mastodon, and Threads...")
-    broadcast_tasks = [
+    print(f"Initiating Concurrent Delivery to Bluesky and Mastodon...")
     broadcast_tasks = [
         post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, link_meta),
         post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list)
