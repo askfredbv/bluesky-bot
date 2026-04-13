@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from google import genai
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
-    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN
+    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS
 )
 from src.utils import load_replied_to, save_replied_to
 from src.logger import SafeLogger
@@ -64,6 +64,10 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         topic = news_items[0]['title']
         instr = SYSTEM_INSTRUCTIONS_CURATOR
         task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nRESEARCH:\n{news_text}\n\nTask: Synthesize a professional thread."
+    elif mode == "strategist":
+        topic = random.choice(SECONDARY_TOPICS)
+        instr = SYSTEM_INSTRUCTIONS_MENTOR
+        task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nSTRATEGIC DISCUSSION: {topic}\n\nTask: Share deep, abstract mentorship and philosophical insight purely on this topic."
     else:
         topic = random.choice(["Career", "Automation", "Work-Life Balance", "Learning"])
         instr = SYSTEM_INSTRUCTIONS_MENTOR

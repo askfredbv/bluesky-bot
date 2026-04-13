@@ -28,7 +28,7 @@ SOURCE_TIERS: Dict[str, int] = {
     "semianalysis.com": 8,
     "the-decoder.com": 7,
     "techcrunch.com": 6,
-    "export.arxiv.org": 5  # Low base, but high ground-breaking potential
+    "export.arxiv.org": 8  # v4.6 Hidden Gem Upgrade: Guarantee research survival
 }
 
 PRODUCT_KEYWORDS: List[str] = ["launch", "integrated", "available", "feature", "release", "app", "tool", "partnership"]

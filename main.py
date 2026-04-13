@@ -57,7 +57,7 @@ async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
         SafeLogger.error("Failed to update status dashboard", e)
 
 async def main():
-    print("--- AskFred Engine v4.5 Sage Intelligence ---")
+    print("--- AskFred Engine v4.6 Resilience Upgrade ---")
     
     # Environment Check
     creds = {
@@ -84,9 +84,9 @@ async def main():
     link_meta = None
     if mode == "curator":
         news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
-        if not news_items:
-            print("No high-signal updates. Shifting to Mentor mode.")
-            mode = "mentor"
+        if len(news_items) < 3:
+            print(f"Low high-signal news volume ({len(news_items)}). Shifting to Strategist mode.")
+            mode = "strategist"
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
@@ -108,6 +108,10 @@ async def main():
     ]
     
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
+    for r in results:
+        if isinstance(r, Exception):
+            SafeLogger.error("Broadcast task failed", r)
+            
     bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
     # 6. Post-Run Automation
@@ -130,7 +134,7 @@ async def main():
             
         save_seen_articles(seen_data)
 
-    print(f"--- [v4.5 Sage] Intelligence Cycle Complete ({mode}) ---")
+    print(f"--- [v4.6 Resilience] Intelligence Cycle Complete ({mode}) ---")
 
 if __name__ == "__main__":
     asyncio.run(main())
