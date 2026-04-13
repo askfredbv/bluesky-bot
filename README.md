@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.5.0) 🚀
+# Bluesky & Mastodon Daily Poster (v4.6.0) 🚀
 
 An autonomous, multi-channel technical broadcasting engine for **Bluesky** and **Mastodon**. This project is part of the **askfred** technical suite, focused on delivering high-signal academic and professional insights to the decentralized web.
 
@@ -12,15 +12,17 @@ An autonomous, multi-channel technical broadcasting engine for **Bluesky** and *
 
 ## 🚀 Key Features
 
-### 🧠 Sage Intelligence (v4.5)
-*   **Weighted Relevance Scoring**: Implements a 5-factor scoring model taking into account Source Tiers, Product Impact, Technical Breakthroughs, Time Decay, and Topic Diversity.
+### 🧠 Sage Intelligence (v4.6)
+*   **Weighted Relevance Scoring**: Implements a 5-factor scoring model assessing Tiers, Impact, Breakthroughs, Time Decay, and Topic Diversity.
+*   **Strategist Fallback Mode**: If high-signal news volume is critically low (<3 items), AskFred autonomously pivots into "Strategist Mode" to mentor on timeless abstract computing philosophies, ensuring 100% active cycles.
+*   **Hidden Gem Injection**: Select high-tier research feeds like `arXiv` are mathematically prioritized to ensure academic-grade papers regularly survive curation noise loops.
 *   **Topic Memory**: Automatically tracks recent topics to ensure the feed remains diverse and avoids "echo-chamber" repetition.
-*   **Temporal Awareness**: Day-of-week context (e.g., "Monday Strategy", "Friday Wrap-up") injected into AI synthesis for a human-centric feel.
 *   **Rescue Intelligence**: Robust validation and automated repair pipeline for AI output to ensure perfect formatting every run.
 
 ### 🛡️ Security & Resilience (The Fortress)
-*   **Interaction Circuit Breakers**: Hard caps on daily replies (max 10/session) to prevent mention-spam and API credit exhaustion.
-*   **Anti-Spam Sanitization**: Automatic redaction of prompt-injection keywords from user mentions.
+*   **Atomic Broadcasting Workflow**: Utilizes `asyncio.gather(return_exceptions=True)` to execute concurrent platform delivery. If Mastodon fails, Bluesky broadcasting still succeeds and state is persisted smoothly without crash-loops.
+*   **Dynamic Secret Masking**: Environment variables (Keys, Tokens) are aggressively scanned and stripped out of the runtime `SafeLogger` output preventing accidental credential leakage.
+*   **Interaction Circuit Breakers**: Hard caps on daily replies (max 10/day) to prevent mention-spam and API credit exhaustion.
 *   **API Backoff & Jitter**: Exponential backoff ensuring the bot survives platform instability.
 
 ### 📡 Multi-Channel Broadcasting
