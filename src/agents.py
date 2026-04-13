@@ -9,6 +9,7 @@ from src.config import (
     STYLE_GUIDELINES, SECONDARY_TOPICS, MAX_POST_LENGTH_BSKY
 )
 from src.utils import load_replied_to, save_replied_to
+from src.logger import SafeLogger
 
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
@@ -37,7 +38,7 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         content_list = json.loads(clean_text)
         return content_list, topic
     except Exception as e:
-        print(f"Failed to parse AI response: {e}")
+        SafeLogger.error("Failed to parse AI response", e)
         return [response_text[:MAX_POST_LENGTH_BSKY]], topic
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
@@ -74,4 +75,4 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
             
         save_replied_to(replied_to)
     except Exception as e:
-        print(f"Interaction error: {e}")
+        SafeLogger.error("Interaction error", e)

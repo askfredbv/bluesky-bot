@@ -3,6 +3,7 @@ from typing import List, Optional
 from atproto import AsyncClient, models
 from mastodon import Mastodon
 from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
+from src.logger import SafeLogger
 
 async def post_to_bluesky(username, password, content_list: List[str], image_data: Optional[bytes] = None, image_alt: str = ""):
     """Async broadcaster for Bluesky using AsyncClient."""
@@ -82,7 +83,7 @@ async def update_profile_bio(client: AsyncClient, bio_text: str):
         )
         print("Updated Bluesky profile bio (v4.3 Async Sync).")
     except Exception as e:
-        print(f"Failed to update Bluesky bio: {e}")
+        SafeLogger.error("Failed to update Bluesky bio", e)
 
 async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
     """Update Mastodon bio asynchronously."""
@@ -94,4 +95,4 @@ async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
         await asyncio.to_thread(_sync_bio)
         print("Updated Mastodon profile bio.")
     except Exception as e:
-        print(f"Failed to update Mastodon bio: {e}")
+        SafeLogger.error("Failed to update Mastodon bio", e)

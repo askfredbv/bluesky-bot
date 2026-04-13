@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from PIL import Image
 import io
 from src.config import RSS_FEEDS, SEEN_FILE, REPLIED_FILE
+from src.logger import SafeLogger
 
 socket.setdefaulttimeout(15)
 
@@ -19,7 +20,7 @@ def load_seen_articles() -> List[str]:
             with open(SEEN_FILE, "r") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading seen articles: {e}")
+            SafeLogger.error("Failed to load seen articles", e)
     return []
 
 def save_seen_articles(seen_links: List[str]) -> None:
@@ -27,7 +28,7 @@ def save_seen_articles(seen_links: List[str]) -> None:
         with open(SEEN_FILE, "w") as f:
             json.dump(seen_links, f, indent=2)
     except Exception as e:
-        print(f"Error saving seen articles: {e}")
+        SafeLogger.error("Failed to save seen articles", e)
 
 def load_replied_to() -> List[str]:
     if REPLIED_FILE.exists():
@@ -35,7 +36,7 @@ def load_replied_to() -> List[str]:
             with open(REPLIED_FILE, "r") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading replied state: {e}")
+            SafeLogger.error("Failed to load replied state", e)
     return []
 
 def save_replied_to(replied_ids: List[str]) -> None:
@@ -43,7 +44,7 @@ def save_replied_to(replied_ids: List[str]) -> None:
         with open(REPLIED_FILE, "w") as f:
             json.dump(replied_ids, f, indent=2)
     except Exception as e:
-        print(f"Error saving replied state: {e}")
+        SafeLogger.error("Failed to save replied state", e)
 
 async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[str, Any]]:
     try:
@@ -68,7 +69,7 @@ async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[st
                 })
         return items
     except Exception as e:
-        print(f"Error parsing feed {url}: {e}")
+        SafeLogger.error(f"Error parsing feed {url}", e)
         return []
 
 async def fetch_news(seen_links: List[str], limit: int = 5) -> List[Dict[str, Any]]:

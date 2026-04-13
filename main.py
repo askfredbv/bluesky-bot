@@ -20,6 +20,7 @@ from src.broadcasters import (
     post_to_bluesky, post_to_mastodon, 
     update_profile_bio, update_profile_bio_mastodon
 )
+from src.logger import SafeLogger
 
 load_dotenv()
 
@@ -29,7 +30,7 @@ async def get_recent_posts(client, handle: str) -> List[str]:
         response = await client.app.bsky.feed.get_author_feed(actor=handle, limit=10)
         return [p.post.record.text for p in response.feed if hasattr(p.post.record, 'text')]
     except Exception as e:
-        print(f"Error fetching recent posts: {e}")
+        SafeLogger.error("Failed to fetch recent posts", e)
         return []
 
 async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
@@ -55,7 +56,7 @@ async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
             f.writelines(new_lines)
         print("Updated README Live Status Dashboard.")
     except Exception as e:
-        print(f"Failed to update status dashboard: {e}")
+        SafeLogger.error("Failed to update status dashboard", e)
 
 async def main():
     print("--- Daily Poster Engine v4.3 Elite (Async) ---")
@@ -106,7 +107,8 @@ async def main():
         try:
             image_data = await generate_image(creds["openai"], f"Minimalist professional tech banner for: {content_list[0]}")
             image_data = compress_image(image_data)
-        except Exception as e: print(f"Visual asset generation skipped: {e}")
+        except Exception as e:
+            SafeLogger.error("Visual asset generation failed", e)
 
     # 5. Elite Parallel Broadcasting
     print(f"Initiating Concurrent Delivery to {creds['masto_url']} and Bluesky...")
