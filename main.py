@@ -24,12 +24,21 @@ MAX_POST_LENGTH_MASTODON = 500
 MAX_GENERATION_RETRIES = 3
 RECENT_POSTS_LIMIT = 20
 SEEN_FILE = "seen_articles.json"
-APPROVED_BIO = """💡 Your friendly IT Mentor in the trenches. Supporting work-life balance and continuous learning.
+APPROVED_BIO_BSKY = """🤖 AskFred: The Multi-Channel Tech Mentor
+Curated by Frederik Van Hecke. Always curious.
+
+📰 Curation: AI & Tech news insights @ 08:00 UTC.
+💡 Mentorship: IT leadership wisdom @ 14:00 UTC.
+
+🚀 Working smarter, not harder.
+🔗 askfred.be | frederikvanhecke.com"""
+
+APPROVED_BIO_MASTODON = """💡 Your friendly IT Mentor in the trenches. Supporting work-life balance and continuous learning.
 
 🌅 Morning tech curation | ☕ Afternoon IT advice. 
 🚀 Helping you work smarter, not harder. 
 
-🔗 askfred.be"""
+🔗 askfred.be | frederikvanhecke.com"""
 
 RSS_FEEDS = [
     "https://openai.com/news/rss.xml",
@@ -421,6 +430,16 @@ def post_to_mastodon(token: str, base_url: str, content_list: list[str], image_d
     except Exception as e:
         print(f"Warning: Failed to post to Mastodon: {e}")
 
+def update_profile_bio_mastodon(token: str, base_url: str, new_bio: str):
+    """Updates the Mastodon profile bio."""
+    if not all([token, base_url]): return
+    try:
+        masto = Mastodon(access_token=token, api_base_url=base_url)
+        masto.account_update_credentials(note=new_bio)
+        print("Mastodon profile bio synchronized.")
+    except Exception as e:
+        print(f"Warning: Could not update Mastodon bio: {e}")
+
 def handle_interactions(client: Client, gemini_api_key: str):
     """Checks for new replies and responds using the Mentor persona."""
     print("Checking for new interactions...")
@@ -571,8 +590,9 @@ def main():
         # 7. Interaction Loop (v3.0)
         handle_interactions(client, gemini_api_key)
 
-        # 8. Profile Sync (v3.0)
-        update_profile_bio(client, APPROVED_BIO)
+        # 8. Profile Sync (v4.0 Dual-Sync)
+        update_profile_bio(client, APPROVED_BIO_BSKY)
+        update_profile_bio_mastodon(masto_token, masto_url, APPROVED_BIO_MASTODON)
 
         # 9. Update State (Seen articles)
         if mode == "curator" and news_items:
