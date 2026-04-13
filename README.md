@@ -1,71 +1,57 @@
-# Bluesky Daily Poster
+# Bluesky Daily Poster (v2.0) 🚀
 
-This is an automated Python script that generates and posts daily content to Bluesky. It is designed to post professional, positive, interesting, and helpful content, such as "On this day" historical facts or productivity tips.
+This is a sophisticated, automated Python system that manages a professional tech presence on Bluesky. It functions as a dual-purpose agent, alternating between breaking news curation and mentorship-style advice.
 
-## Features
+## 🌟 Features
 
-- **Automated Content Generation**: Uses Google's Gemini (gemini-2.5-flash) to write engaging daily posts.
-- **Daily Themed Schedule**: Automatically selects a topic based on the day of the week (Motivational Monday, Tool Tuesday, Positive Wednesday, Throwback Thursday, Failure Friday, Shoutout Saturday, and Sunday Reset).
-- **Interactive Prompts**: 50% chance to append a conversation-starting question to posts to boost engagement.
-- **Bilingual Delivery**: Posts are randomly generated in either **English** or **Dutch** (50/50 chance).
-- **AI Image Attachments**: Approximately 50% of the time, the script will draft a prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image attachment. The image prompt is used as the alt text for improved accessibility and discoverability.
-- **Safety Net & Validation**: Includes a "Rescue Logic" layer that checks every post for quality. It automatically detects and blocks repetitive gibberish, ensures posts aren't suspiciously short, and can even automatically append hashtags if the AI forgets them.
-- **Robust Error Handling**: Iteratively compresses and resizes images to meet Bluesky's 1MB limit. It also retries content generation if it exceeds character limits and provides detailed traceback logging for troubleshooting.
-- **Fully Automated**: Runs daily via a GitHub Actions scheduled workflow at 08:00 UTC (09:00 CET / 10:00 CEST).
+- **Dual-Post Scheduling**: The bot posts **twice daily** to maximize global reach (08:00 and 14:00 UTC).
+- **Dual Personas (Gemini 3.1 Flash)**:
+    - **The Curator (Morning Slot)**: Synthesizes breaking tech and AI news from 15+ top-tier RSS feeds (OpenAI, TechCrunch, DeepMind, etc.).
+    - **The Mentor (Afternoon Slot)**: Shares professional wisdom, daily themed advice (Motivational Monday, Tool Tuesday, etc.), and historical "On this day" facts.
+- **State Persistence**: Uses an automated `seen_articles.json` tracking system to ensure news stories are never repeated.
+- **Interactive Prompts**: 90% chance to append a conversation-starting question to posts to boost human engagement.
+- **Bilingual Delivery**: Mentor-style posts are randomly generated in either **English** or **Dutch**.
+- **AI Image Attachments**: Context-aware images generated via **OpenAI (DALL-E 3)**, with logic to feel more organic/less bot-like (20% chance).
+- **Safety Net & Validation**: 
+    - **Rescue Logic**: Automatically appends hashtags if the AI forgets them.
+    - **Quality Guard**: Blocks repetitive gibberish or suspiciously short "failure" posts.
+- **Robust Engineering**: Includes dynamic image compression/resizing (1MB limit), global network timeouts, and detailed error logging for GitHub Actions.
 
-## Prerequisites
+## 🛠️ Prerequisites
 
 - Python 3.11+
-- A [Bluesky](https://bsky.app/) account and App Password
+- A [Bluesky](https://bsky.app/) account and **App Password** (Required for security)
 - A [Google Gemini API Key](https://aistudio.google.com/)
-- (Optional) An [OpenAI API Key](https://platform.openai.com/) for generating images
+- (Optional) An [OpenAI API Key](https://platform.openai.com/) for images
 
-## Setup
+## 🚀 Setup
 
-1. **Clone the repository and install dependencies:**
-
+1. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Configure Environment Variables:**
-
-   Copy the provided `.env.example` to a new `.env` file:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Fill in your credentials:
-
+2. **Configure Environment**:
+   Copy `.env.example` to `.env` and fill in:
    ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   BLUESKY_USERNAME=your.bsky.handle
-   BLUESKY_APP_PASSWORD=your_app_password_here
-   OPENAI_API_KEY=your_openai_api_key_here  # Optional: For AI image generation
+   GEMINI_API_KEY=your_key
+   BLUESKY_USERNAME=your.handle.bsky.social
+   BLUESKY_APP_PASSWORD=your_app_password
+   OPENAI_API_KEY=your_openai_key  # Optional
    ```
 
-## Usage
+## 🤖 GitHub Actions (Automation)
 
-### Run Locally
+The system is fully automated via GitHub Actions. It includes a persistence layer that commits its "seen" state back to your repository.
 
-To generate a post and instantly send it to Bluesky:
+**To enable:**
+1. Go to **Settings > Secrets and variables > Actions**.
+2. Add: `GEMINI_API_KEY`, `BLUESKY_USERNAME`, `BLUESKY_APP_PASSWORD`, and `OPENAI_API_KEY`.
+3. The workflow runs at `08:00` and `14:00` UTC daily.
 
+## 👨‍💻 Local Usage
+
+Run manually to see what it would post in the current time slot:
 ```bash
 python main.py
 ```
-
-### GitHub Actions (Automated Run)
-
-This repository includes a `.github/workflows/daily_post.yml` workflow that triggers the script every day. 
-
-To enable this:
-
-1. Go to your repository's **Settings > Secrets and variables > Actions**.
-2. Add the following repository secrets:
-   - `GEMINI_API_KEY`
-   - `BLUESKY_USERNAME`
-   - `BLUESKY_APP_PASSWORD`
-   - `OPENAI_API_KEY` (Optional)
-
-You can also run the workflow manually anytime by clicking **Run workflow** under the "Actions" tab.
