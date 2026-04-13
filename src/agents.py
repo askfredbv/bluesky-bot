@@ -1,15 +1,25 @@
 import json
 import random
 import asyncio
+import re
 from typing import List, Tuple, Dict, Any, Optional
 from datetime import datetime, timezone
 import google.generativeai as genai
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
-    STYLE_GUIDELINES, SECONDARY_TOPICS, MAX_POST_LENGTH_BSKY
+    STYLE_GUIDELINES, SECONDARY_TOPICS, MAX_POST_LENGTH_BSKY,
+    REPLY_CAP_PER_RUN
 )
 from src.utils import load_replied_to, save_replied_to
 from src.logger import SafeLogger
+
+def _sanitize_mention(text: str) -> str:
+    """Strip potential prompt injection characters and normalize."""
+    # Basic cleaning
+    clean = text.replace('\n', ' ').strip()
+    # Mask common injection keywords (Fortress v4.4)
+    clean = re.sub(r"(ignore|previous|instruction|system|prompt)", "[redacted]", clean, flags=re.IGNORECASE)
+    return clean[:500]
 
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
@@ -30,7 +40,6 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 
     full_prompt = f"{prompt}\n\nRECENT TOPICS TO AVOID: {', '.join(recent_posts[:5])}\nFormat your response as a JSON list of strings."
     
-    # Run long-running AI generation in a thread
     response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
     
     try:
@@ -42,8 +51,8 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         return [response_text[:MAX_POST_LENGTH_BSKY]], topic
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
-    """Checks and handles interactions asynchronously."""
-    print("Checking for interactions/replies [Async]...")
+    """Checks and handles interactions asynchronously with Fortress capping."""
+    print("Checking for interactions and applying Fortress caps...")
     replied_to = load_replied_to()
     
     try:
@@ -54,16 +63,24 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
             print("No new mentions.")
             return
 
-        for mention in mentions:
+        # Fortress v4.4: Apply Reply Cap
+        active_mentions = mentions[:REPLY_CAP_PER_RUN]
+        if len(mentions) > REPLY_CAP_PER_RUN:
+            SafeLogger.warn(f"Metion cap reached! Processing first {REPLY_CAP_PER_RUN} out of {len(mentions)} notifications.")
+
+        for mention in active_mentions:
             if mention.uri in replied_to: continue
             
+            # Fortress v4.4: Sanitize Input
+            original_text = mention.record.text
+            sanitized_text = _sanitize_mention(original_text)
+            
             print(f"Replying to {mention.author.handle}...")
-            reply_instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nA user said: '{mention.record.text}'. Write a friendly, helpful reply under 250 chars."
+            reply_instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nUser Question: '{sanitized_text}'. Write a friendly, helpful reply under 250 chars."
             
             ai_reply = await asyncio.to_thread(_sync_generate, api_key, reply_instr)
             ai_reply = ai_reply.strip()
             
-            # Note: client is AsyncClient here
             parent_ref = {'cid': mention.cid, 'uri': mention.uri}
             root_ref = parent_ref
             
@@ -75,4 +92,4 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
             
         save_replied_to(replied_to)
     except Exception as e:
-        SafeLogger.error("Interaction error", e)
+        SafeLogger.error("Interaction error during Fortress handling", e)

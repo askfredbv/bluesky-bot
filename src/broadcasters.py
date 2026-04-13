@@ -3,8 +3,11 @@ from typing import List, Optional
 from atproto import AsyncClient, models
 from mastodon import Mastodon
 from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
+from src.utils import retry_with_backoff
 from src.logger import SafeLogger
+import random
 
+@retry_with_backoff
 async def post_to_bluesky(username, password, content_list: List[str], image_data: Optional[bytes] = None, image_alt: str = ""):
     """Async broadcaster for Bluesky using AsyncClient."""
     print(f"Broadcasting to Bluesky (@{username}) [Async]...")
@@ -30,9 +33,14 @@ async def post_to_bluesky(username, password, content_list: List[str], image_dat
             reply_ref = models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
             post = await client.send_post(text=post_text, reply_to=reply_ref)
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
+        
+        # Fortress v4.4: Intra-thread jitter
+        if len(content_list) > 1 and i < len(content_list) - 1:
+            await asyncio.sleep(random.uniform(1.0, 3.0))
     
     return client
 
+@retry_with_backoff
 async def post_to_mastodon(access_token: str, api_base_url: str, content_list: List[str], image_data: Optional[bytes] = None, image_alt: str = ""):
     """Async-wrapped broadcaster for Mastodon."""
     if not access_token:
@@ -57,6 +65,10 @@ async def post_to_mastodon(access_token: str, api_base_url: str, content_list: L
                 visibility='public'
             )
             last_id = status['id']
+            # Fortress v4.4: Intra-thread jitter
+            if len(content_list) > 1:
+                import time
+                time.sleep(random.uniform(1.0, 3.0))
             
     await asyncio.to_thread(_sync_post)
 

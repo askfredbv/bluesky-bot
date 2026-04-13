@@ -11,6 +11,12 @@ RECENT_POSTS_LIMIT: int = 20
 SEEN_FILE = Path("seen_articles.json")
 REPLIED_FILE = Path("replied_to.json")
 
+# Fortress Security (v4.4)
+REPLY_CAP_PER_RUN: int = 10
+MAX_API_RETRIES: int = 3
+BACKOFF_FACTOR: float = 2.0
+JITTER_RANGE: float = 2.0
+
 # Branding & BIOS
 APPROVED_BIO_BSKY = """🤖 Daily Poster: Technical Broadcasting Engine
 Curated by askfred. Always curious.

@@ -9,10 +9,34 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from PIL import Image
 import io
-from src.config import RSS_FEEDS, SEEN_FILE, REPLIED_FILE
+import functools
+from src.config import (
+    RSS_FEEDS, SEEN_FILE, REPLIED_FILE, 
+    MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE
+)
 from src.logger import SafeLogger
 
 socket.setdefaulttimeout(15)
+
+def retry_with_backoff(func):
+    """Decorator to retry an async function with exponential backoff and jitter (Fortress v4.4)."""
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        retries = 0
+        while retries < MAX_API_RETRIES:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                retries += 1
+                if retries == MAX_API_RETRIES:
+                    SafeLogger.error(f"Ultimate failure in {func.__name__} after {MAX_API_RETRIES} attempts.", e)
+                    raise e
+                
+                # Calculate sleep with jitter
+                wait_time = (BACKOFF_FACTOR ** retries) + random.uniform(0, JITTER_RANGE)
+                SafeLogger.warn(f"Retry {retries}/{MAX_API_RETRIES} for {func.__name__} in {wait_time:.2f}s...")
+                await asyncio.sleep(wait_time)
+    return wrapper
 
 def load_seen_articles() -> List[str]:
     if SEEN_FILE.exists():
