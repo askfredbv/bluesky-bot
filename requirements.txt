@@ -4,3 +4,4 @@ python-dotenv
 openai
 requests
 Pillow
+feedparser

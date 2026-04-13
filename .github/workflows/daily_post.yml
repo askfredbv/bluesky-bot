@@ -2,12 +2,14 @@ name: Daily Bluesky Post
 
 on:
   schedule:
-    - cron: '0 8 * * *' # 08:00 UTC (9am/10am CET depending on DST)
+    - cron: '0 8,14 * * *' # 08:00 and 14:00 UTC
   workflow_dispatch: # Allows manual trigger from the GitHub UI
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push seen_articles.json back to repo
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -29,3 +31,11 @@ jobs:
           BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
+
+      - name: Commit State
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_articles.json || true
+          git commit -m "chore: update seen articles [skip ci]" || true
+          git push || true

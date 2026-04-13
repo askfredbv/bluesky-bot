@@ -3,14 +3,43 @@ import sys
 import random
 import io
 import re
-from datetime import datetime, timezone
+import json
+import time
+import socket
+import feedparser
+from datetime import datetime, timezone, timedelta
 import google.generativeai as genai
 from atproto import Client
 from dotenv import load_dotenv
 import requests
 from PIL import Image
 
+# Set network timeout and load environment
+socket.setdefaulttimeout(15)
 load_dotenv()
+
+MAX_POST_LENGTH = 300
+MAX_GENERATION_RETRIES = 3
+RECENT_POSTS_LIMIT = 20
+SEEN_FILE = "seen_articles.json"
+
+RSS_FEEDS = [
+    "https://openai.com/news/rss.xml",
+    "https://huggingface.co/blog/feed.xml",
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
+    "https://export.arxiv.org/rss/cs.AI",
+    "https://deepmind.google/blog/feed/",
+    "https://simonwillison.net/atom/everything/",
+    "https://engineering.fb.com/category/ml-ai/feed/",
+    "https://arstechnica.com/tag/ai/feed/",
+    "https://www.anthropic.com/news.rss",
+    "https://the-decoder.com/feed/",
+    "https://www.deeplearning.ai/the-batch/rss/",
+    "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss",
+    "https://stability.ai/blog?format=rss",
+    "https://siliconangle.com/category/ai/feed"
+]
 
 MAX_POST_LENGTH = 300
 MAX_GENERATION_RETRIES = 3
@@ -41,6 +70,48 @@ SECONDARY_TOPICS = [
     "curiosity and lifelong learning",
 ]
 
+SYSTEM_INSTRUCTIONS_MENTOR = """
+You are 'The Mentor' for askfred.be. Your voice is professional, positive, and human-centric.
+You act as a friendly, experienced independent consultant sharing wisdom from the trenches of the IT world.
+
+CORE VALUES:
+- Work/Life Balance: Productivity isn't about working more; it's about working smarter.
+- Continuous Learning: Tech moves fast; curiosity is your best tool.
+- Human-First: Emphasize the people behind the code.
+
+WRITING STYLE:
+- Conversational but authoritative.
+- Down-to-earth and slightly humorous.
+- Avoid corporate buzzwords and robotic greetings.
+- Use 1-2 relevant emojis. 
+- Tone should be "warm professional."
+
+ARCHITECTURE:
+1. THE SPARK: Start with a relatable hook or a "did you know."
+2. THE WISDOM: Provide one practical, actionable takeaway.
+3. THE SPARKLE: End with a positive, encouraging closing.
+"""
+
+SYSTEM_INSTRUCTIONS_CURATOR = """
+You are 'The Curator' for askfred.be. Your voice is sophisticated, insightful, and slightly ahead of the curve.
+You don't just report news; you connect dots and provide a "Director's Cut" of the day's tech evolution.
+
+CORE VALUES:
+- Constructive Optimism: Every technical shift is a step toward a more capable future. 
+- Technical Authority: Use precise terms (e.g., "latency," "throughput," "LLMs") but explain their weight.
+
+WRITING STYLE:
+- Fast-paced and insightful.
+- Professional and analytical.
+- Avoid generic "Latest news..." starts.
+- Max 1 emoji. 
+
+ARCHITECTURE:
+1. THE CATALYST (Hook): Start with a specific piece of news.
+2. THE SYNTHESIS (Impact): Explain why this matters in the larger narrative of tech.
+3. THE INSIDER INSIGHT (The 'So What'): Provide a professional take on the long-term implication.
+"""
+
 STYLE_GUIDELINES = """
 Tone: Conversational, down-to-earth, slightly humorous, and highly practical.
 Values: Emphasizes work/life balance, continuous learning, working smart/efficiency, and making time for personal hobbies/play.
@@ -56,6 +127,58 @@ def get_recent_posts(username: str, limit: int = RECENT_POSTS_LIMIT) -> list[str
     feed = resp.json().get("feed", [])
     return [item["post"]["record"].get("text", "") for item in feed if "post" in item and isinstance(item["post"].get("record"), dict) and "text" in item["post"].get("record", {})]
 
+def load_seen_articles() -> list[str]:
+    """Load list of already posted news article links."""
+    if not os.path.exists(SEEN_FILE):
+        return []
+    try:
+        with open(SEEN_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading seen articles: {e}")
+        return []
+
+def save_seen_articles(seen_links: list[str]):
+    """Save list of posted news article links (keeps last 200)."""
+    try:
+        with open(SEEN_FILE, 'w') as f:
+            json.dump(seen_links[-200:], f, indent=2)
+    except Exception as e:
+        print(f"Error saving seen articles: {e}")
+
+def fetch_news(seen_links: list[str]) -> list[dict]:
+    """Fetch recent AI/Tech news from RSS feeds."""
+    print("Fetching news from RSS feeds...")
+    all_entries = []
+    now = datetime.now(timezone.utc)
+    lookback = now - timedelta(days=2) # Look at last 48 hours
+
+    for url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries:
+                if entry.link in seen_links:
+                    continue
+                
+                # Try to get publication date
+                pub_date = None
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed), timezone.utc)
+                
+                if not pub_date or pub_date > lookback:
+                    summary = entry.summary if hasattr(entry, 'summary') else ""
+                    clean_summary = re.sub('<[^<]+?>', '', summary)[:300]
+                    all_entries.append({
+                        "title": entry.title,
+                        "summary": clean_summary,
+                        "link": entry.link,
+                        "source": feed.feed.title if hasattr(feed.feed, 'title') else url
+                    })
+        except Exception as e:
+            print(f"Error parsing feed {url}: {e}")
+            
+    return all_entries
+
 def has_posted_today(username: str) -> bool:
     """Check if a post was already made today (UTC)."""
     url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor={username}&limit=1"
@@ -69,16 +192,32 @@ def has_posted_today(username: str) -> bool:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return latest_date == today
 
-def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[str, str]:
-    """Generates a professional, positive post."""
+def generate_post(api_key: str, recent_posts: list[str] | None = None, mode: str = "mentor", news_items: list[dict] | None = None) -> tuple[str, str]:
+    """Generates a professional, positive post based on the requested mode."""
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # Upgrade to the latest 3.1 model
+    model_id = 'gemini-3.1-flash-lite-preview'
     
-    today = datetime.now()
-    date_str = today.strftime("%B %d") # e.g., March 20
-    weekday = today.weekday() # 0 = Monday, 6 = Sunday
-    
-    language = random.choice(["English", "Dutch"])
+    if mode == "curator" and news_items:
+        system_instr = SYSTEM_INSTRUCTIONS_CURATOR
+        news_text = "\n".join([f"- {item['title']} (Source: {item['source']})\n  Context: {item['summary']}" for item in news_items[:5]])
+        prompt = f"""
+        Synthesize the following recent tech/AI updates into one high-engagement Bluesky post.
+        Focus on the *meaning* behind the updates.
+        
+        News Data:
+        {news_text}
+        
+        CRITICAL: The post must be strictly under {MAX_POST_LENGTH} characters.
+        """
+        chosen_topic = "News Curation"
+    else:
+        system_instr = SYSTEM_INSTRUCTIONS_MENTOR
+        today = datetime.now()
+        date_str = today.strftime("%B %d") # e.g., March 20
+        weekday = today.weekday() # 0 = Monday, 6 = Sunday
+        
+        language = random.choice(["English", "Dutch"])
     
     prompt_on_that_day = f"""
     Find an interesting, inspiring, or remarkable event that happened on this exact date ({date_str}) in a specific year in the past.
@@ -128,12 +267,11 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
     Guidelines:
     - Write the entire post naturally in {language}.
     - Keep it professional, positive, interesting, and helpful.
-    - NEVER use robotic phrases like "Happy Monday", "Tool Tuesday", or explicitly state the theme name. It should sound like a truly spontaneous, organic thought from a real person.
-    - Mimic the following personal writing style and tone:
-    {STYLE_GUIDELINES}{interactive_prompt}
+    - NEVER use robotic phrases like "Happy Monday", "Tool Tuesday", or explicitly state the theme name. 
+    {interactive_prompt}
 
     Write the exact final text for the post. Do not add any internal thoughts or surrounding quotes.
-    CRITICAL: Write exactly ONE concise, punchy main sentence. Then add ONE engaging question at the end. Keep the entire text under 250 characters.
+    CRITICAL: The post must be VERY concise. Aim for ~200-250 characters.
     """
     
     # Add recent posts context to avoid content repetition
@@ -141,6 +279,12 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None) -> tuple[
         recent_list = "\n".join(f"- {p}" for p in recent_posts)
         prompt += f"\n    IMPORTANT: Do NOT repeat or closely paraphrase any of these recent posts:\n{recent_list}\n"
     
+    # Initialize model with system instruction
+    model = genai.GenerativeModel(
+        model_name=model_id,
+        system_instruction=system_instr
+    )
+
     # Retry if Gemini generates text that exceeds the character limit
     for attempt in range(1, MAX_GENERATION_RETRIES + 1):
         response = model.generate_content(prompt)
@@ -266,61 +410,71 @@ def main():
         print("Please ensure GEMINI_API_KEY and BLUESKY_APP_PASSWORD are set.")
         sys.exit(1)
 
-    # Check if we already posted today
-    print("Checking for existing post today...")
-    if has_posted_today(bsky_username):
-        print("Already posted today, skipping.")
-        return
-
-    # Fetch recent posts for content repetition prevention
-    print("Fetching recent posts for context...")
+    # 1. State & Context
+    seen_links = load_seen_articles()
     recent_posts = get_recent_posts(bsky_username)
-    print(f"Found {len(recent_posts)} recent posts to use as context.")
+    
+    # 2. Determine Mode based on UTC hour
+    # Slot 1: ~08:00 UTC -> News Curator
+    # Slot 2: ~14:00 UTC -> Themed Mentor
+    current_hour = datetime.now(timezone.utc).hour
+    if current_hour < 11:
+        mode = "curator"
+        print("Slot 1 detected (Morning News Curator).")
+    else:
+        mode = "mentor"
+        print("Slot 2 detected (Afternoon Mentor).")
 
-    print("Generating post content...")
+    # 3. Mode-specific Logic
+    news_items = []
+    if mode == "curator":
+        news_items = fetch_news(seen_links)
+        if not news_items:
+            print("No new articles discovered. Switching to Mentor mode.")
+            mode = "mentor"
+
+    print(f"Post Generation Mode: {mode}")
     try:
-        content, chosen_topic = generate_post(gemini_api_key, recent_posts)
-        print(f"\nGenerated text ({len(content)} chars):\n---\n{content}\n---\n")
+        content, chosen_topic = generate_post(gemini_api_key, recent_posts, mode=mode, news_items=news_items)
+        print(f"\nGenerated Content ({len(content)} chars):\n---\n{content}\n---\n")
 
-        # Append 2-3 relevant hashtags if they fit within the character limit
+        # 4. Enhancements (Hashtags)
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        hashtag_instruction = (
-            f"Based on this Bluesky post, suggest 2-3 relevant hashtags to maximise discovery. "
-            f"Return only the hashtags separated by spaces (e.g. #opensource #devlife), nothing else:\n{content}"
-        )
-        hashtags = model.generate_content(hashtag_instruction).text.strip()
+        model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+        hashtag_instr = f"Suggest 2-3 relevant hashtags for this Bluesky post. Return ONLY the hashtags:\n{content}"
+        hashtags = model.generate_content(hashtag_instr).text.strip()
         if len(content) + 1 + len(hashtags) <= MAX_POST_LENGTH:
             content = f"{content} {hashtags}"
-            print(f"Hashtags appended: {hashtags}")
-        else:
-            print(f"Hashtags skipped (would exceed {MAX_POST_LENGTH} chars): {hashtags}")
+            print(f"Hashtags: {hashtags}")
 
+        # 5. Image Generation (Curated logic)
         image_data = None
         image_alt = "AI generated image"
-        if not openai_api_key:
-            print("Warning: OPENAI_API_KEY is not set — image generation is disabled.")
-        # Lower image chance to 20% to feel more organic/human rather than a bot spamming AI art
-        if openai_api_key and random.random() < 0.2:
-            print("Decided to generate an accompanying image. Drafting prompt...")
-            # Base the image on the exact generated text so it matches perfectly
-            img_instruction = f"Based on this final post: '{content}', write a short, highly descriptive English prompt for an AI image generator like DALL-E to create a beautiful, professional accompaniment image. No wrapping text."
-            image_prompt = model.generate_content(img_instruction).text.strip()
+        image_chance = 0.2 if mode == "mentor" else 0.05
+        
+        if openai_api_key and random.random() < image_chance:
+            print("Generating accompanying image...")
+            img_instr = f"Based on this: '{content}', write a short DALL-E prompt for a professional tech-themed image."
+            image_prompt = model.generate_content(img_instr).text.strip()
             image_alt = image_prompt
-            print(f"Image prompt: {image_prompt}\nGenerating image...")
             try:
                 image_data = generate_image(openai_api_key, image_prompt)
-                print(f"Image generated and downloaded successfully ({len(image_data)} bytes).")
                 image_data = compress_image(image_data)
-            except Exception as img_err:
-                print(f"Image generation failed: {img_err}. Proceeding without image.")
-                image_data = None
+            except Exception as e:
+                print(f"Image failed: {e}")
 
-        print("Applying finishing touches and validation...")
+        # 6. Safety Validation & Posting
         content = validate_and_rescue_post(content)
-
-        print("Posting to Bluesky...")
+        print("Finalizing post...")
         post_to_bluesky(bsky_username, bsky_app_password, content, image_data, image_alt)
+        
+        # 7. Update State (Seen articles)
+        if mode == "curator" and news_items:
+            # Mark the top processed ones as seen
+            new_links = [item['link'] for item in news_items[:5]]
+            seen_links.extend(new_links)
+            save_seen_articles(seen_links)
+
     except Exception as e:
         import traceback
         error_msg = str(e).replace("\n", "%0A")
