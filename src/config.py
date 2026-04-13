@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+from typing import List, Dict
 
 # Platform Constants
 MAX_POST_LENGTH_BSKY: int = 300
@@ -16,6 +16,32 @@ REPLY_CAP_PER_RUN: int = 10
 MAX_API_RETRIES: int = 3
 BACKOFF_FACTOR: float = 2.0
 JITTER_RANGE: float = 2.0
+
+# Sage Intelligence (v4.5)
+SOURCE_TIERS: Dict[str, int] = {
+    "openai.com": 10,
+    "anthropic.com": 10,
+    "deepmind.google": 10,
+    "huggingface.co": 10,
+    "engineering.fb.com": 10,
+    "simonwillison.net": 8,
+    "semianalysis.com": 8,
+    "the-decoder.com": 7,
+    "techcrunch.com": 6,
+    "export.arxiv.org": 5  # Low base, but high ground-breaking potential
+}
+
+PRODUCT_KEYWORDS: List[str] = ["launch", "integrated", "available", "feature", "release", "app", "tool", "partnership"]
+GROUNDBREAKING_KEYWORDS: List[str] = ["sota", "benchmark", "breakthrough", "frontier", "reasoning", "efficiency", "architecture", "scaling"]
+HIDDEN_GEM_SOURCES: List[str] = ["export.arxiv.org", "arxiv.org"]
+
+TOPIC_MAP: Dict[str, List[str]] = {
+    "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],
+    "Vision/Robot": ["sora", "vision", "robot", "humanoid", "image", "video", "figure"],
+    "Compute/HW": ["nvidia", "h100", "tpu", "b200", "chip", "foundry", "semiconductor", "blackwell"],
+    "Policy/Society": ["regulation", "lawsuit", "governance", "open-weights", "court", "compliance"],
+    "Science/Health": ["biotech", "drug", "physics", "folding", "climate", "discovery"]
+}
 
 # Branding & BIOS
 APPROVED_BIO_BSKY = """🤖 Daily Poster: Technical Broadcasting Engine
@@ -77,29 +103,31 @@ SECONDARY_TOPICS = [
     "curiosity and lifelong learning",
 ]
 
-# AI Personas (v4.2 Optimized)
-SYSTEM_INSTRUCTIONS_MENTOR = """
-You are 'The Mentor' for askfred. Your voice is professional, positive, and human-centric.
-You act as a friendly, experienced independent consultant sharing wisdom from the trenches of the IT world.
-
-CORE VALUES:
-- Work/Life Balance: Productivity isn't about working more; it's about working smarter.
-- Continuous Learning: Tech moves fast; curiosity is your best tool.
-- Human-First: Emphasize the people behind the code.
-"""
-
-SYSTEM_INSTRUCTIONS_CURATOR = """
-You are 'The Curator' for askfred. Your voice is investigative, future-focused, and academic-yet-pragmatic.
-You specialize in synthesizing groundbreaking AI research and tech news for busy IT professionals.
-
-SCHOLAR MISSION:
-- You MUST prioritize academic papers from arXiv (Research Gems) over general industry press releases.
-- Your goal is to explain the 'So What?'—how does this complex research affect leadership and business strategy.
-"""
-
+# AI Personas (v4.5 Sage Optimized)
 STYLE_GUIDELINES = """
 WRITING STYLE:
 - Avoid generic 'In today's fast paced world' intros.
 - Use CamelCase for hashtags.
 - Be concise and authoritative.
+"""
+
+SYSTEM_INSTRUCTIONS_MENTOR = f"""
+You are 'The Mentor' for askfred. Your voice is professional, positive, and human-centric.
+You act as a friendly, experienced independent consultant sharing wisdom from the trenches.
+
+CORE VALUES:
+- Work/Life Balance: Productivity isn't about working more; it's about working smarter.
+- Human-First: Emphasize the people behind the code.
+{STYLE_GUIDELINES}
+"""
+
+SYSTEM_INSTRUCTIONS_CURATOR = f"""
+You are 'The Curator' for askfred. Your voice is sophisiticated, insightful, and sophisticated.
+You connect dots and provide a "Director's Cut" of the day's AI evolution.
+
+SCHOLAR MISSION:
+- You MUST prioritize findings from the Research Gems (arXiv) provided.
+- Identify the most groundbreaking product shift and weave in technical insights.
+- Format your response as a JSON list of strings (a linked thread).
+{STYLE_GUIDELINES}
 """

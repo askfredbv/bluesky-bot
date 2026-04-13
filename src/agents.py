@@ -7,19 +7,44 @@ from datetime import datetime, timezone
 import google.generativeai as genai
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
-    STYLE_GUIDELINES, SECONDARY_TOPICS, MAX_POST_LENGTH_BSKY,
-    REPLY_CAP_PER_RUN
+    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN
 )
 from src.utils import load_replied_to, save_replied_to
 from src.logger import SafeLogger
 
 def _sanitize_mention(text: str) -> str:
-    """Strip potential prompt injection characters and normalize."""
-    # Basic cleaning
+    """Strip potential prompt injection characters and normalize (Fortress v4.4)."""
     clean = text.replace('\n', ' ').strip()
-    # Mask common injection keywords (Fortress v4.4)
     clean = re.sub(r"(ignore|previous|instruction|system|prompt)", "[redacted]", clean, flags=re.IGNORECASE)
     return clean[:500]
+
+def get_temporal_context() -> Dict[str, str]:
+    """Returns day-aware contextual themes (Sage v4.5)."""
+    now = datetime.now(timezone.utc)
+    day = now.strftime("%A")
+    hour = now.hour
+    
+    context = {"day": day}
+    
+    if day == "Monday":
+        context["theme"] = "Setting the weekly strategy and forward-looking momentum."
+    elif day == "Friday":
+        context["theme"] = "Capping off the week with synthesis and reflective analysis."
+    elif day in ["Saturday", "Sunday"]:
+        context["theme"] = "Weekend high-level vision and community reflection."
+    else:
+        context["theme"] = "Mid-week technical deep-dives and progress tracking."
+        
+    context["session"] = "Morning Intelligence Briefing" if hour < 12 else "Afternoon Mentor Deep-Dive"
+    return context
+
+def validate_summary(text: str) -> Tuple[bool, str]:
+    """Heuristic validation of AI output quality (Rescue v4.5)."""
+    if not text: return False, "Empty output"
+    if len(text) < 60: return False, "Too short for high-signal insight"
+    if re.search(r'(.)\1{4,}', text): return False, "Detected repetitive pattern/gibberish"
+    if "#" not in text: return False, "Missing thematic hashtags"
+    return True, "Success"
 
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
@@ -29,67 +54,71 @@ def _sync_generate(api_key: str, full_prompt: str) -> str:
     return response.text
 
 async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], str]:
-    """Generates content asynchronously using Gemini."""
+    """Generates content asynchronously with Rescue logic and Temporal Context."""
+    temporal = get_temporal_context()
+    
     if mode == "curator" and news_items:
-        context = "\n".join([f"- {i['title']}: {i['summary']} ({i['link']})" for i in news_items])
+        news_text = "\n".join([f"- {i['title']}: {i['summary']} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
-        prompt = f"{SYSTEM_INSTRUCTIONS_CURATOR}\n{STYLE_GUIDELINES}\n\nTOP RESEARCH/NEWS:\n{context}\n\nTask: Synthesize a professional thread (3-5 posts)."
+        instr = SYSTEM_INSTRUCTIONS_CURATOR
+        task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nRESEARCH:\n{news_text}\n\nTask: Synthesize a professional thread."
     else:
-        topic = random.choice(SECONDARY_TOPICS)
-        prompt = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n{STYLE_GUIDELINES}\n\nTHEME: {topic}\n\nTask: Share a human-centric IT mentorship wisdom thread (3-5 posts)."
+        topic = random.choice(["Career", "Automation", "Work-Life Balance", "Learning"])
+        instr = SYSTEM_INSTRUCTIONS_MENTOR
+        task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nTOPIC: {topic}\n\nTask: Share mentorship wisdom."
 
-    full_prompt = f"{prompt}\n\nRECENT TOPICS TO AVOID: {', '.join(recent_posts[:5])}\nFormat your response as a JSON list of strings."
+    full_prompt = f"{instr}\n\n{task}\n\nRECENTLY SAID (AVOID): {', '.join(recent_posts[:3])}\nFormat as a JSON list of strings (3-5 posts)."
     
-    response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
-    
-    try:
-        clean_text = response_text.replace('```json', '').replace('```', '').strip()
-        content_list = json.loads(clean_text)
-        return content_list, topic
-    except Exception as e:
-        SafeLogger.error("Failed to parse AI response", e)
-        return [response_text[:MAX_POST_LENGTH_BSKY]], topic
+    # Implementation of Rescue Pipeline
+    for attempt in range(2):
+        response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
+        try:
+            clean_text = response_text.replace('```json', '').replace('```', '').strip()
+            content_list = json.loads(clean_text)
+            
+            # Sub-validation of the primary post
+            is_valid, reason = validate_summary(content_list[0])
+            if is_valid: return content_list, topic
+            
+            # Repair Attempt: Force hashtags if missing but length is good
+            if reason == "Missing thematic hashtags":
+                print("Rescue Logic: Repairing missing hashtags...")
+                content_list[0] += f" #{topic.replace(' ', '')} #TechUpdate"
+                return content_list, topic
+                
+        except Exception:
+            pass
+        SafeLogger.warn(f"Output validation failed (Attempt {attempt+1}). Retrying...")
+
+    return [response_text[:MAX_POST_LENGTH_BSKY]], topic
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
-    """Checks and handles interactions asynchronously with Fortress capping."""
-    print("Checking for interactions and applying Fortress caps...")
+    """Checks and handles interactions asynchronously (Fortress v4.4)."""
+    print("Checking for interactions...")
     replied_to = load_replied_to()
     
     try:
         notifications = await client.app.bsky.notification.list_notifications()
         mentions = [n for n in notifications.notifications if n.reason == 'mention' and not n.is_read]
         
-        if not mentions:
-            print("No new mentions.")
-            return
+        if not mentions: return
 
-        # Fortress v4.4: Apply Reply Cap
         active_mentions = mentions[:REPLY_CAP_PER_RUN]
-        if len(mentions) > REPLY_CAP_PER_RUN:
-            SafeLogger.warn(f"Metion cap reached! Processing first {REPLY_CAP_PER_RUN} out of {len(mentions)} notifications.")
-
         for mention in active_mentions:
             if mention.uri in replied_to: continue
             
-            # Fortress v4.4: Sanitize Input
-            original_text = mention.record.text
-            sanitized_text = _sanitize_mention(original_text)
-            
+            sanitized_text = _sanitize_mention(mention.record.text)
             print(f"Replying to {mention.author.handle}...")
-            reply_instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nUser Question: '{sanitized_text}'. Write a friendly, helpful reply under 250 chars."
             
+            reply_instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nQuestion: '{sanitized_text}'. Write a helpful, friendly reply under 250 chars."
             ai_reply = await asyncio.to_thread(_sync_generate, api_key, reply_instr)
-            ai_reply = ai_reply.strip()[:250]  # Hard cap matching the prompt instruction
-            
-            parent_ref = {'cid': mention.cid, 'uri': mention.uri}
-            root_ref = parent_ref
             
             await client.send_post(
-                text=ai_reply,
-                reply_to={'parent': parent_ref, 'root': root_ref}
+                text=ai_reply.strip()[:290],
+                reply_to={'parent': {'cid': mention.cid, 'uri': mention.uri}, 'root': {'cid': mention.cid, 'uri': mention.uri}}
             )
             replied_to.append(mention.uri)
             
         save_replied_to(replied_to)
     except Exception as e:
-        SafeLogger.error("Interaction error during Fortress handling", e)
+        SafeLogger.error("Interaction error", e)

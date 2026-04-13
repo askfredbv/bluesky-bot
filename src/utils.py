@@ -5,22 +5,23 @@ import asyncio
 import httpx
 import feedparser
 import socket
+import functools
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
-from PIL import Image
-import io
-import functools
+from bs4 import BeautifulSoup
 from src.config import (
     RSS_FEEDS, SEEN_FILE, REPLIED_FILE, 
-    MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE
+    MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE,
+    SOURCE_TIERS, PRODUCT_KEYWORDS, GROUNDBREAKING_KEYWORDS,
+    TOPIC_MAP, HIDDEN_GEM_SOURCES
 )
 from src.logger import SafeLogger
 
 socket.setdefaulttimeout(15)
 
 def retry_with_backoff(func):
-    """Decorator to retry an async function with exponential backoff and jitter (Fortress v4.4)."""
+    """Decorator to retry an async function with exponential backoff and jitter."""
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         retries = 0
@@ -32,26 +33,28 @@ def retry_with_backoff(func):
                 if retries == MAX_API_RETRIES:
                     SafeLogger.error(f"Ultimate failure in {func.__name__} after {MAX_API_RETRIES} attempts.", e)
                     raise e
-                
-                # Calculate sleep with jitter
                 wait_time = (BACKOFF_FACTOR ** retries) + random.uniform(0, JITTER_RANGE)
                 SafeLogger.warn(f"Retry {retries}/{MAX_API_RETRIES} for {func.__name__} in {wait_time:.2f}s...")
                 await asyncio.sleep(wait_time)
     return wrapper
 
-def load_seen_articles() -> List[str]:
+def load_seen_articles() -> Dict[str, Any]:
+    """Load seen state including links and recent topics."""
     if SEEN_FILE.exists():
         try:
             with open(SEEN_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, list): # Migration from old format
+                    return {"links": data, "recent_topics": []}
+                return data
         except Exception as e:
             SafeLogger.error("Failed to load seen articles", e)
-    return []
+    return {"links": [], "recent_topics": []}
 
-def save_seen_articles(seen_links: List[str]) -> None:
+def save_seen_articles(seen_data: Dict[str, Any]) -> None:
     try:
         with open(SEEN_FILE, "w") as f:
-            json.dump(seen_links, f, indent=2)
+            json.dump(seen_data, f, indent=2)
     except Exception as e:
         SafeLogger.error("Failed to save seen articles", e)
 
@@ -71,6 +74,68 @@ def save_replied_to(replied_ids: List[str]) -> None:
     except Exception as e:
         SafeLogger.error("Failed to save replied state", e)
 
+async def get_link_metadata(url: str) -> Dict[str, Any]:
+    """Scrapes OpenGraph metadata from a URL (v4.5 Sage replacement for DALL-E)."""
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            og_title = soup.find("meta", property="og:title")
+            og_description = soup.find("meta", property="og:description")
+            og_image = soup.find("meta", property="og:image")
+            
+            # Download image if exists for uploading as blob
+            img_data = None
+            if og_image and og_image.get('content'):
+                img_res = await client.get(og_image['content'], timeout=5.0)
+                if img_res.status_code == 200:
+                    img_data = img_res.content
+
+            return {
+                "title": og_title['content'] if og_title else soup.title.string if soup.title else "Technical Insight",
+                "description": og_description['content'][:200] if og_description else "",
+                "image_data": img_data,
+                "url": url
+            }
+    except Exception as e:
+        SafeLogger.error(f"Metadata extraction failed for {url}", e)
+        return {"title": "Source Link", "description": "", "image_data": None, "url": url}
+
+def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
+    """Calculates a weighted 5-factor score (Elite v4.5 pattern)."""
+    score = 0.0
+    text = f"{item['title']} {item['description']}".lower()
+    
+    # 1. Source Tier
+    source_domain = item['link'].split('/')[2]
+    score += next((val for domain, val in SOURCE_TIERS.items() if domain in source_domain), 3.0)
+    
+    # 2. Product Boost
+    if any(kw in text for kw in PRODUCT_KEYWORDS): score += 5.0
+    
+    # 3. Groundbreaking Tech Boost
+    if any(kw in text for kw in GROUNDBREAKING_KEYWORDS): score += 7.0
+    
+    # 4. Time Decay (Lose 0.5 point per hour)
+    age_hours = (datetime.now(timezone.utc) - pub_date).total_seconds() / 3600
+    score -= (age_hours * 0.5)
+    
+    # 5. Topic Diversity Penalty
+    item_topic = "General"
+    for topic, kws in TOPIC_MAP.items():
+        if any(kw in text for kw in kws):
+            item_topic = topic
+            break
+    
+    if item_topic in recent_topics:
+        score -= 12.0 # Heavy "Discernment" penalty for repetition
+        
+    item['detected_topic'] = item_topic
+    return score
+
 async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[str, Any]]:
     try:
         response = await client.get(url, timeout=10.0)
@@ -80,68 +145,50 @@ async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[st
         lookback = now - timedelta(days=2)
         
         for entry in feed.entries:
-            pub_date = None
-            if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-            if not pub_date or pub_date > lookback:
-                summary = entry.summary if hasattr(entry, 'summary') else ""
-                clean_summary = re.sub('<[^<]+?>', '', summary)[:300]
-                items.append({
-                    "title": entry.title,
-                    "description": clean_summary,
-                    "link": entry.link,
-                    "source": feed.feed.title if hasattr(feed.feed, 'title') else url
-                })
+            time_struct = entry.get('published_parsed') or entry.get('updated_parsed')
+            if time_struct:
+                import calendar
+                pub_date = datetime.fromtimestamp(calendar.timegm(time_struct), timezone.utc)
+                if pub_date > lookback:
+                    summary = entry.get('summary', entry.get('description', ""))
+                    clean_summary = re.sub('<[^<]+?>', '', summary)[:500]
+                    items.append({
+                        "title": entry.title,
+                        "description": clean_summary,
+                        "link": entry.link,
+                        "pub_date": pub_date
+                    })
         return items
     except Exception as e:
         SafeLogger.error(f"Error parsing feed {url}", e)
         return []
 
-async def fetch_news(seen_links: List[str], limit: int = 5) -> List[Dict[str, Any]]:
-    print(f"Fetching news from {len(RSS_FEEDS)} RSS feeds concurrently...")
+async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int = 5) -> List[Dict[str, Any]]:
+    """Weighted asynchronous fetch with Hidden Gem injection (v4.5 Sage)."""
+    print(f"Fetching news from {len(RSS_FEEDS)} feeds with Sage Intelligence...")
     
     async with httpx.AsyncClient(follow_redirects=True) as client:
         tasks = [fetch_single_feed(client, url) for url in RSS_FEEDS]
         results = await asyncio.gather(*tasks)
     
-    all_items = [item for sublist in results for item in sublist]
+    all_raw = [item for sublist in results for item in sublist]
+    unique_unseen = [i for i in {i['link']: i for i in all_raw}.values() if i['link'] not in seen_links]
     
-    processed_items = []
-    for item in all_items:
-        source_link = item.get('link', '')
-        is_scholar_gem = "arxiv.org" in source_link
-        processed_items.append({
-            'title': item.get('title', 'No Title'),
-            'summary': item.get('description', 'No summary available.'),
-            'link': source_link,
-            'source': 'arXiv' if is_scholar_gem else 'Tech News',
-            'is_scholar_gem': is_scholar_gem
-        })
-
-    unseen_items = [i for i in processed_items if i['link'] not in seen_links]
-    # Deduplicate by link
-    unique_unseen = {i['link']: i for i in unseen_items}.values()
+    # Apply Sage Scoring
+    for item in unique_unseen:
+        item['score'] = calculate_relevance_score(item, item['pub_date'], recent_topics)
     
-    sorted_items = sorted(unique_unseen, key=lambda x: x['is_scholar_gem'], reverse=True)
-    return list(sorted_items)[:limit]
-
-async def generate_image(api_key: str, prompt: str) -> bytes:
-    print(f"Generating image with DALL-E 3 (Async): {prompt[:50]}...")
-    url = "https://api.openai.com/v1/images/generations"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    data = {"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1024x1024"}
+    ranked = sorted(unique_unseen, key=lambda x: x['score'], reverse=True)
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=data, timeout=60.0)
-        response.raise_for_status()
-        image_url = response.json()['data'][0]['url']
-        img_response = await client.get(image_url, timeout=60.0)
-        return img_response.content
-
-def compress_image(image_bytes: bytes) -> bytes:
-    img = Image.open(io.BytesIO(image_bytes))
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
-    buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=85, optimize=True)
-    return buffer.getvalue()
+    # Hidden Gem Injection (Force at least one arXiv paper if none in top)
+    top_candidates = ranked[:limit]
+    has_gem = any(any(gem in i['link'] for gem in HIDDEN_GEM_SOURCES) for i in top_candidates)
+    
+    if not has_gem and len(ranked) > limit:
+        for i in range(limit, len(ranked)):
+            if any(gem in ranked[i]['link'] for gem in HIDDEN_GEM_SOURCES):
+                print(f"Injecting Hidden Gem: {ranked[i]['title'][:40]}...")
+                top_candidates[limit-1] = ranked[i] # Swap last spot for the Gem
+                break
+                
+    return top_candidates

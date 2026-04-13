@@ -1,7 +1,5 @@
 # Bluesky & Mastodon Daily Poster (v4.4.0) 🚀
 
-![Social Preview](og-image.png)
-
 An autonomous, multi-channel technical broadcasting engine for **Bluesky** and **Mastodon**. This project is part of the **askfred** technical suite, focused on delivering high-signal academic and professional insights to the decentralized web.
 
 ## 📡 Live Status

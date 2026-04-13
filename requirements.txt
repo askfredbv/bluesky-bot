@@ -9,3 +9,4 @@ Pillow
 feedparser
 pytest
 pytest-asyncio
+beautifulsoup4

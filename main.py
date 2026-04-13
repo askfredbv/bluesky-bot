@@ -1,6 +1,5 @@
 import os
 import sys
-import random
 import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -13,11 +12,11 @@ from src.config import (
 )
 from src.utils import (
     load_seen_articles, save_seen_articles, fetch_news,
-    generate_image, compress_image
+    get_link_metadata
 )
 from src.agents import generate_content, handle_interactions
 from src.broadcasters import (
-    post_to_bluesky, post_to_mastodon, 
+    post_to_bluesky, post_to_mastodon, post_to_threads,
     update_profile_bio, update_profile_bio_mastodon
 )
 from src.logger import SafeLogger
@@ -54,21 +53,21 @@ async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
         
         with open(readme_path, "w") as f:
             f.writelines(new_lines)
-        print("Updated README Live Status Dashboard.")
     except Exception as e:
         SafeLogger.error("Failed to update status dashboard", e)
 
 async def main():
-    print("--- Daily Poster Engine v4.4 Fortress (Async) ---")
+    print("--- AskFred Engine v4.5 Sage Intelligence ---")
     
     # Environment Check
     creds = {
         "gemini": os.environ.get("GEMINI_API_KEY"),
         "bsky_user": os.environ.get("BLUESKY_USERNAME", "askfred.be"),
         "bsky_pass": os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD"),
-        "openai": os.environ.get("OPENAI_API_KEY"),
         "masto_token": os.environ.get("MASTODON_ACCESS_TOKEN"),
-        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
+        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social",
+        "threads_token": os.environ.get("THREADS_ACCESS_TOKEN"),
+        "threads_id": os.environ.get("THREADS_USER_ID")
     }
 
     if not all([creds["gemini"], creds["bsky_user"], creds["bsky_pass"]]):
@@ -78,51 +77,40 @@ async def main():
     # 1. Slot Strategy
     current_hour = datetime.now(timezone.utc).hour
     mode = "curator" if current_hour < 11 else "mentor"
-    print(f"Slot Triggered: {mode.upper()} mode.")
-
-    # 2. Context Initialization (Silent Handshake)
-    seen_links = load_seen_articles()
     
-    # Mode-specific Fetch
+    # 2. State & Context (Topic Memory)
+    seen_data = load_seen_articles()
+    
+    # 3. Weighted Curation
     news_items = []
+    link_meta = None
     if mode == "curator":
-        news_items = await fetch_news(seen_links)
+        news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
         if not news_items:
-            print("No fresh research. Falling back to Mentor mode.")
+            print("No high-signal updates. Shifting to Mentor mode.")
             mode = "mentor"
+        else:
+            # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
+            link_meta = await get_link_metadata(news_items[0]['link'])
 
-    # Fetch context from Bsky silently - this client will also be reused for broadcasting
+    # Silent handshake for Bsky context
     from atproto import AsyncClient
     bsky_client = AsyncClient()
     await bsky_client.login(creds["bsky_user"], creds["bsky_pass"])
     recent_posts = await get_recent_posts(bsky_client, creds["bsky_user"])
     
-    # 3. Content Synthesis
+    # 4. Content Synthesis (Temporal Aware)
     content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
 
-    # 4. Asynchronous Image Generation (Parallel with logic if needed, but sequential for prompt dependency)
-    image_data = None
-    image_alt = "AI generated technical synthesis visual"
-    if creds["openai"] and random.random() < (0.3 if mode == "mentor" else 0.1):
-        try:
-            image_data = await generate_image(creds["openai"], f"Minimalist professional tech banner for: {content_list[0]}")
-            image_data = compress_image(image_data)
-        except Exception as e:
-            SafeLogger.error("Visual asset generation failed", e)
-
-    # 5. Elite Parallel Broadcasting
-    print(f"Initiating Concurrent Delivery to {creds['masto_url']} and Bluesky...")
-    
-    # We run both broadcasts in parallel
+    # 5. Sage Parallel Broadcasting
+    print(f"Initiating Concurrent Delivery to Bluesky, Mastodon, and Threads...")
     broadcast_tasks = [
-        post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, image_data, image_alt),
-        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list, image_data, image_alt)
+        post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, link_meta),
+        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list),
+        post_to_threads(creds["threads_token"], creds["threads_id"], content_list, news_items[0]['link'] if news_items else None)
     ]
     
-    # Gather results
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
-    
-    # Identify the Bsky client for interactions (reuse the pre-authenticated client)
     bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
     # 6. Post-Run Automation
@@ -134,13 +122,18 @@ async def main():
     ]
     await asyncio.gather(*automation_tasks, return_exceptions=True)
 
-    # 7. Persistence
+    # 7. Knowledge Persistence
     if mode == "curator" and news_items:
-        # Avoid growing the file too large - prune to last 200 items
-        seen_links = (seen_links + [i['link'] for i in news_items[:5]])[-200:]
-        save_seen_articles(seen_links)
+        seen_data["links"] = (seen_data["links"] + [i['link'] for i in news_items])[-200:]
+        
+        # Sense topic to update memory
+        topic_cat = news_items[0].get('detected_topic', 'General')
+        if topic_cat != 'General':
+            seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
+            
+        save_seen_articles(seen_data)
 
-    print(f"--- [v4.3 Elite] Broadcast Cycle Complete in {mode} mode ---")
+    print(f"--- [v4.5 Sage] Intelligence Cycle Complete ({mode}) ---")
 
 if __name__ == "__main__":
     asyncio.run(main())
