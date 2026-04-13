@@ -545,7 +545,7 @@ def main():
     # Slot 1: ~08:00 UTC -> News Curator
     # Slot 2: ~14:00 UTC -> Themed Mentor
     current_hour = datetime.now(timezone.utc).hour
-    if current_hour < 9:
+    if current_hour < 11:
         mode = "curator"
         print("Slot 1 detected (Morning News Curator).")
     else:

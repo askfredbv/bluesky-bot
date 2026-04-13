@@ -2,7 +2,8 @@ name: Daily Bluesky Post
 
 on:
   schedule:
-    - cron: '0 6,12 * * *' # 08:00 and 14:00 local time (UTC+2)
+    - cron: '0 8 * * *'    # 10:00 AM local (Morning Curator News)
+    - cron: '30 14 * * *'  # 04:30 PM local (Afternoon Mentor Wisdom)
   workflow_dispatch: # Allows manual trigger from the GitHub UI
 
 jobs:
