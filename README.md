@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.2.0) 🚀
+# Bluesky & Mastodon Daily Poster (v4.4.0) 🚀
 
 ![Social Preview](og-image.png)
 
@@ -7,20 +7,25 @@ An autonomous, multi-channel technical broadcasting engine for **Bluesky** and *
 ## 📡 Live Status
 | Component | Status | Last Run | Mode |
 | :--- | :--- | :--- | :--- |
-| **Broadcaster** | Operational | 2026-04-13 | ☕ Curator |
-| **Signal Strength** | High (Scholar) | -- | -- |
+| **Broadcaster** | Operational | 2026-04-13 | 💡 Mentor |
+| **Signal Strength** | Elite (Async) | -- | -- |
 
 ---
 
 ## 🚀 Key Features
 
-### 🎓 The Scholar Engine (v4.2)
-*   **Academic Priority**: Automatically prioritizes and surfaces papers from **arXiv** (`cs.AI`, `cs.LG`, `cs.RO`) over standard tech blogs.
-*   **Scholar Highlight**: Specialized synthesis logic that translates complex research into pragmatics for IT leadership and business strategy.
+### 🎓 The Scholar Engine (v4.4)
+*   **Academic Priority**: Automatically prioritizes research from **arXiv** (`cs.AI`, `cs.LG`, `cs.RO`) using a weighted ranking algorithm.
+*   **Scholar Highlight**: specialized synthesis logic that translates research into pragmatics for IT leadership and business strategy.
+
+### 🛡️ Security & Resilience (The Fortress)
+*   **Interaction Circuit Breakers**: Hard caps on daily replies (max 10/session) to prevent mention-spam and API credit exhaustion.
+*   **Anti-Spam Sanitization**: Automatic redaction of prompt-injection keywords from user mentions.
+*   **API Backoff & Jitter**: Implements exponential backoff and randomized jitter to ensure the bot survives platform instability and avoids rate-limit bans.
 
 ### 📡 Multi-Channel Broadcasting
-*   **Dual-Platform Sync**: Concurrent broadcasting to Bluesky and Mastodon with platform-specific character optimizations.
-*   **Smart Threading**: AI-driven logic that identifies complex updates and automatically generates a linked **3-5 post thread**.
+*   **Asynchronous Parallel Delivery**: Concurrent posting to Bluesky and Mastodon for maximum performance and reduced jitter.
+*   **Smart Threading**: AI-driven logic that automatically generates a linked **3-5 post thread** with human-like timing.
 
 ### 🤖 Dual-Persona Intelligence
 *   **Morning Run (08:00 UTC / 10:00 local)**: **The Curator** — High-signal tech and research synthesis.
