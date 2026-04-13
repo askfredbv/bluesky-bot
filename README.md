@@ -1,25 +1,30 @@
-# AskFred: The Scholar-Level Tech Mentor (v4.1.0) 🎓
+# Bluesky & Mastodon Daily Poster (v4.2.0) 🚀
 
-AskFred is a sophisticated, autonomous content engine designed to manage a professional technical presence across the decentralized web (**Bluesky** and **Mastodon**). 
+![Social Preview](og-image.png)
 
-Starting with v4.1 (The Scholar Update), AskFred has evolved from a news aggregator into a **Technical Authority**, prioritizing peer-reviewed academic research over general industry news.
+An autonomous, multi-channel technical broadcasting engine for **Bluesky** and **Mastodon**. This project is part of the **askfred** technical suite, focused on delivering high-signal academic and professional insights to the decentralized web.
+
+## 📡 Live Status
+| Component | Status | Last Run | Mode |
+| :--- | :--- | :--- | :--- |
+| **Broadcaster** | Operational | 2026-04-13 | ☕ Curator |
+| **Signal Strength** | High (Scholar) | -- | -- |
+
+---
 
 ## 🚀 Key Features
 
-### 🎓 The Scholar Engine (v4.1)
+### 🎓 The Scholar Engine (v4.2)
 *   **Academic Priority**: Automatically prioritizes and surfaces papers from **arXiv** (`cs.AI`, `cs.LG`, `cs.RO`) over standard tech blogs.
 *   **Scholar Highlight**: Specialized synthesis logic that translates complex research into pragmatics for IT leadership and business strategy.
 
-### 📡 Multi-Channel Broadcasting (v4.0)
+### 📡 Multi-Channel Broadcasting
 *   **Dual-Platform Sync**: Concurrent broadcasting to Bluesky and Mastodon with platform-specific character optimizations.
-*   **Smart Threading**: AI-driven logic that identifies complex updates and automatically generates a linked **3-5 post thread** to provide deep context.
+*   **Smart Threading**: AI-driven logic that identifies complex updates and automatically generates a linked **3-5 post thread**.
 
 ### 🤖 Dual-Persona Intelligence
-*   **Morning Run (08:00 UTC)**: **The Curator** — High-signal tech and research synthesis.
-*   **Afternoon Run (14:30 UTC)**: **The Mentor** — Professional IT wisdom, career advice, and work-life balance tips.
-
-### 🦾 Improved Interaction Loop
-*   **Continuous Engagement**: Monitors notifications and handles replies in the "Mentor" persona, fostering genuine community growth.
+*   **Morning Run (08:00 UTC / 10:00 local)**: **The Curator** — High-signal tech and research synthesis.
+*   **Afternoon Run (14:30 UTC / 16:30 local)**: **The Mentor** — Professional wisdom, career advice, and work-life balance tips.
 
 ## 🛠️ Setup & Configuration
 
@@ -42,4 +47,4 @@ python main.py
 ```
 
 ## ⚖️ License
-MIT License. Built with ❤️ for the technical community.
+MIT License. Built with ❤️ by **askfred**.
