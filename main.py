@@ -2,6 +2,7 @@ import os
 import sys
 import random
 import io
+import re
 from datetime import datetime, timezone
 import google.generativeai as genai
 from atproto import Client
@@ -219,10 +220,35 @@ def compress_image(image_data: bytes, max_size_bytes: int = 950000) -> bytes:
 
     return compressed_data # Return the smallest version we could get
 
-def post_to_bluesky(username: str, password: str, text: str, image_data: bytes | None = None, image_alt: str = "AI generated image"):
-    """Authenticates and creates a post on Bluesky."""
+def validate_and_rescue_post(content: str) -> str:
+    """Checks the quality of the post and attempts to fix common generation issues."""
+    rescued_content = content.strip()
+    
+    # 1. Repetition/Gibberish check (Basic)
+    if " + 9 + 9" in rescued_content or re.search(r'(.)\1{5,}', rescued_content):
+        raise ValueError("Detected potential gibberish or excessive repetition in post.")
+        
+    # 2. Length check (Self-correction for refusal messages or failed drafts)
+    if len(rescued_content) < 30:
+        # If it's too short, it might be a "I can't do that" or a failure. Let's not post it.
+        raise ValueError(f"Post is suspiciously short ({len(rescued_content)} chars). Aborting for safety.")
+
+    # 3. Hashtag Rescue Logic
+    if "#" not in rescued_content:
+        print("Rescue Logic: AI forgot hashtags. Appending defaults...")
+        hashtags = "#IT #Tech #Automation"
+        if len(rescued_content) + 1 + len(hashtags) <= MAX_POST_LENGTH:
+            rescued_content = f"{rescued_content} {hashtags}"
+        else:
+            # If it doesn't fit, we just let it slide but log it
+            print("Could not append hashtags due to length limit.")
+            
+    return rescued_content
+
+def post_to_bluesky(username: str, app_password: str, text: str, image_data: bytes | None = None, image_alt: str = "AI generated image"):
+    """Authenticates and creates a post on Bluesky using an App Password."""
     client = Client()
-    client.login(username, password)
+    client.login(username, app_password)
     if image_data:
         client.send_image(text=text, image=image_data, image_alt=image_alt)
     else:
@@ -232,12 +258,12 @@ def post_to_bluesky(username: str, password: str, text: str, image_data: bytes |
 def main():
     gemini_api_key = os.environ.get("GEMINI_API_KEY")
     bsky_username = os.environ.get("BLUESKY_USERNAME", "askfred.be")
-    bsky_password = os.environ.get("BLUESKY_PASSWORD")
+    bsky_app_password = os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD")
     openai_api_key = os.environ.get("OPENAI_API_KEY")
     
-    if not all([gemini_api_key, bsky_username, bsky_password]):
+    if not all([gemini_api_key, bsky_username, bsky_app_password]):
         print("Error: Missing required environment variables (.env file).")
-        print("Please ensure GEMINI_API_KEY and BLUESKY_PASSWORD are set.")
+        print("Please ensure GEMINI_API_KEY and BLUESKY_APP_PASSWORD are set.")
         sys.exit(1)
 
     # Check if we already posted today
@@ -290,8 +316,11 @@ def main():
                 print(f"Image generation failed: {img_err}. Proceeding without image.")
                 image_data = None
 
+        print("Applying finishing touches and validation...")
+        content = validate_and_rescue_post(content)
+
         print("Posting to Bluesky...")
-        post_to_bluesky(bsky_username, bsky_password, content, image_data, image_alt)
+        post_to_bluesky(bsky_username, bsky_app_password, content, image_data, image_alt)
     except Exception as e:
         import traceback
         error_msg = str(e).replace("\n", "%0A")
