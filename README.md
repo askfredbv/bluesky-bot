@@ -6,7 +6,7 @@ An autonomous, multi-channel technical broadcasting engine for **Bluesky** and *
 | Component | Status | Last Run | Mode |
 | :--- | :--- | :--- | :--- |
 | **Broadcaster** | Operational | 2026-04-13 | 💡 Mentor |
-| **Signal Strength** | Sage (Async) | -- | -- |
+| **Signal Strength** | Elite (Async) | -- | -- |
 
 ---
 
