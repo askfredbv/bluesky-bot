@@ -9,7 +9,7 @@ import socket
 import feedparser
 from datetime import datetime, timezone, timedelta
 import google.generativeai as genai
-from atproto import Client
+from atproto import Client, models
 from dotenv import load_dotenv
 import requests
 from PIL import Image
@@ -145,6 +145,24 @@ def save_seen_articles(seen_links: list[str]):
             json.dump(seen_links[-200:], f, indent=2)
     except Exception as e:
         print(f"Error saving seen articles: {e}")
+
+def load_replied_to() -> list[str]:
+    """Load list of notification IDs already handled."""
+    if not os.path.exists("replied_to.json"):
+        return []
+    try:
+        with open("replied_to.json", "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def save_replied_to(replied_list: list[str]):
+    """Save list of handled notification IDs (keeps last 500)."""
+    try:
+        with open("replied_to.json", "w") as f:
+            json.dump(replied_list[-500:], f, indent=2)
+    except Exception as e:
+        print(f"Error saving replied_to state: {e}")
 
 def fetch_news(seen_links: list[str]) -> list[dict]:
     """Fetch recent AI/Tech news from RSS feeds."""
@@ -287,6 +305,11 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None, mode: str
         system_instruction=system_instr
     )
 
+    # CamelCase Hashtag Logic (Accessibility)
+    def to_camel_case(s: str) -> str:
+        s = re.sub(r'[^a-zA-Z0-9\s]', '', s)
+        return "".join(word.capitalize() for word in s.split())
+
     # Retry if Gemini generates text that exceeds the character limit
     for attempt in range(1, MAX_GENERATION_RETRIES + 1):
         response = model.generate_content(prompt)
@@ -400,6 +423,54 @@ def post_to_bluesky(username: str, app_password: str, text: str, image_data: byt
     else:
         client.send_post(text)
     print("Post successfully sent to Bluesky!")
+    return client # Return client for potential reuse in main
+
+def handle_interactions(client: Client, gemini_api_key: str):
+    """Checks for new replies and responds using the Mentor persona."""
+    print("Checking for new interactions...")
+    replied_to = load_replied_to()
+    try:
+        # Fetch notifications
+        response = client.app.bsky.notification.list_notifications()
+        notifications = response.notifications
+        
+        new_replies = [n for n in notifications if n.reason == 'reply' and n.uri not in replied_to and not n.is_read]
+        
+        if not new_replies:
+            print("No new replies to handle.")
+            return
+
+        print(f"Found {len(new_replies)} new replies. Generating responses...")
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel('gemini-3.1-flash-lite-preview', system_instruction=SYSTEM_INSTRUCTIONS_MENTOR)
+
+        for reply in new_replies[:5]: # Limit to 5 per slot to avoid spamming
+            try:
+                parent_post = client.get_post(reply.uri)
+                user_text = parent_post.value.text
+                user_handle = reply.author.handle
+                
+                reply_prompt = f"User @{user_handle} said: '{user_text}'. Write a short, helpful, and encouraging reply (max 200 chars) in your Mentor persona. Be friendly but professional."
+                reply_text = model.generate_content(reply_prompt).text.strip()
+                
+                # Construct reply reference
+                # Note: For atproto v0.0.65+, we use models.AppBskyFeedPost.ReplyRef
+                root_ref = parent_post.value.reply.root if parent_post.value.reply else models.ComAtprotoRepoStrongRef.Main(cid=parent_post.cid, uri=parent_post.uri)
+                parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=parent_post.cid, uri=parent_post.uri)
+                
+                client.send_post(
+                    text=reply_text,
+                    reply_to=models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
+                )
+                print(f"Replied to @{user_handle}: {reply_text[:50]}...")
+                replied_to.append(reply.uri)
+                
+            except Exception as e:
+                print(f"Failed to reply to {reply.uri}: {e}")
+        
+        save_replied_to(replied_to)
+    except Exception as e:
+        print(f"Error in handle_interactions: {e}")
 
 def main():
     gemini_api_key = os.environ.get("GEMINI_API_KEY")
@@ -440,10 +511,14 @@ def main():
         content, chosen_topic = generate_post(gemini_api_key, recent_posts, mode=mode, news_items=news_items)
         print(f"\nGenerated Content ({len(content)} chars):\n---\n{content}\n---\n")
 
-        # 4. Enhancements (Hashtags)
+        # 4. Enhancements (CamelCase Hashtags)
         genai.configure(api_key=gemini_api_key)
         model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
-        hashtag_instr = f"Suggest 2-3 relevant hashtags for this Bluesky post. Return ONLY the hashtags:\n{content}"
+        hashtag_instr = (
+            f"Suggest 2-3 relevant hashtags for this Bluesky post. "
+            f"CRITICAL: Use CamelCase/PascalCase for accessibility (e.g. #OpenSource, #WebDev). "
+            f"Return ONLY the hashtags:\n{content}"
+        )
         hashtags = model.generate_content(hashtag_instr).text.strip()
         if len(content) + 1 + len(hashtags) <= MAX_POST_LENGTH:
             content = f"{content} {hashtags}"
@@ -458,7 +533,11 @@ def main():
             print("Generating accompanying image...")
             img_instr = f"Based on this: '{content}', write a short DALL-E prompt for a professional tech-themed image."
             image_prompt = model.generate_content(img_instr).text.strip()
-            image_alt = image_prompt
+            
+            # Accessibility: Generate enhanced Alt Text
+            alt_instr = f"Write a high-quality, concise accessibility description (alt text) for an image generated by this prompt: '{image_prompt}'. Focus on composition and mood for the visually impaired. Limit to 200 chars."
+            image_alt = model.generate_content(alt_instr).text.strip()
+            
             try:
                 image_data = generate_image(openai_api_key, image_prompt)
                 image_data = compress_image(image_data)
@@ -468,9 +547,12 @@ def main():
         # 6. Safety Validation & Posting
         content = validate_and_rescue_post(content)
         print("Finalizing post...")
-        post_to_bluesky(bsky_username, bsky_app_password, content, image_data, image_alt)
+        client = post_to_bluesky(bsky_username, bsky_app_password, content, image_data, image_alt)
         
-        # 7. Update State (Seen articles)
+        # 7. Interaction Loop (v3.0)
+        handle_interactions(client, gemini_api_key)
+
+        # 8. Update State (Seen articles)
         if mode == "curator" and news_items:
             # Mark the top processed ones as seen
             new_links = [item['link'] for item in news_items[:5]]
