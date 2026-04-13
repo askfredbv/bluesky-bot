@@ -1,48 +1,49 @@
 import pytest
-from src.utils import fetch_news
+from datetime import datetime, timezone, timedelta
+from src.utils import calculate_relevance_score
 
-# Mock Data
-MOCK_PROCESSED_ITEMS = [
-    {
-        'title': 'General AI News',
-        'summary': 'Some news.',
-        'link': 'https://techcrunch.com/1',
-        'is_scholar_gem': False
-    },
-    {
-        'title': 'Scholar Research Gem',
-        'summary': 'Groundbreaking paper.',
-        'link': 'https://arxiv.org/abs/123.456',
-        'is_scholar_gem': True
-    }
-]
-
-@pytest.mark.asyncio
-async def test_ranking_logic(monkeypatch):
-    """Verify that arXiv papers are prioritized at the top of the queue."""
-    # We mock out the fetch layer and just test the processing/ranking logic
-    async def mock_fetch(*args, **kwargs):
-        return MOCK_PROCESSED_ITEMS
-
-    # I'll create a small unit testable version of the logic inside the test 
-    # since fetch_news is a bit monolithic currently. 
-    # Refactoring fetch_news to be more testable was part of the audit findings.
+def test_source_tier_ranking():
+    """Verify that elite sources (OpenAI) get higher scores than general news."""
+    item_openai = {'title': 'OpenAI Update', 'description': 'News', 'link': 'https://openai.com/1'}
+    item_general = {'title': 'General Tech', 'description': 'News', 'link': 'https://techcrunch.com/1'}
     
-    seen_links = []
+    now = datetime.now(timezone.utc)
+    score_openai = calculate_relevance_score(item_openai, now, [])
+    score_general = calculate_relevance_score(item_general, now, [])
     
-    # In a real scenario, we'd mock fetch_single_feed. 
-    # For now, let's verify if the sorting in fetch_news would work.
-    processed = sorted(MOCK_PROCESSED_ITEMS, key=lambda x: x['is_scholar_gem'], reverse=True)
-    
-    assert processed[0]['title'] == 'Scholar Research Gem'
-    assert processed[1]['title'] == 'General AI News'
+    assert score_openai > score_general
 
-def test_deduplication():
-    """Verify that duplicate links are removed."""
-    items = [
-        {'link': 'link1', 'is_scholar_gem': True},
-        {'link': 'link1', 'is_scholar_gem': True},
-        {'link': 'link2', 'is_scholar_gem': False}
-    ]
-    unique_unseen = {i['link']: i for i in items}.values()
-    assert len(unique_unseen) == 2
+def test_groundbreaking_boost():
+    """Verify that 'breakthrough' keywords significantly boost the score."""
+    item_normal = {'title': 'AI Tool', 'description': 'An app.', 'link': 'https://techcrunch.com/1'}
+    item_frontier = {'title': 'Frontier Model Breakthrough', 'description': 'SOTA benchmark scaling.', 'link': 'https://techcrunch.com/2'}
+    
+    now = datetime.now(timezone.utc)
+    score_normal = calculate_relevance_score(item_normal, now, [])
+    score_frontier = calculate_relevance_score(item_frontier, now, [])
+    
+    assert score_frontier > score_normal + 10 # Should be significantly higher
+
+def test_topic_diversity_penalty():
+    """Verify that recently discussed topics (Topic Memory) get penalized."""
+    item = {'title': 'LLM Scaling', 'description': 'GPT news.', 'link': 'https://techcrunch.com/1'}
+    now = datetime.now(timezone.utc)
+    
+    # 1. No penalty
+    score_fresh = calculate_relevance_score(item, now, [])
+    
+    # 2. Penalty (LLM is in recent topics)
+    score_penalized = calculate_relevance_score(item, now, ["LLMs"])
+    
+    assert score_penalized == score_fresh - 12.0
+
+def test_time_decay():
+    """Verify that older articles lose points over time."""
+    item = {'title': 'News', 'description': 'Description', 'link': 'https://techcrunch.com/1'}
+    now = datetime.now(timezone.utc)
+    older = now - timedelta(hours=10)
+    
+    score_new = calculate_relevance_score(item, now, [])
+    score_old = calculate_relevance_score(item, older, [])
+    
+    assert score_new > score_old

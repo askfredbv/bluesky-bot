@@ -65,9 +65,7 @@ async def main():
         "bsky_user": os.environ.get("BLUESKY_USERNAME", "askfred.be"),
         "bsky_pass": os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD"),
         "masto_token": os.environ.get("MASTODON_ACCESS_TOKEN"),
-        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social",
-        "threads_token": os.environ.get("THREADS_ACCESS_TOKEN"),
-        "threads_id": os.environ.get("THREADS_USER_ID")
+        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
     }
 
     if not all([creds["gemini"], creds["bsky_user"], creds["bsky_pass"]]):
@@ -105,9 +103,9 @@ async def main():
     # 5. Sage Parallel Broadcasting
     print(f"Initiating Concurrent Delivery to Bluesky, Mastodon, and Threads...")
     broadcast_tasks = [
+    broadcast_tasks = [
         post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, link_meta),
-        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list),
-        post_to_threads(creds["threads_token"], creds["threads_id"], content_list, news_items[0]['link'] if news_items else None)
+        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list)
     ]
     
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)

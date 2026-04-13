@@ -75,36 +75,6 @@ async def post_to_mastodon(access_token: str, api_base_url: str, content_list: L
             
     await asyncio.to_thread(_sync_post)
 
-@retry_with_backoff
-async def post_to_threads(access_token: str, user_id: str, content_list: List[str], link_url: Optional[str] = None):
-    """Async broadcaster for Meta Threads (v4.5 Sage reach)."""
-    if not access_token or not user_id: return
-    print(f"Broadcasting to Threads ({user_id})...")
-    
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for i, post_text in enumerate(content_list):
-            # 1. Create Media Container
-            container_url = f"https://graph.threads.net/v1.0/{user_id}/threads"
-            payload = {
-                "media_type": "TEXT",
-                "text": post_text[:500],
-                "access_token": access_token
-            }
-            # Attach link to the first post if available
-            if i == 0 and link_url:
-                payload["link"] = link_url
-
-            res = await client.post(container_url, data=payload)
-            res.raise_for_status()
-            creation_id = res.json().get("id")
-            
-            # 2. Publish Container
-            publish_url = f"https://graph.threads.net/v1.0/{user_id}/threads_publish"
-            pub_res = await client.post(publish_url, data={"creation_id": creation_id, "access_token": access_token})
-            pub_res.raise_for_status()
-            
-            if len(content_list) > 1:
-                await asyncio.sleep(random.uniform(2.0, 5.0))
 
 async def update_profile_bio(client: AsyncClient, bio_text: str):
     """Update only the bio text asynchronously."""
