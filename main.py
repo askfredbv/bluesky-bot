@@ -22,6 +22,12 @@ MAX_POST_LENGTH = 300
 MAX_GENERATION_RETRIES = 3
 RECENT_POSTS_LIMIT = 20
 SEEN_FILE = "seen_articles.json"
+APPROVED_BIO = """💡 Your friendly IT Mentor in the trenches. Supporting work-life balance and continuous learning.
+
+🌅 Morning tech curation | ☕ Afternoon IT advice. 
+🚀 Helping you work smarter, not harder. 
+
+🔗 askfred.be"""
 
 RSS_FEEDS = [
     "https://openai.com/news/rss.xml",
@@ -472,6 +478,32 @@ def handle_interactions(client: Client, gemini_api_key: str):
     except Exception as e:
         print(f"Error in handle_interactions: {e}")
 
+def update_profile_bio(client: Client, new_bio: str):
+    """Updates the Bluesky profile bio if it's different from the current one."""
+    try:
+        # Fetch current profile to avoid overwriting display name or images
+        profile = client.get_profile(client.me.handle)
+        current_bio = profile.description or ""
+        
+        if current_bio.strip() != new_bio.strip():
+            print("Syncing profile bio with approved v3.0 strategy...")
+            client.com.atproto.repo.put_record(models.ComAtprotoRepoPutRecord.Data(
+                collection=models.ids.AppBskyActorProfile,
+                repo=client.me.did,
+                rkey='self',
+                record=models.AppBskyActorProfile.Record(
+                    description=new_bio,
+                    display_name=profile.display_name,
+                    avatar=profile.avatar,
+                    banner=profile.banner
+                )
+            ))
+            print("Profile bio updated successfully!")
+        else:
+            print("Profile bio is already synchronized.")
+    except Exception as e:
+        print(f"Warning: Could not update profile bio: {e}")
+
 def main():
     gemini_api_key = os.environ.get("GEMINI_API_KEY")
     bsky_username = os.environ.get("BLUESKY_USERNAME", "askfred.be")
@@ -552,7 +584,10 @@ def main():
         # 7. Interaction Loop (v3.0)
         handle_interactions(client, gemini_api_key)
 
-        # 8. Update State (Seen articles)
+        # 8. Profile Sync (v3.0)
+        update_profile_bio(client, APPROVED_BIO)
+
+        # 9. Update State (Seen articles)
         if mode == "curator" and news_items:
             # Mark the top processed ones as seen
             new_links = [item['link'] for item in news_items[:5]]
