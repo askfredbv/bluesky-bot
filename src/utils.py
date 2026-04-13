@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
+import io
+from PIL import Image
 from src.config import (
     RSS_FEEDS, SEEN_FILE, REPLIED_FILE, 
     MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE,
@@ -74,6 +76,29 @@ def save_replied_to(replied_ids: List[str]) -> None:
     except Exception as e:
         SafeLogger.error("Failed to save replied state", e)
 
+def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
+    """Compresses an image to stay under AtProto's 1MB blob limit."""
+    try:
+        img_io = io.BytesIO(image_bytes)
+        img = Image.open(img_io)
+    except Exception as e:
+        SafeLogger.warn(f"Failed to open image for compression: {e}")
+        return image_bytes
+
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    quality = 90
+    out_io = io.BytesIO()
+    img.save(out_io, format="JPEG", quality=quality)
+    
+    while out_io.tell() > max_size_kb * 1024 and quality > 10:
+        quality -= 10
+        out_io = io.BytesIO()
+        img.save(out_io, format="JPEG", quality=quality)
+
+    return out_io.getvalue()
+
 async def get_link_metadata(url: str) -> Dict[str, Any]:
     """Scrapes OpenGraph metadata from a URL (v4.5 Sage replacement for DALL-E)."""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -93,6 +118,9 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
                 img_res = await client.get(og_image['content'], timeout=5.0)
                 if img_res.status_code == 200:
                     img_data = img_res.content
+                    if len(img_data) > 900 * 1024:
+                        print(f"Compressing large OpenGraph image ({len(img_data)//1024}KB)...")
+                        img_data = compress_image(img_data)
 
             return {
                 "title": og_title['content'] if og_title else soup.title.string if soup.title else "Technical Insight",
