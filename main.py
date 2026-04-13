@@ -16,7 +16,7 @@ from src.utils import (
 )
 from src.agents import generate_content, handle_interactions
 from src.broadcasters import (
-    post_to_bluesky, post_to_mastodon, post_to_threads,
+    post_to_bluesky, post_to_mastodon,
     update_profile_bio, update_profile_bio_mastodon
 )
 from src.logger import SafeLogger
