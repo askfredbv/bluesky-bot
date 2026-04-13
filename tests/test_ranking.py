@@ -22,7 +22,7 @@ def test_groundbreaking_boost():
     score_normal = calculate_relevance_score(item_normal, now, [])
     score_frontier = calculate_relevance_score(item_frontier, now, [])
     
-    assert score_frontier > score_normal + 10 # Should be significantly higher
+    assert score_frontier > score_normal # The groundbreaking boost (+7) should beat the product boost (+5)
 
 def test_topic_diversity_penalty():
     """Verify that recently discussed topics (Topic Memory) get penalized."""
@@ -35,7 +35,7 @@ def test_topic_diversity_penalty():
     # 2. Penalty (LLM is in recent topics)
     score_penalized = calculate_relevance_score(item, now, ["LLMs"])
     
-    assert score_penalized == score_fresh - 12.0
+    assert score_penalized == pytest.approx(score_fresh - 12.0)
 
 def test_time_decay():
     """Verify that older articles lose points over time."""

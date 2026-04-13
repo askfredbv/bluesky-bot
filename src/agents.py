@@ -49,7 +49,7 @@ def validate_summary(text: str) -> Tuple[bool, str]:
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-lite-preview-0924')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     response = model.generate_content(full_prompt)
     return response.text
 
