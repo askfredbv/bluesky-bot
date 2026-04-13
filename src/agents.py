@@ -4,7 +4,7 @@ import asyncio
 import re
 from typing import List, Tuple, Dict, Any, Optional
 from datetime import datetime, timezone
-import google.generativeai as genai
+from google import genai
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
     MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN
@@ -48,9 +48,11 @@ def validate_summary(text: str) -> Tuple[bool, str]:
 
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content(full_prompt)
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=full_prompt,
+    )
     return response.text
 
 async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], str]:

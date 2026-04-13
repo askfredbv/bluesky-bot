@@ -1,6 +1,6 @@
 Mastodon.py
 atproto
-google-generativeai
+google-genai
 python-dotenv
 openai
 requests
