@@ -4,5 +4,8 @@ google-generativeai
 python-dotenv
 openai
 requests
+httpx
 Pillow
 feedparser
+pytest
+pytest-asyncio

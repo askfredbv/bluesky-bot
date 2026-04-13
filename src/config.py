@@ -1,14 +1,15 @@
-import os
+from pathlib import Path
+from typing import List
 
 # Platform Constants
-MAX_POST_LENGTH_BSKY = 300
-MAX_POST_LENGTH_MASTODON = 500
-MAX_GENERATION_RETRIES = 3
-RECENT_POSTS_LIMIT = 20
+MAX_POST_LENGTH_BSKY: int = 300
+MAX_POST_LENGTH_MASTODON: int = 500
+MAX_GENERATION_RETRIES: int = 3
+RECENT_POSTS_LIMIT: int = 20
 
 # State Files
-SEEN_FILE = "seen_articles.json"
-REPLIED_FILE = "replied_to.json"
+SEEN_FILE = Path("seen_articles.json")
+REPLIED_FILE = Path("replied_to.json")
 
 # Branding & BIOS
 APPROVED_BIO_BSKY = """🤖 Daily Poster: Technical Broadcasting Engine

@@ -1,14 +1,15 @@
 import os
 import sys
 import random
+import asyncio
 from datetime import datetime, timezone
-import google.generativeai as genai
+from typing import List, Optional
 from dotenv import load_dotenv
 
 # Internal Imports
 from src.config import (
-    RSS_FEEDS, APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
-    MAX_POST_LENGTH_BSKY, MAX_GENERATION_RETRIES
+    SEEN_FILE, APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
+    MAX_POST_LENGTH_BSKY
 )
 from src.utils import (
     load_seen_articles, save_seen_articles, fetch_news,
@@ -22,18 +23,20 @@ from src.broadcasters import (
 
 load_dotenv()
 
-def get_recent_posts(client, handle):
+async def get_recent_posts(client, handle: str) -> List[str]:
+    """Fetched recent posts silently from a logged-in client."""
     try:
-        response = client.app.bsky.feed.get_author_feed(actor=handle, limit=10)
+        response = await client.app.bsky.feed.get_author_feed(actor=handle, limit=10)
         return [p.post.record.text for p in response.feed if hasattr(p.post.record, 'text')]
     except Exception as e:
         print(f"Error fetching recent posts: {e}")
         return []
 
-def update_live_status(mode, signal_strength="High (Scholar)"):
-    """v4.2 Pro Feature: Automatically update the README dashboard."""
+async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
+    """v4.3 Elite Feature: Automatically update the README dashboard."""
     try:
-        with open("README.md", "r") as f:
+        readme_path = os.path.join(os.getcwd(), "README.md")
+        with open(readme_path, "r") as f:
             lines = f.readlines()
         
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -48,17 +51,17 @@ def update_live_status(mode, signal_strength="High (Scholar)"):
             else:
                 new_lines.append(line)
         
-        with open("README.md", "w") as f:
+        with open(readme_path, "w") as f:
             f.writelines(new_lines)
         print("Updated README Live Status Dashboard.")
     except Exception as e:
         print(f"Failed to update status dashboard: {e}")
 
-def main():
-    print("--- Daily Poster Engine v4.2 Internal Startup ---")
+async def main():
+    print("--- Daily Poster Engine v4.3 Elite (Async) ---")
     
     # Environment Check
-    api_keys = {
+    creds = {
         "gemini": os.environ.get("GEMINI_API_KEY"),
         "bsky_user": os.environ.get("BLUESKY_USERNAME", "askfred.be"),
         "bsky_pass": os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD"),
@@ -67,66 +70,75 @@ def main():
         "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
     }
 
-    if not all([api_keys["gemini"], api_keys["bsky_user"], api_keys["bsky_pass"]]):
+    if not all([creds["gemini"], creds["bsky_user"], creds["bsky_pass"]]):
         print("Error: Missing core credentials.")
         sys.exit(1)
 
-    # 1. Determine Mode
+    # 1. Slot Strategy
     current_hour = datetime.now(timezone.utc).hour
     mode = "curator" if current_hour < 11 else "mentor"
     print(f"Slot Triggered: {mode.upper()} mode.")
 
-    # 2. State & Context
+    # 2. Context Initialization (Silent Handshake)
     seen_links = load_seen_articles()
     
-    # 3. Mode-specific Logic
+    # Mode-specific Fetch
     news_items = []
     if mode == "curator":
-        news_items = fetch_news(seen_links)
+        news_items = await fetch_news(seen_links)
         if not news_items:
-            print("No fresh news. Falling back to Mentor mode.")
+            print("No fresh research. Falling back to Mentor mode.")
             mode = "mentor"
 
-    # 4. Generate Content
-    # We briefly log in to get recent posts for deduplication
-    temp_client = post_to_bluesky(api_keys["bsky_user"], api_keys["bsky_pass"], ["Initial Handshake..."])
-    recent_posts = get_recent_posts(temp_client, api_keys["bsky_user"])
+    # Fetch context from Bsky (No dummy post required anymore)
+    from atproto import AsyncClient
+    temp_client = AsyncClient()
+    await temp_client.login(creds["bsky_user"], creds["bsky_pass"])
+    recent_posts = await get_recent_posts(temp_client, creds["bsky_user"])
     
-    content_list, chosen_topic = generate_content(api_keys["gemini"], recent_posts, mode=mode, news_items=news_items)
+    # 3. Content Synthesis
+    content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
 
-    # 5. Image Injection
+    # 4. Asynchronous Image Generation (Parallel with logic if needed, but sequential for prompt dependency)
     image_data = None
-    image_alt = "AI generated clinical tech visual"
-    if api_keys["openai"] and random.random() < (0.3 if mode == "mentor" else 0.1):
-        print("Generating visual asset...")
-        genai.configure(api_key=api_keys["gemini"])
-        vision_model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt_instr = f"Create a minimalist DALL-E 3 prompt for: '{content_list[0]}'. Dark mode, tech/mentor vibe."
-        image_prompt = vision_model.generate_content(prompt_instr).text.strip()
-        image_alt = vision_model.generate_content(f"Write 10-word alt text for: {image_prompt}").text.strip()
+    image_alt = "AI generated technical synthesis visual"
+    if creds["openai"] and random.random() < (0.3 if mode == "mentor" else 0.1):
         try:
-            image_data = compress_image(generate_image(api_keys["openai"], image_prompt))
-        except Exception as e: print(f"Visual failed: {e}")
+            image_data = await generate_image(creds["openai"], f"Minimalist professional tech banner for: {content_list[0]}")
+            image_data = compress_image(image_data)
+        except Exception as e: print(f"Visual asset generation skipped: {e}")
 
-    # 6. Broadcasting
-    print("Initiating Multi-Channel Broadcast...")
-    # Bluesky
-    client = post_to_bluesky(api_keys["bsky_user"], api_keys["bsky_pass"], content_list, image_data, image_alt)
-    # Mastodon
-    post_to_mastodon(api_keys["masto_token"], api_keys["masto_url"], content_list, image_data, image_alt)
+    # 5. Elite Parallel Broadcasting
+    print(f"Initiating Concurrent Delivery to {creds['masto_url']} and Bluesky...")
     
-    # 7. Post-Broadcast Actions
-    handle_interactions(client, api_keys["bsky_user"], api_keys["gemini"])
-    update_profile_bio(client, APPROVED_BIO_BSKY)
-    update_profile_bio_mastodon(api_keys["masto_token"], api_keys["masto_url"], APPROVED_BIO_MASTODON)
+    # We run both broadcasts in parallel
+    broadcast_tasks = [
+        post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, image_data, image_alt),
+        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list, image_data, image_alt)
+    ]
     
-    # 8. Update State & Dashboard
+    # Gather results
+    results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
+    
+    # Identify the Bsky client for interactions (first task)
+    bsky_client = results[0] if not isinstance(results[0], Exception) else temp_client
+
+    # 6. Post-Run Automation
+    automation_tasks = [
+        handle_interactions(bsky_client, creds["bsky_user"], creds["gemini"]),
+        update_profile_bio(bsky_client, APPROVED_BIO_BSKY),
+        update_profile_bio_mastodon(creds["masto_token"], creds["masto_url"], APPROVED_BIO_MASTODON),
+        update_live_status(mode)
+    ]
+    await asyncio.gather(*automation_tasks, return_exceptions=True)
+
+    # 7. Persistence
     if mode == "curator" and news_items:
-        seen_links.extend([i['link'] for i in news_items[:5]])
+        # Avoid growing the file too large - prune to last 200 items
+        seen_links = (seen_links + [i['link'] for i in news_items[:5]])[-200:]
         save_seen_articles(seen_links)
-    
-    update_live_status(mode)
-    print("--- Broadcast Complete ---")
+
+    print(f"--- [v4.3 Elite] Broadcast Cycle Complete in {mode} mode ---")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
