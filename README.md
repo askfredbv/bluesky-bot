@@ -16,7 +16,7 @@ Starting with v4.1 (The Scholar Update), AskFred has evolved from a news aggrega
 
 ### 🤖 Dual-Persona Intelligence
 *   **Morning Run (08:00 UTC)**: **The Curator** — High-signal tech and research synthesis.
-*   **Afternoon Run (14:00 UTC)**: **The Mentor** — Professional IT wisdom, career advice, and work-life balance tips.
+*   **Afternoon Run (14:30 UTC)**: **The Mentor** — Professional IT wisdom, career advice, and work-life balance tips.
 
 ### 🦾 Improved Interaction Loop
 *   **Continuous Engagement**: Monitors notifications and handles replies in the "Mentor" persona, fostering genuine community growth.
