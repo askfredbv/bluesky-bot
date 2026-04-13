@@ -54,10 +54,27 @@ def post_to_mastodon(access_token, api_base_url, content_list, image_data=None, 
         last_id = status['id']
 
 def update_profile_bio(client, bio_text):
+    """Update only the bio text, preserving existing metadata."""
     try:
-        current_profile = client.get_profile(client.me.handle)
-        client.update_profile(display_name=current_profile.display_name, description=bio_text)
-        print("Updated Bluesky profile bio.")
+        # Fetch existing profile record
+        profile_record = client.com.atproto.repo.get_record(
+            collection='app.bsky.actor.profile',
+            repo=client.me.did,
+            rkey='self'
+        ).value
+
+        # Update description in the record dictionary
+        profile_dict = profile_record.copy() if hasattr(profile_record, 'copy') else dict(profile_record)
+        profile_dict['description'] = bio_text
+
+        # Put the record back
+        client.com.atproto.repo.put_record(
+            collection='app.bsky.actor.profile',
+            repo=client.me.did,
+            rkey='self',
+            record=profile_dict
+        )
+        print("Updated Bluesky profile bio (v4.2 Robust Sync).")
     except Exception as e:
         print(f"Failed to update Bluesky bio: {e}")
 

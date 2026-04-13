@@ -64,7 +64,7 @@ def main():
         "bsky_pass": os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD"),
         "openai": os.environ.get("OPENAI_API_KEY"),
         "masto_token": os.environ.get("MASTODON_ACCESS_TOKEN"),
-        "masto_url": os.environ.get("MASTODON_API_BASE_URL", "https://mastodon.social")
+        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
     }
 
     if not all([api_keys["gemini"], api_keys["bsky_user"], api_keys["bsky_pass"]]):
