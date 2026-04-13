@@ -9,10 +9,8 @@ This is an automated Python script that generates and posts daily content to Blu
 - **Interactive Prompts**: 50% chance to append a conversation-starting question to posts to boost engagement.
 - **Bilingual Delivery**: Posts are randomly generated in either **English** or **Dutch** (50/50 chance).
 - **AI Image Attachments**: Approximately 50% of the time, the script will draft a prompt and use **OpenAI (DALL-E 3)** to generate a corresponding image attachment. The image prompt is used as the alt text for improved accessibility and discoverability.
-- **Hashtags**: After each post is generated, Gemini suggests 2–3 relevant hashtags that are appended automatically if they fit within the character limit.
-- **Duplicate Post Guard**: Checks the Bluesky feed before posting and skips if a post was already made today (UTC).
-- **Content Repetition Prevention**: Feeds the last 20 posts into the AI prompt to avoid repeating similar topics or phrasing. Each post also blends 1–2 randomly chosen secondary themes (from a pool of 22) alongside the main weekday topic, ensuring variety across multiple subjects.
-- **Robust Error Handling**: Retries content generation if it exceeds the character limit, and exits with a non-zero code on failure so GitHub Actions properly reports errors.
+- **Safety Net & Validation**: Includes a "Rescue Logic" layer that checks every post for quality. It automatically detects and blocks repetitive gibberish, ensures posts aren't suspiciously short, and can even automatically append hashtags if the AI forgets them.
+- **Robust Error Handling**: Iteratively compresses and resizes images to meet Bluesky's 1MB limit. It also retries content generation if it exceeds character limits and provides detailed traceback logging for troubleshooting.
 - **Fully Automated**: Runs daily via a GitHub Actions scheduled workflow at 08:00 UTC (09:00 CET / 10:00 CEST).
 
 ## Prerequisites
@@ -25,39 +23,49 @@ This is an automated Python script that generates and posts daily content to Blu
 ## Setup
 
 1. **Clone the repository and install dependencies:**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 2. **Configure Environment Variables:**
+
    Copy the provided `.env.example` to a new `.env` file:
+
    ```bash
    cp .env.example .env
    ```
+
    Fill in your credentials:
+
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
    BLUESKY_USERNAME=your.bsky.handle
-   BLUESKY_PASSWORD=your_app_password_here
+   BLUESKY_APP_PASSWORD=your_app_password_here
    OPENAI_API_KEY=your_openai_api_key_here  # Optional: For AI image generation
    ```
 
 ## Usage
 
 ### Run Locally
+
 To generate a post and instantly send it to Bluesky:
+
 ```bash
 python main.py
 ```
 
 ### GitHub Actions (Automated Run)
+
 This repository includes a `.github/workflows/daily_post.yml` workflow that triggers the script every day. 
+
 To enable this:
+
 1. Go to your repository's **Settings > Secrets and variables > Actions**.
 2. Add the following repository secrets:
    - `GEMINI_API_KEY`
    - `BLUESKY_USERNAME`
-   - `BLUESKY_PASSWORD`
+   - `BLUESKY_APP_PASSWORD`
    - `OPENAI_API_KEY` (Optional)
 
 You can also run the workflow manually anytime by clicking **Run workflow** under the "Actions" tab.
