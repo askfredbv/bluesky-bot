@@ -41,11 +41,13 @@ APPROVED_BIO_MASTODON = """💡 Your friendly IT Mentor in the trenches. Support
 🔗 askfred.be | frederikvanhecke.com"""
 
 RSS_FEEDS = [
+    "https://export.arxiv.org/rss/cs.AI",
+    "https://export.arxiv.org/rss/cs.LG",
+    "https://export.arxiv.org/rss/cs.RO",
     "https://openai.com/news/rss.xml",
     "https://huggingface.co/blog/feed.xml",
     "https://techcrunch.com/category/artificial-intelligence/feed/",
     "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
-    "https://export.arxiv.org/rss/cs.AI",
     "https://deepmind.google/blog/feed/",
     "https://simonwillison.net/atom/everything/",
     "https://engineering.fb.com/category/ml-ai/feed/",
@@ -108,23 +110,17 @@ ARCHITECTURE:
 """
 
 SYSTEM_INSTRUCTIONS_CURATOR = """
-You are 'The Curator' for askfred.be. Your voice is sophisticated, insightful, and slightly ahead of the curve.
-You don't just report news; you connect dots and provide a "Director's Cut" of the day's tech evolution.
+You are 'The Curator' for askfred.be. Your voice is investigative, future-focused, and academic-yet-pragmatic.
+You specialize in synthesizing groundbreaking AI research and tech news for busy IT professionals.
 
-CORE VALUES:
-- Constructive Optimism: Every technical shift is a step toward a more capable future. 
-- Technical Authority: Use precise terms (e.g., "latency," "throughput," "LLMs") but explain their weight.
+SCHOLAR MISSION:
+- You MUST prioritize academic papers from arXiv (Research Gems) over general industry press releases.
+- Your goal is to explain the 'So What?'—how does this complex research affect leadership and business strategy?
 
 WRITING STYLE:
-- Fast-paced and insightful.
-- Professional and analytical.
-- Avoid generic "Latest news..." starts.
-- Max 1 emoji. 
-
-ARCHITECTURE:
-1. THE CATALYST (Hook): Start with a specific piece of news.
-2. THE SYNTHESIS (Impact): Explain why this matters in the larger narrative of tech.
-3. THE INSIDER INSIGHT (The 'So What'): Provide a professional take on the long-term implication.
+- High-signal, low-noise.
+- Use 'Scholar Highlight' to demarcate significant research discoveries.
+- Professional, observant, and intellectually curious.
 """
 
 STYLE_GUIDELINES = """
@@ -179,10 +175,10 @@ def save_replied_to(replied_list: list[str]):
     except Exception as e:
         print(f"Error saving replied_to state: {e}")
 
-def fetch_news(seen_links: list[str]) -> list[dict]:
+def fetch_news(seen_links: list[str], limit: int = 5) -> list[dict]:
     """Fetch recent AI/Tech news from RSS feeds."""
     print("Fetching news from RSS feeds...")
-    all_entries = []
+    all_items = []
     now = datetime.now(timezone.utc)
     lookback = now - timedelta(days=2) # Look at last 48 hours
 
@@ -190,9 +186,6 @@ def fetch_news(seen_links: list[str]) -> list[dict]:
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries:
-                if entry.link in seen_links:
-                    continue
-                
                 # Try to get publication date
                 pub_date = None
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
@@ -201,16 +194,36 @@ def fetch_news(seen_links: list[str]) -> list[dict]:
                 if not pub_date or pub_date > lookback:
                     summary = entry.summary if hasattr(entry, 'summary') else ""
                     clean_summary = re.sub('<[^<]+?>', '', summary)[:300]
-                    all_entries.append({
+                    all_items.append({
                         "title": entry.title,
-                        "summary": clean_summary,
+                        "description": clean_summary,
                         "link": entry.link,
                         "source": feed.feed.title if hasattr(feed.feed, 'title') else url
                     })
         except Exception as e:
             print(f"Error parsing feed {url}: {e}")
             
-    return all_entries
+    processed_items = []
+    for item in all_items:
+        # Priority Logic: arXiv papers are 'Scholar Gems'
+        source_link = item.get('link', '')
+        is_scholar_gem = "arxiv.org" in source_link
+        
+        processed_items.append({
+            'title': item.get('title', 'No Title'),
+            'summary': item.get('description', 'No summary available.'),
+            'link': source_link,
+            'source': 'arXiv' if is_scholar_gem else 'Tech News',
+            'is_scholar_gem': is_scholar_gem
+        })
+
+    # Filter out seen
+    unseen_items = [i for i in processed_items if i['link'] not in seen_links]
+    
+    # Priority Sorting: Put Scholar Gems at the top
+    unseen_items.sort(key=lambda x: x['is_scholar_gem'], reverse=True)
+    
+    return unseen_items[:limit]
 
 def has_posted_today(username: str) -> bool:
     """Check if a post was already made today (UTC)."""
