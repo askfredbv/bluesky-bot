@@ -46,7 +46,6 @@ Add the following to your GitHub repo secrets (`Settings > Secrets and variables
 | `BLUESKY_APP_PASSWORD` | ✅ Yes | App-specific password from Bluesky settings. |
 | `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance. |
 | `MASTODON_API_BASE_URL` | Optional | Your Mastodon instance URL (e.g., `https://mastodon.social`). |
-| `OPENAI_API_KEY` | ❌ Deprecated | Replaced by Metadata Extraction v4.5. |
 
 ### Installation & Local Run
 ```bash

@@ -1,8 +1,7 @@
+python-dotenv
 Mastodon.py
 atproto
 google-genai
-python-dotenv
-openai
 requests
 httpx
 feedparser
