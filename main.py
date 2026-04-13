@@ -198,6 +198,12 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None, mode: str
     # Upgrade to the latest 3.1 model
     model_id = 'gemini-3.1-flash-lite-preview'
     
+    # Define timing variables early for use in all modes
+    today = datetime.now()
+    date_str = today.strftime("%B %d") # e.g., March 20
+    weekday = today.weekday() # 0 = Monday, 6 = Sunday
+    language = random.choice(["English", "Dutch"])
+
     if mode == "curator" and news_items:
         system_instr = SYSTEM_INSTRUCTIONS_CURATOR
         news_text = "\n".join([f"- {item['title']} (Source: {item['source']})\n  Context: {item['summary']}" for item in news_items[:5]])
@@ -213,11 +219,7 @@ def generate_post(api_key: str, recent_posts: list[str] | None = None, mode: str
         chosen_topic = "News Curation"
     else:
         system_instr = SYSTEM_INSTRUCTIONS_MENTOR
-        today = datetime.now()
-        date_str = today.strftime("%B %d") # e.g., March 20
-        weekday = today.weekday() # 0 = Monday, 6 = Sunday
         
-        language = random.choice(["English", "Dutch"])
     
     prompt_on_that_day = f"""
     Find an interesting, inspiring, or remarkable event that happened on this exact date ({date_str}) in a specific year in the past.
