@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import List, Optional
 from atproto import AsyncClient, models
 from mastodon import Mastodon
@@ -67,7 +68,6 @@ async def post_to_mastodon(access_token: str, api_base_url: str, content_list: L
             last_id = status['id']
             # Fortress v4.4: Intra-thread jitter
             if len(content_list) > 1:
-                import time
                 time.sleep(random.uniform(1.0, 3.0))
             
     await asyncio.to_thread(_sync_post)

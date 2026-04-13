@@ -91,11 +91,11 @@ async def main():
             print("No fresh research. Falling back to Mentor mode.")
             mode = "mentor"
 
-    # Fetch context from Bsky (No dummy post required anymore)
+    # Fetch context from Bsky silently - this client will also be reused for broadcasting
     from atproto import AsyncClient
-    temp_client = AsyncClient()
-    await temp_client.login(creds["bsky_user"], creds["bsky_pass"])
-    recent_posts = await get_recent_posts(temp_client, creds["bsky_user"])
+    bsky_client = AsyncClient()
+    await bsky_client.login(creds["bsky_user"], creds["bsky_pass"])
+    recent_posts = await get_recent_posts(bsky_client, creds["bsky_user"])
     
     # 3. Content Synthesis
     content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
@@ -122,13 +122,13 @@ async def main():
     # Gather results
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     
-    # Identify the Bsky client for interactions (first task)
-    bsky_client = results[0] if not isinstance(results[0], Exception) else temp_client
+    # Identify the Bsky client for interactions (reuse the pre-authenticated client)
+    bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
     # 6. Post-Run Automation
     automation_tasks = [
-        handle_interactions(bsky_client, creds["bsky_user"], creds["gemini"]),
-        update_profile_bio(bsky_client, APPROVED_BIO_BSKY),
+        handle_interactions(bsky_broadcast_client, creds["bsky_user"], creds["gemini"]),
+        update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY),
         update_profile_bio_mastodon(creds["masto_token"], creds["masto_url"], APPROVED_BIO_MASTODON),
         update_live_status(mode)
     ]

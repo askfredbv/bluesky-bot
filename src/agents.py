@@ -79,7 +79,7 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
             reply_instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nUser Question: '{sanitized_text}'. Write a friendly, helpful reply under 250 chars."
             
             ai_reply = await asyncio.to_thread(_sync_generate, api_key, reply_instr)
-            ai_reply = ai_reply.strip()
+            ai_reply = ai_reply.strip()[:250]  # Hard cap matching the prompt instruction
             
             parent_ref = {'cid': mention.cid, 'uri': mention.uri}
             root_ref = parent_ref
