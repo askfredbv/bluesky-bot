@@ -631,8 +631,18 @@ async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[st
         response = await client.get(url)
         feed = feedparser.parse(response.text)
         if feed.bozo:
-            SafeLogger.warn("feed_parse_failure", "Feed parse failure", url=url, error_type=type(feed.bozo_exception).__name__)
+            bozo_exception = getattr(feed, 'bozo_exception', None)
+            SafeLogger.warn(
+                "feed_parse_failure",
+                "Feed parse failure",
+                url=url,
+                error_type=type(bozo_exception).__name__ if bozo_exception else "UnknownParseError"
+            )
+
+        entries = getattr(feed, 'entries', []) or []
+        if not entries:
             return []
+
         items = []
         now = datetime.now(timezone.utc)
         lookback = now - timedelta(days=2)
