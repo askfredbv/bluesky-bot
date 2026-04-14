@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: daily-post-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   post:
@@ -41,4 +41,7 @@ jobs:
           # Optional Mastodon support
           MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
           MASTODON_API_BASE_URL: ${{ secrets.MASTODON_API_BASE_URL }}
+          # Cap jitter to 5 min so the Actions runner doesn't idle for 30 min
+          POST_JITTER_MIN_SECONDS: 30
+          POST_JITTER_MAX_SECONDS: 300
         run: python main.py
