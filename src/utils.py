@@ -208,7 +208,6 @@ async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[st
             SafeLogger.warn(
                 f"event=feed_parse_failure url={url} parse_error={type(feed.bozo_exception).__name__}"
             )
-            return []
         items = []
         now = datetime.now(timezone.utc)
         lookback = now - timedelta(days=2)
