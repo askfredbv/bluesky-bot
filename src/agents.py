@@ -174,12 +174,18 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
             
             # Repair Attempt: Force hashtags if missing but length is good
             if reason == "Missing thematic hashtags":
-                print("Rescue Logic: Repairing missing hashtags...")
+                SafeLogger.info("hashtag_repair_applied", "Repairing missing hashtags in generated thread", mode=mode)
                 content_list[0] += f" #{topic.replace(' ', '')} #TechUpdate"
                 return content_list, topic
 
         except Exception as e:
-            SafeLogger.warn(f"Content generation/validation failed (Attempt {attempt+1}): {e}")
+            SafeLogger.warn(
+                "content_generation_attempt_failed",
+                "Content generation or validation failed",
+                mode=mode,
+                attempt=attempt + 1,
+                error_type=type(e).__name__
+            )
             if attempt < 1:
                 await asyncio.sleep(0.2 * (attempt + 1))
 
@@ -187,7 +193,7 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
-    print("Checking for interactions...")
+    SafeLogger.info("interactions_check_started", "Checking for interactions", platform="bluesky")
     try:
         replied_to = set(update_replied_to(lambda current: current))
         notifications = await client.app.bsky.notification.list_notifications()
@@ -199,12 +205,17 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
         for mention in active_mentions:
             if mention.uri in replied_to: continue
             if random.random() < MENTION_NO_REPLY_PROB:
-                SafeLogger.info(f"Skipping reply for mention {mention.uri} to keep interaction cadence human-like.")
+                SafeLogger.info(
+                    "mention_reply_skipped",
+                    "Skipping reply to keep interaction cadence human-like",
+                    platform="bluesky",
+                    mention_uri=mention.uri
+                )
                 replied_to.add(mention.uri)
                 continue
             
             sanitized_text = _sanitize_mention(mention.record.text)
-            print(f"Replying to {mention.author.handle}...")
+            SafeLogger.info("mention_reply_started", "Replying to mention", platform="bluesky", mention_author=mention.author.handle)
             await asyncio.sleep(_sample_reply_delay_seconds())
             
             reply_instr = (
@@ -225,4 +236,4 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
 
         update_replied_to(lambda _: list(replied_to))
     except Exception as e:
-        SafeLogger.error("Interaction error", e)
+        SafeLogger.error("interaction_handling_failed", "Interaction error", exception=e, platform="bluesky")

@@ -1,6 +1,7 @@
 import sys
 import asyncio
 import random
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -31,7 +32,7 @@ async def get_recent_posts(client, handle: str) -> List[str]:
         response = await client.app.bsky.feed.get_author_feed(actor=handle, limit=10)
         return [p.post.record.text for p in response.feed if hasattr(p.post.record, 'text')]
     except Exception as e:
-        SafeLogger.error("Failed to fetch recent posts", e)
+        SafeLogger.error("recent_posts_fetch_failed", "Failed to fetch recent posts", exception=e, platform="bluesky")
         return []
 
 async def apply_humanized_post_delay(settings: Settings):
@@ -43,19 +44,21 @@ async def apply_humanized_post_delay(settings: Settings):
     wait_seconds = random.randint(lower, upper)
     if wait_seconds == 0:
         return
-    print(f"Humanized delay before posting: {wait_seconds}s")
+    SafeLogger.info("post_delay_applied", "Humanized delay before posting", attempt=1, platform="system", wait_seconds=wait_seconds)
     await asyncio.sleep(wait_seconds)
 
 def load_settings_or_exit() -> Settings:
     try:
         return Settings.from_env()
     except SettingsValidationError as exc:
-        print(f"Configuration error: {exc}")
+        SafeLogger.error("settings_validation_failed", "Configuration error", exception=exc, platform="system")
         sys.exit(1)
 
 
 async def main():
-    print("--- AskFred Engine v4.6 Resilience Upgrade ---")
+    run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    SafeLogger.configure(run_id=run_id, platform="system")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.6 Resilience Upgrade ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials
@@ -63,6 +66,8 @@ async def main():
     # 1. Slot Strategy
     current_hour = datetime.now(timezone.utc).hour
     mode = "curator" if current_hour < 11 else "mentor"
+    SafeLogger.configure(mode=mode)
+    SafeLogger.info("mode_selected", "Execution mode selected", mode=mode)
     
     # 2. State & Context (Topic Memory)
     seen_data = load_seen_articles()
@@ -73,8 +78,9 @@ async def main():
     if mode == "curator":
         news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
         if len(news_items) < 3:
-            print(f"Low high-signal news volume ({len(news_items)}). Shifting to Strategist mode.")
+            SafeLogger.warn("news_volume_low", "Low high-signal news volume, shifting mode", mode=mode, selected_items=len(news_items))
             mode = "strategist"
+            SafeLogger.configure(mode=mode)
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
@@ -91,7 +97,7 @@ async def main():
     await apply_humanized_post_delay(settings)
 
     # 5. Sage Parallel Broadcasting
-    print(f"Initiating Concurrent Delivery to Bluesky and Mastodon...")
+    SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
     broadcast_tasks = [
         post_to_bluesky(
             creds.bluesky_username, creds.bluesky_password, content_list, link_meta,
@@ -106,7 +112,7 @@ async def main():
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     for r in results:
         if isinstance(r, Exception):
-            SafeLogger.error("Broadcast task failed", r)
+            SafeLogger.error("broadcast_task_failed", "Broadcast task failed", exception=r, platform="multi")
             
     bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
@@ -142,7 +148,7 @@ async def main():
             
         update_seen_articles(lambda _: seen_data)
 
-    print(f"--- [v4.6 Resilience] Intelligence Cycle Complete ({mode}) ---")
+    SafeLogger.info("run_completed", "Intelligence cycle complete", mode=mode, platform="system")
 
 if __name__ == "__main__":
     asyncio.run(main())
