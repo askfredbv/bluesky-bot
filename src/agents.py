@@ -9,7 +9,7 @@ from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
     MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS
 )
-from src.utils import load_replied_to, save_replied_to
+from src.utils import update_replied_to
 from src.logger import SafeLogger
 
 def _sanitize_mention(text: str) -> str:
@@ -102,9 +102,8 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
     print("Checking for interactions...")
-    replied_to = load_replied_to()
-    
     try:
+        replied_to = set(update_replied_to(lambda current: current))
         notifications = await client.app.bsky.notification.list_notifications()
         mentions = [n for n in notifications.notifications if n.reason == 'mention' and not n.is_read]
         
@@ -124,8 +123,8 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
                 text=ai_reply.strip()[:290],
                 reply_to={'parent': {'cid': mention.cid, 'uri': mention.uri}, 'root': {'cid': mention.cid, 'uri': mention.uri}}
             )
-            replied_to.append(mention.uri)
-            
-        save_replied_to(replied_to)
+            replied_to.add(mention.uri)
+
+        update_replied_to(lambda _: list(replied_to))
     except Exception as e:
         SafeLogger.error("Interaction error", e)

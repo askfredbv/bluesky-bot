@@ -11,7 +11,7 @@ from src.config import (
     MAX_POST_LENGTH_BSKY
 )
 from src.utils import (
-    load_seen_articles, save_seen_articles, fetch_news,
+    load_seen_articles, update_seen_articles, fetch_news,
     get_link_metadata
 )
 from src.agents import generate_content, handle_interactions
@@ -132,7 +132,7 @@ async def main():
         if topic_cat != 'General':
             seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
             
-        save_seen_articles(seen_data)
+        update_seen_articles(lambda _: seen_data)
 
     print(f"--- [v4.6 Resilience] Intelligence Cycle Complete ({mode}) ---")
 
