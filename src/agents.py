@@ -79,10 +79,12 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 
     full_prompt = f"{instr}\n\n{task}\n\nRECENTLY SAID (AVOID): {', '.join(recent_posts[:3])}\nFormat as a JSON list of strings (3-5 posts)."
     
+    fallback_post = f"Sharing concise insights on {topic}. #AI #Tech"
+
     # Implementation of Rescue Pipeline
     for attempt in range(2):
-        response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
         try:
+            response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
             clean_text = response_text.replace('```json', '').replace('```', '').strip()
             content_list = json.loads(clean_text)
             
@@ -95,12 +97,13 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
                 print("Rescue Logic: Repairing missing hashtags...")
                 content_list[0] += f" #{topic.replace(' ', '')} #TechUpdate"
                 return content_list, topic
-                
-        except Exception:
-            pass
-        SafeLogger.warn(f"Output validation failed (Attempt {attempt+1}). Retrying...")
 
-    return [response_text[:MAX_POST_LENGTH_BSKY]], topic
+        except Exception as e:
+            SafeLogger.warn(f"Content generation/validation failed (Attempt {attempt+1}): {e}")
+            if attempt < 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+
+    return [fallback_post[:MAX_POST_LENGTH_BSKY]], topic
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
