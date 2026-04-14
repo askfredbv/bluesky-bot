@@ -68,3 +68,17 @@ async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
     assert all(
         len(payload["status"]) <= MAX_POST_LENGTH_MASTODON for payload in posted_statuses
     )
+
+
+def test_sample_thread_pause_respects_profile_ranges():
+    for profile_name, (low, high) in broadcasters.THREAD_PAUSE_PROFILES.items():
+        for _ in range(25):
+            value = broadcasters._sample_thread_pause(profile_name)
+            assert low <= value <= high
+
+
+def test_sample_thread_pause_falls_back_to_default_profile_range():
+    low, high = broadcasters.THREAD_PAUSE_PROFILES[broadcasters.DEFAULT_THREAD_PAUSE_PROFILE]
+    for _ in range(25):
+        value = broadcasters._sample_thread_pause("nonexistent-profile")
+        assert low <= value <= high

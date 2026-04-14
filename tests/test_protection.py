@@ -62,3 +62,13 @@ def test_validate_summary_repair_scenario():
     assert reason == "Missing thematic hashtags"
     
     # The actual rescue logic happens in agents.py, but here we verify the 'reason' matches the expectation for repair.
+
+
+def test_validate_summary_allows_long_no_hashtag_posts():
+    text = (
+        "This deep synthesis explains architecture trade-offs, implementation risks, and practical rollout guidance "
+        "for teams balancing delivery speed with reliability over multiple quarters without forced tag usage."
+    )
+    valid, reason = validate_summary(text)
+    assert valid is True
+    assert reason == "Success"
