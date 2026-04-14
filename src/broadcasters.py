@@ -9,17 +9,41 @@ from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
 from src.utils import retry_with_backoff
 from src.logger import SafeLogger
 
+def _split_and_constrain_posts(content_list: List[str], max_length: int, platform_name: str) -> List[str]:
+    """
+    Ensure all outbound post chunks are <= max_length.
+    Splits overlong entries into multiple posts and emits a warning when this happens.
+    """
+    constrained_posts: List[str] = []
+
+    for original_text in content_list:
+        if len(original_text) <= max_length:
+            constrained_posts.append(original_text)
+            continue
+
+        SafeLogger.warn(
+            f"{platform_name} content exceeded {max_length} chars; splitting into safe chunks."
+        )
+        for i in range(0, len(original_text), max_length):
+            constrained_posts.append(original_text[i:i + max_length])
+
+    return constrained_posts
+
 @retry_with_backoff
 async def post_to_bluesky(username, password, content_list: List[str], link_meta: Optional[Dict[str, Any]] = None):
     """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds)."""
     print(f"Broadcasting to Bluesky (@{username})...")
     client = AsyncClient()
     await client.login(username, password)
-    
+
+    constrained_content_list = _split_and_constrain_posts(
+        content_list, MAX_POST_LENGTH_BSKY, "Bluesky"
+    )
+
     parent_ref = None
     root_ref = None
-    
-    for i, post_text in enumerate(content_list):
+
+    for i, post_text in enumerate(constrained_content_list):
         embed = None
         # Sage 4.5: Attach Rich Link Preview (External Embed) to the first post
         if i == 0 and link_meta:
@@ -50,7 +74,7 @@ async def post_to_bluesky(username, password, content_list: List[str], link_meta
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
         
         # Intra-thread jitter
-        if len(content_list) > 1 and i < len(content_list) - 1:
+        if len(constrained_content_list) > 1 and i < len(constrained_content_list) - 1:
             await asyncio.sleep(random.uniform(1.0, 3.0))
     
     return client
@@ -59,18 +83,22 @@ async def post_to_bluesky(username, password, content_list: List[str], link_meta
 async def post_to_mastodon(access_token: str, api_base_url: str, content_list: List[str]):
     """Async-wrapped broadcaster for Mastodon."""
     if not access_token: return
-    
+
+    constrained_content_list = _split_and_constrain_posts(
+        content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"
+    )
+
     def _sync_post():
         mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
         last_id = None
-        for i, post_text in enumerate(content_list):
+        for i, post_text in enumerate(constrained_content_list):
             status = mastodon.status_post(
                 status=post_text,
                 in_reply_to_id=last_id,
                 visibility='public'
             )
             last_id = status['id']
-            if len(content_list) > 1:
+            if len(constrained_content_list) > 1:
                 time.sleep(random.uniform(1.0, 3.0))
             
     await asyncio.to_thread(_sync_post)
