@@ -49,6 +49,16 @@ async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
             self.access_token = access_token
             self.api_base_url = api_base_url
 
+        def instance(self):
+            return {
+                "configuration": {
+                    "statuses": {
+                        "max_characters": MAX_POST_LENGTH_MASTODON,
+                        "characters_reserved_per_url": 23,
+                    }
+                }
+            }
+
         def status_post(self, status, in_reply_to_id, visibility):
             posted_statuses.append(
                 {
