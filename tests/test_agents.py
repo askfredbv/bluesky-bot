@@ -30,7 +30,7 @@ async def test_generate_content_falls_back_when_model_always_fails(monkeypatch):
 async def test_generate_content_includes_style_memory_constraints(monkeypatch):
     captured = {"prompt": ""}
 
-    def _capture_prompt(_api_key, prompt):
+    def _capture_prompt(_api_key, prompt, _model):
         captured["prompt"] = prompt
         return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
 
@@ -56,7 +56,7 @@ async def test_generate_content_includes_style_memory_constraints(monkeypatch):
 async def test_generate_content_includes_persona_variant(monkeypatch):
     captured = {"prompt": ""}
 
-    def _capture_prompt(_api_key, prompt):
+    def _capture_prompt(_api_key, prompt, _model):
         captured["prompt"] = prompt
         return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
 
@@ -219,14 +219,14 @@ def test_sync_generate_reuses_cached_client(monkeypatch):
     monkeypatch.setattr("src.agents._CLIENT_CACHE", test_cache)
     monkeypatch.setattr("src.agents.genai.Client", DummyClient)
 
-    assert _sync_generate("fake-key", "prompt 1") == "ok"
-    assert _sync_generate("fake-key", "prompt 2") == "ok"
+    assert _sync_generate("fake-key", "prompt 1", "gemini-2.5-flash") == "ok"
+    assert _sync_generate("fake-key", "prompt 2", "gemini-2.5-flash") == "ok"
     assert call_count["count"] == 1
 
 
 def test_sync_generate_missing_key_raises_clear_error():
     with pytest.raises(ValueError, match="missing or empty"):
-        _sync_generate("", "prompt")
+        _sync_generate("", "prompt", "gemini-2.5-flash")
 
 
 def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
@@ -238,4 +238,78 @@ def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
     monkeypatch.setattr("src.agents.genai.Client", _raise_client_error)
 
     with pytest.raises(ValueError, match="Failed to initialize Gemini client"):
-        _sync_generate("invalid-key", "prompt")
+        _sync_generate("invalid-key", "prompt", "gemini-2.5-flash")
+
+
+@pytest.mark.asyncio
+async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
+    """An API-level exception on the first model should cause the next model to be tried."""
+    models_tried = []
+
+    def _track_and_fail_first(api_key, prompt, model):
+        models_tried.append(model)
+        if model == "gemini-2.5-flash":
+            raise ConnectionError("quota exceeded")
+        return '["This is a long enough post that covers #AI and passes all validation checks."]'
+
+    monkeypatch.setattr("src.agents._sync_generate", _track_and_fail_first)
+
+    content, _ = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+    )
+
+    assert "gemini-2.5-flash" in models_tried
+    assert "gemini-2.0-flash" in models_tried
+    assert isinstance(content, list)
+    assert len(content) >= 1
+    assert "quota exceeded" not in content[0]
+
+
+@pytest.mark.asyncio
+async def test_model_failover_does_not_advance_on_json_error(monkeypatch):
+    """A JSON decode error is a content quality issue; the same model should be retried."""
+    models_tried = []
+    attempt_count = [0]
+
+    def _track_and_return_bad_json(api_key, prompt, model):
+        models_tried.append(model)
+        attempt_count[0] += 1
+        return "not valid json at all"
+
+    monkeypatch.setattr("src.agents._sync_generate", _track_and_return_bad_json)
+
+    content, _ = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+    )
+
+    # Should have retried the same models 2x each — never jumped early due to JSON error
+    # All models will be tried (2 attempts each), ending in fallback
+    assert models_tried.count("gemini-2.5-flash") == 2
+    assert isinstance(content, list)
+    assert len(content) == 1  # fallback post
+
+
+@pytest.mark.asyncio
+async def test_model_used_event_logged_on_success(monkeypatch):
+    """A successful generation should log the model_used event."""
+    log_events = []
+
+    def _ok_generate(api_key, prompt, model):
+        return '["Long enough post with #AI and enough detail to pass all validation checks here."]'
+
+    def _capture_info(event, message="", **fields):
+        log_events.append((event, fields))
+
+    monkeypatch.setattr("src.agents._sync_generate", _ok_generate)
+    monkeypatch.setattr("src.agents.SafeLogger.info", _capture_info)
+
+    await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
+
+    assert any(event == "model_used" for event, _ in log_events)
+    model_event = next((fields for event, fields in log_events if event == "model_used"), None)
+    assert model_event is not None
+    assert "model" in model_event

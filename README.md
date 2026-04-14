@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.7.0)
+# Bluesky & Mastodon Daily Poster (v4.8.0)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -21,18 +21,18 @@ If the morning news volume is low (fewer than 3 high-signal items), the bot fall
 ```
 GitHub Actions (cron)
   → fetch RSS feeds + score items          (src/utils.py)
-  → generate thread via Gemini 2.5 Flash   (src/agents.py)
+  → generate thread via Gemini              (src/agents.py)
   → post to Bluesky + Mastodon in parallel (src/broadcasters.py)
   → check and reply to mentions            (src/agents.py)
 ```
 
-**Content scoring** uses five factors: source tier, product-launch signals, technical depth keywords, time decay (0.5 pts/hour), and a topic diversity penalty to avoid repetition. arXiv papers get priority injection if they don't survive the scoring on their own.
+**Content scoring** uses six factors: source tier, product-launch signals, technical depth keywords, time decay (0.5 pts/hour), a topic diversity penalty to avoid repetition, and a Consensus Synergy bonus (+1.5 per additional feed) for stories covered by multiple independent sources. arXiv papers get priority injection if they don't survive the scoring on their own.
 
 **Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones. The system prompts in `src/config.py` include verbatim examples from his writing as style anchors for the model.
 
 **Post formatting**: each post in a thread is generated within the 300-character Bluesky limit. If a post still overflows (rare), it is split at a word boundary — never mid-word.
 
-**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. Atomic JSON writes with backup/restore for state files — corrupt files are preserved with a timestamped name before resetting to default. Hard cap of 10 mention replies per run.
+**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. Atomic JSON writes with backup/restore for state files — corrupt files are preserved with a timestamped name before resetting to default. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures (quota, unavailability) automatically advance to the next model.
 
 ---
 
@@ -93,6 +93,8 @@ The main levers are all in `src/config.py`:
 - **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
 - **`APPROVED_BIO_BSKY` / `APPROVED_BIO_MASTODON`** — profile bios, refreshed on a weekly cooldown
 - **`MENTION_SANITIZE_MAX_CHARS`** / **`FEED_SUMMARY_MAX_CHARS`** — character caps for mention input and RSS feed summaries (both default 500)
+- **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed that covers the same story (default 1.5)
+- **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next
 
 The following can also be overridden via environment variables without touching code:
 
@@ -116,7 +118,7 @@ The following can also be overridden via environment variables without touching 
 │   ├── logger.py              # SafeLogger — strips credentials from output
 │   ├── settings.py            # Environment variable loading and validation
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
-├── tests/                     # pytest suite (69 tests)
+├── tests/                     # pytest suite (76 tests)
 ├── .github/
 │   ├── workflows/daily_post.yml      # Cron schedule: 08:00 and 14:30 UTC
 │   ├── workflows/lockfile-check.yml  # Fails if requirements.txt is stale

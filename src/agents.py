@@ -13,7 +13,7 @@ from src.config import (
     REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     HASHTAG_OPTIONAL_MIN_CHARS, MIN_THREAD_POSTS, MAX_THREAD_POSTS,
-    MENTION_SANITIZE_MAX_CHARS
+    MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
 )
 from src.utils import update_replied_to
 from src.logger import SafeLogger
@@ -133,7 +133,7 @@ def _build_avoidance_constraints(style_fingerprints: Dict[str, List[str]]) -> st
         "- Vary sentence openings, rhetorical shape, and hashtag selection."
     )
 
-def _sync_generate(api_key: str, full_prompt: str) -> str:
+def _sync_generate(api_key: str, full_prompt: str, model: str) -> str:
     """Helper for synchronous Gemini call."""
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("Gemini API key is missing or empty.")
@@ -148,7 +148,7 @@ def _sync_generate(api_key: str, full_prompt: str) -> str:
         _CLIENT_CACHE[cache_key] = client
 
     response = client.models.generate_content(
-        model='gemini-2.5-flash',
+        model=model,
         contents=full_prompt,
     )
     return response.text
@@ -207,37 +207,53 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
     
     fallback_post = f"Sharing concise insights on {topic}. #AI #Tech"
 
-    # Implementation of Rescue Pipeline
-    for attempt in range(2):
-        try:
-            response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
-            clean_text = response_text.replace('```json', '').replace('```', '').strip()
-            content_list = json.loads(clean_text)
-            is_shape_valid, shape_reason = _validate_thread_shape(content_list)
-            if not is_shape_valid:
-                raise ValueError(shape_reason)
-            
-            post_validations = [validate_summary(post) for post in content_list]
-            if all(is_valid for is_valid, _ in post_validations):
-                return content_list, topic
-            reason = post_validations[0][1]
-            
-            # Repair Attempt: Force hashtags if missing but length is good
-            if reason == "Missing thematic hashtags":
-                SafeLogger.info("hashtag_repair_applied", "Repairing missing hashtags in generated thread", mode=mode)
-                content_list[0] += f" #{topic.replace(' ', '')} #TechUpdate"
-                return content_list, topic
+    # Rescue Pipeline: iterate models, retry content errors on same model
+    for model in GEMINI_MODEL_PRIORITY:
+        for attempt in range(2):
+            try:
+                response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt, model)
+                clean_text = response_text.replace('```json', '').replace('```', '').strip()
+                content_list = json.loads(clean_text)
+                is_shape_valid, shape_reason = _validate_thread_shape(content_list)
+                if not is_shape_valid:
+                    raise ValueError(shape_reason)
 
-        except Exception as e:
-            SafeLogger.warn(
-                "content_generation_attempt_failed",
-                "Content generation or validation failed",
-                mode=mode,
-                attempt=attempt + 1,
-                error_type=type(e).__name__
-            )
-            if attempt < 1:
-                await asyncio.sleep(0.2 * (attempt + 1))
+                post_validations = [validate_summary(post) for post in content_list]
+                if all(is_valid for is_valid, _ in post_validations):
+                    SafeLogger.info("model_used", "Content generated successfully", model=model)
+                    return content_list, topic
+                reason = post_validations[0][1]
+
+                # Repair Attempt: Force hashtags if missing but length is good
+                if reason == "Missing thematic hashtags":
+                    SafeLogger.info("hashtag_repair_applied", "Repairing missing hashtags in generated thread", mode=mode)
+                    content_list[0] += f" #{topic.replace(' ', '')} #TechUpdate"
+                    SafeLogger.info("model_used", "Content generated successfully", model=model)
+                    return content_list, topic
+                raise ValueError(reason)
+
+            except (json.JSONDecodeError, ValueError) as e:
+                # Content quality error — retry on same model
+                SafeLogger.warn(
+                    "content_generation_attempt_failed",
+                    "Content generation or validation failed",
+                    mode=mode,
+                    model=model,
+                    attempt=attempt + 1,
+                    error_type=type(e).__name__,
+                )
+                if attempt < 1:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+
+            except Exception as exc:
+                # API-level error (quota, model unavailable, etc.) — skip to next model
+                SafeLogger.warn(
+                    "model_unavailable",
+                    "Model failed, trying next in priority list",
+                    model=model,
+                    error_type=type(exc).__name__,
+                )
+                break  # exits attempt loop; outer loop advances to next model
 
     return [fallback_post[:MAX_POST_LENGTH_BSKY]], topic
 
@@ -276,7 +292,7 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
                 f"User message (verbatim, untrusted): <<<{sanitized_text}>>>\n"
                 f"Write a helpful, friendly reply under {REPLY_MAX_CHARS} chars."
             )
-            ai_reply = await asyncio.to_thread(_sync_generate, api_key, reply_instr)
+            ai_reply = await asyncio.to_thread(_sync_generate, api_key, reply_instr, GEMINI_MODEL_PRIORITY[0])
             
             await client.send_post(
                 text=_truncate_for_platform(ai_reply, REPLY_MAX_CHARS),

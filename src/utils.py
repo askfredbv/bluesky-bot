@@ -31,7 +31,8 @@ from src.config import (
     FEED_MAX_KEEPALIVE_CONNECTIONS,
     METADATA_FETCH_ALLOWED_DOMAINS,
     METADATA_FETCH_BLOCKED_DOMAINS,
-    FEED_SUMMARY_MAX_CHARS
+    FEED_SUMMARY_MAX_CHARS,
+    CONSENSUS_SYNERGY_BONUS,
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -621,7 +622,7 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
         return fallback
 
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
-    """Calculates a weighted 5-factor score (Elite v4.5 pattern)."""
+    """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
     score = 0.0
     text = f"{item['title']} {item['description']}".lower()
     
@@ -652,7 +653,12 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     
     if item_topic in recent_topics:
         score -= 12.0 # Heavy "Discernment" penalty for repetition
-        
+
+    # 6. Consensus Synergy: reward stories covered by multiple independent feeds
+    feed_count = len(item.get('source_feeds', []))
+    if feed_count > 1:
+        score += CONSENSUS_SYNERGY_BONUS * (feed_count - 1)
+
     item['detected_topic'] = item_topic
     return score
 
@@ -705,7 +711,8 @@ async def fetch_single_feed(
                 "title": entry.title,
                 "description": clean_summary,
                 "link": normalised_link,
-                "pub_date": pub_date
+                "pub_date": pub_date,
+                "source_feeds": [url],
             })
         return items
     except httpx.TimeoutException as e:
@@ -744,7 +751,14 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         results = await asyncio.gather(*tasks)
     
     all_raw = [item for sublist in results for item in sublist]
-    unique_unseen = [i for i in {i['link']: i for i in all_raw}.values() if i['link'] not in seen_links]
+    seen: dict = {}
+    for item in all_raw:
+        link = item['link']
+        if link in seen:
+            seen[link]['source_feeds'] = list(set(seen[link]['source_feeds'] + item['source_feeds']))
+        else:
+            seen[link] = item
+    unique_unseen = [i for i in seen.values() if i['link'] not in seen_links]
     
     # Apply Sage Scoring
     for item in unique_unseen:

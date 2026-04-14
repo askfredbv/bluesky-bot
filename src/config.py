@@ -68,6 +68,15 @@ SOURCE_TIERS: Dict[str, int] = {
 PRODUCT_KEYWORDS: List[str] = ["launch", "integrated", "available", "feature", "release", "app", "tool", "partnership"]
 GROUNDBREAKING_KEYWORDS: List[str] = ["sota", "benchmark", "breakthrough", "frontier", "reasoning", "efficiency", "architecture", "scaling"]
 HIDDEN_GEM_SOURCES: List[str] = ["export.arxiv.org", "arxiv.org"]
+CONSENSUS_SYNERGY_BONUS: float = 1.5
+
+# AI Model Priority (failover order on quota/availability errors)
+GEMINI_MODEL_PRIORITY: List[str] = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-latest",
+    "gemma-3-27b-it",
+]
 
 TOPIC_MAP: Dict[str, List[str]] = {
     "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],

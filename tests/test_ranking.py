@@ -42,8 +42,70 @@ def test_time_decay():
     item = {'title': 'News', 'description': 'Description', 'link': 'https://techcrunch.com/1'}
     now = datetime.now(timezone.utc)
     older = now - timedelta(hours=10)
-    
+
     score_new = calculate_relevance_score(item, now, [])
     score_old = calculate_relevance_score(item, older, [])
-    
+
     assert score_new > score_old
+
+
+def test_consensus_synergy_single_feed_no_bonus():
+    """An item from a single feed should receive no Consensus Synergy bonus."""
+    item = {'title': 'AI News', 'description': 'Details', 'link': 'https://techcrunch.com/1', 'source_feeds': ['https://feed-a.com/rss']}
+    now = datetime.now(timezone.utc)
+    score_with_one = calculate_relevance_score(item, now, [])
+
+    item_no_feeds = {'title': 'AI News', 'description': 'Details', 'link': 'https://techcrunch.com/1'}
+    score_without = calculate_relevance_score(item_no_feeds, now, [])
+
+    assert score_with_one == pytest.approx(score_without)
+
+
+def test_consensus_synergy_two_feeds_adds_bonus():
+    """An item covered by two feeds should get +1.5 over the single-feed baseline."""
+    from src.config import CONSENSUS_SYNERGY_BONUS
+    item_one = {'title': 'AI News', 'description': 'Details', 'link': 'https://techcrunch.com/1', 'source_feeds': ['https://feed-a.com/rss']}
+    item_two = {'title': 'AI News', 'description': 'Details', 'link': 'https://techcrunch.com/1', 'source_feeds': ['https://feed-a.com/rss', 'https://feed-b.com/rss']}
+    now = datetime.now(timezone.utc)
+
+    score_one = calculate_relevance_score(item_one, now, [])
+    score_two = calculate_relevance_score(item_two, now, [])
+
+    assert score_two == pytest.approx(score_one + CONSENSUS_SYNERGY_BONUS)
+
+
+def test_consensus_synergy_three_feeds_adds_double_bonus():
+    """An item covered by three feeds should get +3.0 (2 * CONSENSUS_SYNERGY_BONUS)."""
+    from src.config import CONSENSUS_SYNERGY_BONUS
+    item_one = {'title': 'AI News', 'description': 'Details', 'link': 'https://techcrunch.com/1', 'source_feeds': ['https://feed-a.com/rss']}
+    item_three = {'title': 'AI News', 'description': 'Details', 'link': 'https://techcrunch.com/1', 'source_feeds': ['https://feed-a.com/rss', 'https://feed-b.com/rss', 'https://feed-c.com/rss']}
+    now = datetime.now(timezone.utc)
+
+    score_one = calculate_relevance_score(item_one, now, [])
+    score_three = calculate_relevance_score(item_three, now, [])
+
+    assert score_three == pytest.approx(score_one + 2 * CONSENSUS_SYNERGY_BONUS)
+
+
+def test_fetch_news_merges_source_feeds_on_duplicate_link():
+    """Items with the same link from different feeds should be merged into one item with both feeds listed."""
+    from src import utils
+
+    item_a = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': datetime.now(timezone.utc)}
+    item_b = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-b.com/rss'], 'pub_date': datetime.now(timezone.utc)}
+    item_c = {'title': 'Unique Story', 'description': 'Details', 'link': 'https://example.com/other', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': datetime.now(timezone.utc)}
+
+    all_raw = [item_a, item_b, item_c]
+
+    seen: dict = {}
+    for item in all_raw:
+        link = item['link']
+        if link in seen:
+            seen[link]['source_feeds'] = list(set(seen[link]['source_feeds'] + item['source_feeds']))
+        else:
+            seen[link] = item
+    deduped = list(seen.values())
+
+    assert len(deduped) == 2
+    shared = next(i for i in deduped if i['link'] == 'https://example.com/story')
+    assert set(shared['source_feeds']) == {'https://feed-a.com/rss', 'https://feed-b.com/rss'}
