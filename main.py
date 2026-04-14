@@ -94,8 +94,18 @@ async def main():
     # Silent handshake for Bsky context
     from atproto import AsyncClient
     bsky_client = AsyncClient()
-    await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
-    recent_posts = await get_recent_posts(bsky_client, creds.bluesky_username)
+    recent_posts = []
+    try:
+        await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
+        recent_posts = await get_recent_posts(bsky_client, creds.bluesky_username)
+    except Exception as exc:
+        SafeLogger.warn(
+            "bluesky_preflight_failed",
+            "Bluesky preflight failed; continuing with fallback context",
+            platform="bluesky",
+            error_type=type(exc).__name__,
+            fallback_recent_posts_count=0,
+        )
     
     # 4. Content Synthesis (Temporal Aware)
     content_list, chosen_topic = await generate_content(creds.gemini_api_key, recent_posts, mode=mode, news_items=news_items)
