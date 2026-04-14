@@ -1,5 +1,4 @@
 import asyncio
-import time
 import random
 import httpx
 from typing import List, Optional, Dict, Any
@@ -11,6 +10,9 @@ from src.config import (
 )
 from src.utils import retry_with_backoff
 from src.logger import SafeLogger
+
+MASTODON_POST_TIMEOUT_SECONDS = 20.0
+MASTODON_POST_MAX_ATTEMPTS = 3
 
 def _split_and_constrain_posts(content_list: List[str], max_length: int, platform_name: str) -> List[str]:
     """
@@ -109,20 +111,58 @@ async def post_to_mastodon(
         content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"
     )
 
-    def _sync_post():
-        mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
-        last_id = None
+    mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
+    total_posts = len(constrained_content_list)
+    posted_count = 0
+    last_id = None
+
+    async def _status_post_with_timeout_and_retry(post_text: str, reply_to_id: Optional[str]):
+        for attempt in range(1, MASTODON_POST_MAX_ATTEMPTS + 1):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(
+                        mastodon.status_post,
+                        status=post_text,
+                        in_reply_to_id=reply_to_id,
+                        visibility='public'
+                    ),
+                    timeout=MASTODON_POST_TIMEOUT_SECONDS
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if attempt == MASTODON_POST_MAX_ATTEMPTS:
+                    raise
+                SafeLogger.warn(
+                    f"Mastodon post retry: "
+                    f"{{'attempt': {attempt}, 'max_attempts': {MASTODON_POST_MAX_ATTEMPTS}, "
+                    f"'error_type': '{type(e).__name__}'}}"
+                )
+                await asyncio.sleep(min(2 ** attempt, 5))
+
+    try:
         for i, post_text in enumerate(constrained_content_list):
-            status = mastodon.status_post(
-                status=post_text,
-                in_reply_to_id=last_id,
-                visibility='public'
+            status = await _status_post_with_timeout_and_retry(post_text, last_id)
+            last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
+            posted_count += 1
+
+            if total_posts > 1 and i < total_posts - 1:
+                await asyncio.sleep(_sample_thread_pause(thread_pause_profile))
+    except asyncio.CancelledError:
+        if posted_count < total_posts:
+            SafeLogger.warn(
+                f"Mastodon thread partial delivery: "
+                f"{{'posted': {posted_count}, 'total': {total_posts}, 'reason': 'cancelled'}}"
             )
-            last_id = status['id']
-            if len(constrained_content_list) > 1:
-                time.sleep(_sample_thread_pause(thread_pause_profile))
-            
-    await asyncio.to_thread(_sync_post)
+        raise
+    except Exception as e:
+        if posted_count < total_posts:
+            SafeLogger.warn(
+                f"Mastodon thread partial delivery: "
+                f"{{'posted': {posted_count}, 'total': {total_posts}, "
+                f"'reason': 'error', 'error_type': '{type(e).__name__}'}}"
+            )
+        raise
 
 
 async def update_profile_bio(client: AsyncClient, bio_text: str):

@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 
 from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
@@ -58,8 +59,11 @@ async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
             )
             return {"id": len(posted_statuses)}
 
+    async def no_sleep(_):
+        return None
+
     monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
-    monkeypatch.setattr(broadcasters.time, "sleep", lambda _: None)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
 
     overlong = "y" * (MAX_POST_LENGTH_MASTODON + 40)
     await broadcasters.post_to_mastodon("token", "https://mastodon.example", [overlong])
@@ -68,6 +72,50 @@ async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
     assert all(
         len(payload["status"]) <= MAX_POST_LENGTH_MASTODON for payload in posted_statuses
     )
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_cancellation_stops_after_current_post(monkeypatch):
+    posted_statuses = []
+    sleep_started = asyncio.Event()
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            self.access_token = access_token
+            self.api_base_url = api_base_url
+
+        def status_post(self, status, in_reply_to_id, visibility):
+            posted_statuses.append(
+                {
+                    "status": status,
+                    "in_reply_to_id": in_reply_to_id,
+                    "visibility": visibility,
+                }
+            )
+            return {"id": len(posted_statuses)}
+
+    async def blocking_sleep(_):
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", blocking_sleep)
+
+    task = asyncio.create_task(
+        broadcasters.post_to_mastodon(
+            "token",
+            "https://mastodon.example",
+            ["post one", "post two"],
+            thread_pause_profile="quick",
+        )
+    )
+    await asyncio.wait_for(sleep_started.wait(), timeout=1.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(posted_statuses) == 1
 
 
 def test_sample_thread_pause_respects_profile_ranges():
