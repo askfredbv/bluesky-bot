@@ -12,7 +12,8 @@ from src.config import (
     STYLE_MEMORY_POST_WINDOW, STYLE_MEMORY_MAX_OPENERS, STYLE_MEMORY_MAX_HASHTAGS,
     REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
-    HASHTAG_OPTIONAL_MIN_CHARS, MIN_THREAD_POSTS, MAX_THREAD_POSTS
+    HASHTAG_OPTIONAL_MIN_CHARS, MIN_THREAD_POSTS, MAX_THREAD_POSTS,
+    MENTION_SANITIZE_MAX_CHARS
 )
 from src.utils import update_replied_to
 from src.logger import SafeLogger
@@ -26,7 +27,7 @@ def _sanitize_mention(text: str) -> str:
     # Remove remaining non-whitespace control chars and DEL.
     clean = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", clean)
     # Keep an explicit hard cap to avoid oversized prompt payloads.
-    return clean[:500]
+    return clean[:MENTION_SANITIZE_MAX_CHARS]
 
 def _truncate_for_platform(text: str, limit: int) -> str:
     """Trim outgoing text to platform-safe limit."""
@@ -159,6 +160,10 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
     style_fingerprints = _extract_style_fingerprints(recent_posts)
     style_constraints = _build_avoidance_constraints(style_fingerprints)
     
+    if mode == "curator" and not news_items:
+        SafeLogger.warn("curator_no_items", "Curator mode called with no news items; falling back to mentor", mode=mode)
+        mode = "mentor"
+
     if mode == "curator" and news_items:
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])

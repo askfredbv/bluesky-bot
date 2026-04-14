@@ -30,7 +30,8 @@ from src.config import (
     FEED_MAX_CONNECTIONS,
     FEED_MAX_KEEPALIVE_CONNECTIONS,
     METADATA_FETCH_ALLOWED_DOMAINS,
-    METADATA_FETCH_BLOCKED_DOMAINS
+    METADATA_FETCH_BLOCKED_DOMAINS,
+    FEED_SUMMARY_MAX_CHARS
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -182,13 +183,17 @@ def _load_json_with_repair(
                 SafeLogger.error("json_backup_restore_failed", "Backup restore failed", exception=backup_error, file_path=str(file_path))
 
         if restored_data is None:
-            corrupt_copy = file_path.with_suffix(file_path.suffix + ".corrupt")
+            import time as _time
+            corrupt_copy = file_path.parent / f"{file_path.name}.corrupt.{int(_time.time())}"
+            moved = False
             try:
                 os.replace(file_path, corrupt_copy)
+                moved = True
                 SafeLogger.warn("json_corrupt_moved", "Moved corrupt file", file_path=str(file_path), corrupt_copy=str(corrupt_copy))
             except Exception as move_error:
                 SafeLogger.error("json_corrupt_move_failed", "Failed moving corrupt file", exception=move_error, file_path=str(file_path))
-            _atomic_write_json(file_path, default_data)
+            if moved:
+                _atomic_write_json(file_path, default_data)
             return default_data
         data = restored_data
     except Exception as e:
@@ -695,7 +700,7 @@ async def fetch_single_feed(
                 continue
 
             summary = entry.get('summary', entry.get('description', ""))
-            clean_summary = re.sub('<[^<]+?>', '', summary)[:500]
+            clean_summary = re.sub('<[^<]+?>', '', summary)[:FEED_SUMMARY_MAX_CHARS]
             items.append({
                 "title": entry.title,
                 "description": clean_summary,
@@ -755,7 +760,7 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         for i in range(limit, len(ranked)):
             if any(gem in ranked[i]['link'] for gem in HIDDEN_GEM_SOURCES):
                 SafeLogger.info("hidden_gem_injected", "Injecting hidden gem into top candidates", title_preview=ranked[i]['title'][:40])
-                top_candidates[limit-1] = ranked[i] # Swap last spot for the Gem
+                top_candidates[-1] = ranked[i]  # Swap last spot for the Gem
                 break
                 
     return top_candidates

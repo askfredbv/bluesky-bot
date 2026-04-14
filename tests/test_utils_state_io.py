@@ -41,8 +41,9 @@ def test_seen_articles_preserves_corrupt_file_and_resets_when_no_valid_backup(mo
     assert loaded == {"links": [], "recent_topics": []}
     assert primary.exists()
     assert json.loads(primary.read_text()) == {"links": [], "recent_topics": []}
-    corrupt_copy = primary.with_suffix(primary.suffix + ".corrupt")
-    assert corrupt_copy.exists()
+    # Corrupt file is saved with a timestamp suffix (e.g. seen_articles.json.corrupt.1234567890)
+    corrupt_files = list(primary.parent.glob(primary.name + ".corrupt.*"))
+    assert corrupt_files, "Expected a timestamped .corrupt.* file to exist"
 
 
 def test_replied_to_recovers_from_interrupted_write(monkeypatch, tmp_path):

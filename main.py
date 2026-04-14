@@ -122,13 +122,15 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
             link_meta = await get_link_metadata(news_items[0]['link'])
 
     from atproto import AsyncClient
-    bsky_client = AsyncClient()
+    bsky_client = None
     recent_posts = []
     try:
+        bsky_client = AsyncClient()
         await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
         recent_posts = await get_recent_posts(bsky_client, creds.bluesky_username)
     except Exception as exc:
-        SafeLogger.warn(
+        bsky_client = None
+        SafeLogger.error(
             "bluesky_preflight_failed",
             "Bluesky preflight failed; continuing with fallback context",
             platform="bluesky",
@@ -196,10 +198,12 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
         "mastodon", APPROVED_BIO_MASTODON, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
     )
 
-    automation_tasks = [
-        handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
-    ]
-    if should_update_bsky_bio:
+    automation_tasks = []
+    if broadcast.bsky_broadcast_client is not None:
+        automation_tasks.append(
+            handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
+        )
+    if should_update_bsky_bio and broadcast.bsky_broadcast_client is not None:
         automation_tasks.append(update_profile_bio(broadcast.bsky_broadcast_client, APPROVED_BIO_BSKY))
     if should_update_masto_bio:
         automation_tasks.append(update_profile_bio_mastodon(creds.mastodon_access_token, creds.mastodon_api_base_url, APPROVED_BIO_MASTODON))

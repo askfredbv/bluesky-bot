@@ -71,8 +71,8 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_warning(monkeypatch):
-    calls = {"recent_posts": None, "warn": []}
+async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_error(monkeypatch):
+    calls = {"recent_posts": None, "error": []}
 
     creds = SimpleNamespace(
         bluesky_username="bsky-user",
@@ -100,8 +100,8 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_war
     async def noop(*args, **kwargs):
         return None
 
-    def capture_warn(event, message="", **fields):
-        calls["warn"].append((event, message, fields))
+    def capture_error(event, message="", **fields):
+        calls["error"].append((event, message, fields))
 
     monkeypatch.setitem(sys.modules, "atproto", types.SimpleNamespace(AsyncClient=FailingAsyncClient))
     monkeypatch.setattr(main, "load_settings_or_exit", lambda: settings)
@@ -114,12 +114,12 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_war
     monkeypatch.setattr(main, "handle_interactions", noop)
     monkeypatch.setattr(main, "should_update_profile_bio", lambda *args, **kwargs: False)
     monkeypatch.setattr(main, "update_seen_articles", lambda *_: None)
-    monkeypatch.setattr(main.SafeLogger, "warn", capture_warn)
+    monkeypatch.setattr(main.SafeLogger, "error", capture_error)
 
     await main.main()
 
     assert calls["recent_posts"] == []
-    matching = [entry for entry in calls["warn"] if entry[0] == "bluesky_preflight_failed"]
+    matching = [entry for entry in calls["error"] if entry[0] == "bluesky_preflight_failed"]
     assert matching
     _, _, fields = matching[0]
     assert fields["platform"] == "bluesky"
