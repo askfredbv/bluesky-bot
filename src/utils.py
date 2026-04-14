@@ -9,6 +9,7 @@ import functools
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import io
 from PIL import Image
@@ -99,6 +100,28 @@ def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
 
     return out_io.getvalue()
 
+def normalise_url(url: str, base_url: str = "") -> Optional[str]:
+    """
+    Normalises a raw URL extracted from HTML into a fully qualified URL.
+    Handles three cases that would otherwise crash httpx:
+      - Protocol-relative: //cdn.example.com/img.jpg  -> https://cdn.example.com/img.jpg
+      - Relative path:     /images/hero.jpg           -> https://example.com/images/hero.jpg
+      - Already absolute:  https://example.com/img    -> unchanged
+    Returns None if the URL is empty or unfixable.
+    """
+    if not url:
+        return None
+    url = url.strip()
+    if url.startswith('//'):
+        return 'https:' + url
+    if url.startswith(('http://', 'https://')):
+        return url
+    if base_url:
+        return urljoin(base_url, url)
+    # Can't resolve a relative URL without a base — skip it
+    SafeLogger.warn(f"Could not normalise relative URL without base: {url}")
+    return None
+
 async def get_link_metadata(url: str) -> Dict[str, Any]:
     """Scrapes OpenGraph metadata from a URL (v4.5 Sage replacement for DALL-E)."""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -115,12 +138,14 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
             # Download image if exists for uploading as blob
             img_data = None
             if og_image and og_image.get('content'):
-                img_res = await client.get(og_image['content'], timeout=5.0)
-                if img_res.status_code == 200:
-                    img_data = img_res.content
-                    if len(img_data) > 900 * 1024:
-                        print(f"Compressing large OpenGraph image ({len(img_data)//1024}KB)...")
-                        img_data = compress_image(img_data)
+                img_url = normalise_url(og_image['content'], base_url=url)
+                if img_url:
+                    img_res = await client.get(img_url, timeout=5.0)
+                    if img_res.status_code == 200:
+                        img_data = img_res.content
+                        if len(img_data) > 900 * 1024:
+                            print(f"Compressing large OpenGraph image ({len(img_data)//1024}KB)...")
+                            img_data = compress_image(img_data)
 
             return {
                 "title": og_title['content'] if og_title else soup.title.string if soup.title else "Technical Insight",
@@ -137,9 +162,13 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     score = 0.0
     text = f"{item['title']} {item['description']}".lower()
     
-    # 1. Source Tier
-    source_domain = item['link'].split('/')[2]
-    score += next((val for domain, val in SOURCE_TIERS.items() if domain in source_domain), 3.0)
+    # 1. Source Tier — guard against relative or malformed links
+    try:
+        parsed = urlparse(item['link'])
+        source_domain = parsed.netloc if parsed.netloc else ""
+        score += next((val for domain, val in SOURCE_TIERS.items() if domain in source_domain), 3.0)
+    except Exception:
+        score += 3.0  # Default tier score if link is unparseable
     
     # 2. Product Boost
     if any(kw in text for kw in PRODUCT_KEYWORDS): score += 5.0
@@ -174,18 +203,29 @@ async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[st
         
         for entry in feed.entries:
             time_struct = entry.get('published_parsed') or entry.get('updated_parsed')
-            if time_struct:
-                import calendar
-                pub_date = datetime.fromtimestamp(calendar.timegm(time_struct), timezone.utc)
-                if pub_date > lookback:
-                    summary = entry.get('summary', entry.get('description', ""))
-                    clean_summary = re.sub('<[^<]+?>', '', summary)[:500]
-                    items.append({
-                        "title": entry.title,
-                        "description": clean_summary,
-                        "link": entry.link,
-                        "pub_date": pub_date
-                    })
+            if not time_struct:
+                continue
+
+            import calendar
+            pub_date = datetime.fromtimestamp(calendar.timegm(time_struct), timezone.utc)
+            if pub_date <= lookback:
+                continue
+
+            # Normalise the article link — some feeds serve relative URLs
+            raw_link = entry.get('link', '').strip()
+            normalised_link = normalise_url(raw_link, base_url=url)
+            if not normalised_link:
+                SafeLogger.warn(f"Skipping feed entry with unusable link: '{raw_link}'")
+                continue
+
+            summary = entry.get('summary', entry.get('description', ""))
+            clean_summary = re.sub('<[^<]+?>', '', summary)[:500]
+            items.append({
+                "title": entry.title,
+                "description": clean_summary,
+                "link": normalised_link,
+                "pub_date": pub_date
+            })
         return items
     except Exception as e:
         SafeLogger.error(f"Error parsing feed {url}", e)
