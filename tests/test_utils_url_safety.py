@@ -85,3 +85,71 @@ async def test_get_with_safe_redirects_validates_each_redirect_hop(monkeypatch):
 
     assert response is None
     assert requests_made == ["https://first.example/start"]
+
+
+@pytest.mark.asyncio
+async def test_get_with_safe_redirects_allows_allowlisted_domain(monkeypatch):
+    def mock_getaddrinfo(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    async def fake_get(url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
+    monkeypatch.setattr("src.utils.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
+    monkeypatch.setattr("src.utils.METADATA_FETCH_BLOCKED_DOMAINS", [])
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "get", fake_get)
+        response = await get_with_safe_redirects(client, "https://allowed.example/article")
+
+    assert response is not None
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_get_with_safe_redirects_blocks_non_allowlisted_domain(monkeypatch):
+    def mock_getaddrinfo(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    async def fake_get(url, **kwargs):
+        raise AssertionError("request should not execute when domain policy blocks")
+
+    monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
+    monkeypatch.setattr("src.utils.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
+    monkeypatch.setattr("src.utils.METADATA_FETCH_BLOCKED_DOMAINS", [])
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "get", fake_get)
+        response = await get_with_safe_redirects(client, "https://disallowed.example/article")
+
+    assert response is None
+
+
+@pytest.mark.asyncio
+async def test_get_with_safe_redirects_blocks_redirect_to_non_allowlisted_domain(monkeypatch):
+    def mock_getaddrinfo(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    requests_made = []
+
+    async def fake_get(url, **kwargs):
+        requests_made.append(url)
+        if url == "https://allowed.example/start":
+            return httpx.Response(
+                302,
+                headers={"location": "https://disallowed.example/final"},
+                request=httpx.Request("GET", url),
+            )
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
+    monkeypatch.setattr("src.utils.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
+    monkeypatch.setattr("src.utils.METADATA_FETCH_BLOCKED_DOMAINS", [])
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "get", fake_get)
+        response = await get_with_safe_redirects(client, "https://allowed.example/start")
+
+    assert response is None
+    assert requests_made == ["https://allowed.example/start"]

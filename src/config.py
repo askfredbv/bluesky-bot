@@ -44,6 +44,11 @@ FEED_REQUEST_POOL_TIMEOUT_SECONDS: float = 10.0
 FEED_MAX_CONNECTIONS: int = 20
 FEED_MAX_KEEPALIVE_CONNECTIONS: int = 10
 
+# Metadata Fetch Domain Policy
+# If allowlist is empty, all public domains are allowed unless explicitly denied.
+METADATA_FETCH_ALLOWED_DOMAINS: List[str] = []
+METADATA_FETCH_BLOCKED_DOMAINS: List[str] = []
+
 # Sage Intelligence (v4.5)
 SOURCE_TIERS: Dict[str, int] = {
     "openai.com": 10,
