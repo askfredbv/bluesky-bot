@@ -1,4 +1,3 @@
-import os
 import sys
 import asyncio
 import random
@@ -8,8 +7,7 @@ from dotenv import load_dotenv
 
 # Internal Imports
 from src.config import (
-    SEEN_FILE, APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
-    MAX_POST_LENGTH_BSKY, POST_JITTER_MIN_SECONDS, POST_JITTER_MAX_SECONDS,
+    APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     PROFILE_BIO_UPDATE_COOLDOWN_HOURS
 )
@@ -23,6 +21,7 @@ from src.broadcasters import (
     update_profile_bio, update_profile_bio_mastodon
 )
 from src.logger import SafeLogger
+from src.settings import Settings, SettingsValidationError
 
 load_dotenv()
 
@@ -35,33 +34,31 @@ async def get_recent_posts(client, handle: str) -> List[str]:
         SafeLogger.error("Failed to fetch recent posts", e)
         return []
 
-async def apply_humanized_post_delay():
+async def apply_humanized_post_delay(settings: Settings):
     """Inject pre-post timing jitter so runs are less clock-perfect."""
-    if POST_JITTER_MAX_SECONDS <= 0:
+    if settings.platform.post_jitter_max_seconds <= 0:
         return
-    lower = max(0, POST_JITTER_MIN_SECONDS)
-    upper = max(lower, POST_JITTER_MAX_SECONDS)
+    lower = max(0, settings.platform.post_jitter_min_seconds)
+    upper = max(lower, settings.platform.post_jitter_max_seconds)
     wait_seconds = random.randint(lower, upper)
     if wait_seconds == 0:
         return
     print(f"Humanized delay before posting: {wait_seconds}s")
     await asyncio.sleep(wait_seconds)
 
+def load_settings_or_exit() -> Settings:
+    try:
+        return Settings.from_env()
+    except SettingsValidationError as exc:
+        print(f"Configuration error: {exc}")
+        sys.exit(1)
+
+
 async def main():
     print("--- AskFred Engine v4.6 Resilience Upgrade ---")
-    
-    # Environment Check
-    creds = {
-        "gemini": os.environ.get("GEMINI_API_KEY"),
-        "bsky_user": os.environ.get("BLUESKY_USERNAME", "askfred.be"),
-        "bsky_pass": os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD"),
-        "masto_token": os.environ.get("MASTODON_ACCESS_TOKEN"),
-        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
-    }
 
-    if not all([creds["gemini"], creds["bsky_user"], creds["bsky_pass"]]):
-        print("Error: Missing core credentials.")
-        sys.exit(1)
+    settings = load_settings_or_exit()
+    creds = settings.credentials
 
     # 1. Slot Strategy
     current_hour = datetime.now(timezone.utc).hour
@@ -85,23 +82,23 @@ async def main():
     # Silent handshake for Bsky context
     from atproto import AsyncClient
     bsky_client = AsyncClient()
-    await bsky_client.login(creds["bsky_user"], creds["bsky_pass"])
-    recent_posts = await get_recent_posts(bsky_client, creds["bsky_user"])
+    await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
+    recent_posts = await get_recent_posts(bsky_client, creds.bluesky_username)
     
     # 4. Content Synthesis (Temporal Aware)
-    content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
+    content_list, chosen_topic = await generate_content(creds.gemini_api_key, recent_posts, mode=mode, news_items=news_items)
     thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
-    await apply_humanized_post_delay()
+    await apply_humanized_post_delay(settings)
 
     # 5. Sage Parallel Broadcasting
     print(f"Initiating Concurrent Delivery to Bluesky and Mastodon...")
     broadcast_tasks = [
         post_to_bluesky(
-            creds["bsky_user"], creds["bsky_pass"], content_list, link_meta,
+            creds.bluesky_username, creds.bluesky_password, content_list, link_meta,
             thread_pause_profile=thread_pause_profile
         ),
         post_to_mastodon(
-            creds["masto_token"], creds["masto_url"], content_list,
+            creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
             thread_pause_profile=thread_pause_profile
         )
     ]
@@ -122,12 +119,12 @@ async def main():
     )
 
     automation_tasks = [
-        handle_interactions(bsky_broadcast_client, creds["bsky_user"], creds["gemini"])
+        handle_interactions(bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
     ]
     if should_update_bsky_bio:
         automation_tasks.append(update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY))
     if should_update_masto_bio:
-        automation_tasks.append(update_profile_bio_mastodon(creds["masto_token"], creds["masto_url"], APPROVED_BIO_MASTODON))
+        automation_tasks.append(update_profile_bio_mastodon(creds.mastodon_access_token, creds.mastodon_api_base_url, APPROVED_BIO_MASTODON))
     await asyncio.gather(*automation_tasks, return_exceptions=True)
     if should_update_bsky_bio:
         mark_profile_bio_updated("bluesky", APPROVED_BIO_BSKY)
