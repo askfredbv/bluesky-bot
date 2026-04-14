@@ -33,7 +33,6 @@ from src.config import (
 )
 from src.logger import SafeLogger
 
-socket.setdefaulttimeout(15)
 T = TypeVar("T")
 STATE_STORE_TIMEOUT_SECONDS = 10.0
 
@@ -626,9 +625,14 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     item['detected_topic'] = item_topic
     return score
 
-async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[str, Any]]:
+async def fetch_single_feed(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    timeout: Optional[httpx.Timeout] = None
+) -> List[Dict[str, Any]]:
     try:
-        response = await client.get(url)
+        response = await client.get(url, timeout=timeout)
         feed = feedparser.parse(response.text)
         if feed.bozo:
             bozo_exception = getattr(feed, 'bozo_exception', None)
@@ -698,7 +702,7 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
 
     async def _fetch_with_semaphore(url: str) -> List[Dict[str, Any]]:
         async with semaphore:
-            return await fetch_single_feed(client, url)
+            return await fetch_single_feed(client, url, timeout=timeout)
 
     async with httpx.AsyncClient(
         follow_redirects=True,
