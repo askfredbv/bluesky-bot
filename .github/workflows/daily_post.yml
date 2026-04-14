@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to push seen_articles.json back to repo
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
@@ -33,12 +33,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
           MASTODON_API_BASE_URL: ${{ secrets.MASTODON_API_BASE_URL }}
+          STATE_STORE_URL: ${{ secrets.STATE_STORE_URL }}
+          STATE_STORE_TOKEN: ${{ secrets.STATE_STORE_TOKEN }}
         run: python main.py
-
-      - name: Commit State
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add seen_articles.json replied_to.json README.md || true
-          git commit -m "chore: update bot state [skip ci]" || true
-          git push || true
