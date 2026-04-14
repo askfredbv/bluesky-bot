@@ -1,115 +1,123 @@
-# Bluesky & Mastodon Daily Poster (v4.6.0) 🚀
+# Bluesky & Mastodon Daily Poster
 
-An autonomous, multi-channel technical broadcasting engine for **Bluesky** and **Mastodon**. This project is part of the **askfred** technical suite, focused on delivering high-signal academic and professional insights to the decentralized web.
-
-## 📡 Live Status
-| Component | Status | Last Run | Mode |
-| :--- | :--- | :--- | :--- |
-| **Broadcaster** | Operational | 2026-04-14 | ☕ Curator |
-| **Signal Strength** | Elite (Async) | -- | -- |
+An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
 ---
 
-## 🚀 Key Features
+## What it does
 
-### 🧠 Sage Intelligence (v4.6)
-*   **Weighted Relevance Scoring**: Implements a 5-factor scoring model assessing Tiers, Impact, Breakthroughs, Time Decay, and Topic Diversity.
-*   **Strategist Fallback Mode**: If high-signal news volume is critically low (<3 items), AskFred autonomously pivots into "Strategist Mode" to mentor on timeless abstract computing philosophies, ensuring 100% active cycles.
-*   **Hidden Gem Injection**: Select high-tier research feeds like `arXiv` are mathematically prioritized to ensure academic-grade papers regularly survive curation noise loops.
-*   **Topic Memory**: Automatically tracks recent topics to ensure the feed remains diverse and avoids "echo-chamber" repetition.
-*   **Rescue Intelligence**: Robust validation and automated repair pipeline for AI output to ensure perfect formatting every run.
+**Morning run (08:00 UTC) — The Curator**
+Fetches from 17 AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then generates a 3–5 post thread on the most consequential developments. The goal is the "...which means" that follows the headline, not the headline itself.
 
-### 🛡️ Security & Resilience (The Fortress)
-*   **Atomic Broadcasting Workflow**: Utilizes `asyncio.gather(return_exceptions=True)` to execute concurrent platform delivery. If Mastodon fails, Bluesky broadcasting still succeeds and state is persisted smoothly without crash-loops.
-*   **Dynamic Secret Masking**: Environment variables (Keys, Tokens) are aggressively scanned and stripped out of the runtime `SafeLogger` output preventing accidental credential leakage.
-*   **Interaction Circuit Breakers**: Hard caps on daily replies (max 10/day) to prevent mention-spam and API credit exhaustion.
-*   **API Backoff & Jitter**: Exponential backoff ensuring the bot survives platform instability.
+**Afternoon run (14:30 UTC) — The Mentor**
+Picks a career or work-life topic and writes a short thread. The target is specific, observational advice — the kind that is obvious in hindsight but rarely articulated.
 
-### 📡 Multi-Channel Broadcasting
-*   **Rich Link Previews**: Replaced DALL-E with a Metadata Extraction Engine. AskFred now generates professional link cards with actual images from the source.
-*   **Parallel Dual Delivery**: Concurrent posting to Bluesky and Mastodon for maximum performance.
-*   **Smart Threading**: AI-driven logic that automatically generates a linked **3–5 post thread** with human-like inter-post timing.
-
-### 🤖 Dual-Persona Intelligence
-*   **Morning Run (08:00 UTC / 10:00 local)**: **The Curator** — High-signal tech and research synthesis.
-*   **Afternoon Run (14:30 UTC / 16:30 local)**: **The Mentor** — Professional wisdom, career advice, and work-life balance tips.
+If the morning news volume is low (fewer than 3 high-signal items), the bot falls back to a longer-horizon "strategist" take on a secondary topic rather than posting nothing.
 
 ---
 
-## 🛠️ Setup & Configuration
+## How it works
+
+```
+GitHub Actions (cron)
+  → fetch RSS feeds + score items          (src/utils.py)
+  → generate thread via Gemini 2.5 Flash   (src/agents.py)
+  → post to Bluesky + Mastodon in parallel (src/broadcasters.py)
+  → check and reply to mentions            (src/agents.py)
+```
+
+**Content scoring** uses five factors: source tier, product-launch signals, technical depth keywords, time decay (0.5 pts/hour), and a topic diversity penalty to avoid repetition. arXiv papers get priority injection if they don't survive the scoring on their own.
+
+**Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones.
+
+**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. Atomic JSON writes with backup/restore for state files. Hard cap of 10 mention replies per run.
+
+---
+
+## Setup
 
 ### Environment Variables
-Add the following to your GitHub repo secrets (`Settings > Secrets and variables > Actions`):
+
+Add these as GitHub repo secrets (`Settings > Secrets and variables > Actions`):
 
 | Secret | Required | Description |
 | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | ✅ Yes | Google AI Studio key for content generation. |
-| `BLUESKY_USERNAME` | ✅ Yes | Your Bluesky handle (e.g., `askfred.be`). |
-| `BLUESKY_APP_PASSWORD` | ✅ Yes | App-specific password from Bluesky settings. |
-| `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance. |
-| `MASTODON_API_BASE_URL` | Optional | Your Mastodon instance URL (e.g., `https://mastodon.social`). |
+| `GEMINI_API_KEY` | Yes | Google AI Studio key for content generation |
+| `BLUESKY_USERNAME` | Yes | Your Bluesky handle (e.g. `yourname.bsky.social`) |
+| `BLUESKY_APP_PASSWORD` | Yes | App-specific password from Bluesky settings |
+| `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance |
+| `MASTODON_API_BASE_URL` | Optional | Your Mastodon instance URL |
 
-### Installation & Local Run
+### Local run
+
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
 
-### Dependency Management (Lock Workflow)
-- Edit dependency intent in `requirements.in` (ranges / compatibility constraints).
-- Regenerate the lock file:
+Create a `.env` file from `.env.example` for local credentials.
+
+### Tests
+
+```bash
+pytest
+```
+
+### Dependency management
+
+Dependencies are pinned via `pip-tools`. Edit intent in `requirements.in`, then regenerate:
 
 ```bash
 pip install pip-tools
 pip-compile --no-header --no-annotate --strip-extras --output-file requirements.txt requirements.in
 ```
 
-- Install exactly locked versions locally:
+CI fails if `requirements.txt` is out of sync with `requirements.in`.
 
-```bash
-pip install -r requirements.txt
-```
+### Platform notes
 
-- CI enforces lock freshness by regenerating `requirements.txt` and failing if there is a diff.
-
-### Running Tests
-```bash
-pytest
-```
-
-### Supported Platforms
-- **Linux / macOS (POSIX):** File-based state locks use `fcntl.flock` advisory locks.
-- **Windows:** File-based state locks use `msvcrt.locking` on a fixed lock region.
-- The public lock helper API remains unchanged (`_file_lock` in `src/utils.py`), so callers are platform-agnostic.
+- **Linux / macOS**: file locks use `fcntl.flock`
+- **Windows**: file locks use `msvcrt.locking`
 
 ---
 
-## 📂 Project Structure
+## Customisation
+
+The main levers are all in `src/config.py`:
+
+- **`RSS_FEEDS`** — add or remove feeds
+- **`SOURCE_TIERS`** — adjust per-domain relevance weights
+- **`SECONDARY_TOPICS`** — the topic pool for Mentor and Strategist modes
+- **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
+- **`APPROVED_BIO_BSKY` / `APPROVED_BIO_MASTODON`** — profile bios, refreshed on a weekly cooldown
+
+---
+
+## Project structure
 
 ```
 .
-├── main.py                    # Async orchestrator & entry point
+├── main.py                    # Async orchestrator & pipeline stages
 ├── src/
-│   ├── agents.py              # AI content generation & interaction handling
-│   ├── broadcasters.py        # Bluesky & Mastodon platform broadcasters
-│   ├── config.py              # All constants, personas, and RSS feeds
-│   ├── logger.py              # Sanitized SafeLogger (security layer)
-│   └── utils.py               # Async RSS fetching, scoring, & scraping utils
-├── tests/
-│   ├── conftest.py            # Pytest async configuration
-│   ├── test_ranking.py        # Unit tests for Scholar Gem ranking & deduplication
-│   └── test_protection.py     # Unit tests for security & resilience logic
+│   ├── agents.py              # Content generation and mention handling
+│   ├── broadcasters.py        # Bluesky and Mastodon posting
+│   ├── config.py              # Constants, personas, feeds, scoring config
+│   ├── file_lock.py           # Cross-platform file locking
+│   ├── logger.py              # SafeLogger — strips credentials from output
+│   ├── settings.py            # Environment variable loading and validation
+│   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
+├── tests/                     # pytest suite (69 tests)
 ├── .github/
-│   ├── workflows/daily_post.yml      # GitHub Actions schedule (08:00 & 14:30 UTC)
-│   ├── workflows/lockfile-check.yml  # Fails when requirements.txt is out of date
-│   └── dependabot.yml                # Automated dependency vulnerability scanning
-├── pytest.ini                     # Pytest asyncio mode configuration
-├── requirements.in                # Human-edited dependency constraints
-├── requirements.txt               # Fully resolved lock (direct + transitive pins)
-└── README.md
+│   ├── workflows/daily_post.yml      # Cron schedule: 08:00 and 14:30 UTC
+│   ├── workflows/lockfile-check.yml  # Fails if requirements.txt is stale
+│   └── dependabot.yml                # Dependency vulnerability scanning
+├── pytest.ini
+├── requirements.in            # Human-edited dependency constraints
+└── requirements.txt           # Fully resolved lockfile
 ```
 
 ---
 
-## ⚖️ License
-MIT License. Built with ❤️ by **askfred**.
+## License
+
+MIT. Built by [Frederik Van Hecke](https://askfred.be).
