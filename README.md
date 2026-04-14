@@ -61,7 +61,7 @@ python main.py
 
 ```bash
 pip install pip-tools
-pip-compile --output-file requirements.txt requirements.in
+pip-compile --no-header --no-annotate --strip-extras --output-file requirements.txt requirements.in
 ```
 
 - Install exactly locked versions locally:
@@ -100,7 +100,7 @@ pytest
 │   └── dependabot.yml                # Automated dependency vulnerability scanning
 ├── pytest.ini                     # Pytest asyncio mode configuration
 ├── requirements.in                # Human-edited dependency constraints
-├── requirements.txt               # Locked dependency pins
+├── requirements.txt               # Fully resolved lock (direct + transitive pins)
 └── README.md
 ```
 
