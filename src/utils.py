@@ -34,6 +34,72 @@ from src.logger import SafeLogger
 
 socket.setdefaulttimeout(15)
 T = TypeVar("T")
+STATE_STORE_TIMEOUT_SECONDS = 10.0
+
+def _state_store_url_for_key(key: str) -> Optional[str]:
+    base_url = os.environ.get("STATE_STORE_URL", "").strip()
+    if not base_url:
+        return None
+    if "{key}" in base_url:
+        return base_url.format(key=key)
+    return f"{base_url.rstrip('/')}/{key}"
+
+def _state_store_headers() -> Dict[str, str]:
+    headers: Dict[str, str] = {"Accept": "application/json"}
+    token = os.environ.get("STATE_STORE_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+def _load_state_from_store(key: str) -> Optional[Any]:
+    endpoint = _state_store_url_for_key(key)
+    if not endpoint:
+        return None
+    try:
+        response = httpx.get(endpoint, headers=_state_store_headers(), timeout=STATE_STORE_TIMEOUT_SECONDS)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict) and "value" in data:
+            return data["value"]
+        return data
+    except Exception as e:
+        SafeLogger.warn(f"Remote state read failed for {key}: {e}")
+        return None
+
+def _save_state_to_store(key: str, data: Any) -> bool:
+    endpoint = _state_store_url_for_key(key)
+    if not endpoint:
+        return False
+    payload = {"value": data}
+    try:
+        response = httpx.put(
+            endpoint,
+            headers={**_state_store_headers(), "Content-Type": "application/json"},
+            json=payload,
+            timeout=STATE_STORE_TIMEOUT_SECONDS
+        )
+        if response.status_code not in (200, 201, 204, 405):
+            response.raise_for_status()
+            return True
+        if response.status_code in (200, 201, 204):
+            return True
+    except Exception as e:
+        SafeLogger.warn(f"Remote state PUT failed for {key}: {e}")
+
+    try:
+        response = httpx.post(
+            endpoint,
+            headers={**_state_store_headers(), "Content-Type": "application/json"},
+            json=payload,
+            timeout=STATE_STORE_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        return response.status_code in (200, 201, 204)
+    except Exception as e:
+        SafeLogger.warn(f"Remote state POST failed for {key}: {e}")
+        return False
 
 def retry_with_backoff(func):
     """Decorator to retry an async function with exponential backoff and jitter."""
@@ -138,6 +204,14 @@ def _file_lock(lock_path: Path):
 def load_seen_articles() -> Dict[str, Any]:
     """Load seen state including links and recent topics."""
     default = {"links": [], "recent_topics": []}
+    remote_data = _load_state_from_store("seen_articles")
+    if isinstance(remote_data, dict) and "links" in remote_data and "recent_topics" in remote_data:
+        return remote_data
+    if isinstance(remote_data, list):
+        migrated = {"links": remote_data, "recent_topics": []}
+        _save_state_to_store("seen_articles", migrated)
+        return migrated
+
     data = _load_json_with_repair(
         SEEN_FILE,
         lambda: default,
@@ -150,6 +224,8 @@ def load_seen_articles() -> Dict[str, Any]:
     return default
 
 def save_seen_articles(seen_data: Dict[str, Any]) -> None:
+    if _save_state_to_store("seen_articles", seen_data):
+        return
     try:
         _atomic_write_json(SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".bak"), seen_data)
         _atomic_write_json(SEEN_FILE, seen_data)
@@ -157,6 +233,10 @@ def save_seen_articles(seen_data: Dict[str, Any]) -> None:
         SafeLogger.error("Failed to save seen articles", e)
 
 def load_replied_to() -> List[str]:
+    remote_data = _load_state_from_store("replied_to")
+    if isinstance(remote_data, list):
+        return remote_data
+
     data = _load_json_with_repair(REPLIED_FILE, lambda: [])
     if isinstance(data, list):
         return data
@@ -165,6 +245,8 @@ def load_replied_to() -> List[str]:
     return []
 
 def save_replied_to(replied_ids: List[str]) -> None:
+    if _save_state_to_store("replied_to", replied_ids):
+        return
     try:
         _atomic_write_json(REPLIED_FILE.with_suffix(REPLIED_FILE.suffix + ".bak"), replied_ids)
         _atomic_write_json(REPLIED_FILE, replied_ids)
@@ -192,6 +274,10 @@ def update_replied_to(mutator: Callable[[List[str]], List[str]]) -> List[str]:
 def load_runtime_state() -> Dict[str, Any]:
     """Load runtime metadata used for cadence gates and cooldowns."""
     default = {"profile_bio": {}}
+    remote_data = _load_state_from_store("runtime_state")
+    if isinstance(remote_data, dict) and "profile_bio" in remote_data:
+        return remote_data
+
     data = _load_json_with_repair(RUNTIME_STATE_FILE, lambda: default)
     if isinstance(data, dict) and "profile_bio" in data:
         return data
@@ -199,6 +285,8 @@ def load_runtime_state() -> Dict[str, Any]:
     return default
 
 def save_runtime_state(state: Dict[str, Any]) -> None:
+    if _save_state_to_store("runtime_state", state):
+        return
     try:
         _atomic_write_json(RUNTIME_STATE_FILE.with_suffix(RUNTIME_STATE_FILE.suffix + ".bak"), state)
         _atomic_write_json(RUNTIME_STATE_FILE, state)

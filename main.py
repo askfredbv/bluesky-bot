@@ -35,30 +35,6 @@ async def get_recent_posts(client, handle: str) -> List[str]:
         SafeLogger.error("Failed to fetch recent posts", e)
         return []
 
-async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
-    """v4.3 Elite Feature: Automatically update the README dashboard."""
-    try:
-        readme_path = os.path.join(os.getcwd(), "README.md")
-        with open(readme_path, "r") as f:
-            lines = f.readlines()
-        
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        icon = "☕" if mode == "curator" else "💡"
-        
-        new_lines = []
-        for line in lines:
-            if "| **Broadcaster** |" in line:
-                new_lines.append(f"| **Broadcaster** | Operational | {today} | {icon} {mode.capitalize()} |\n")
-            elif "| **Signal Strength** |" in line:
-                new_lines.append(f"| **Signal Strength** | {signal_strength} | -- | -- |\n")
-            else:
-                new_lines.append(line)
-        
-        with open(readme_path, "w") as f:
-            f.writelines(new_lines)
-    except Exception as e:
-        SafeLogger.error("Failed to update status dashboard", e)
-
 async def apply_humanized_post_delay():
     """Inject pre-post timing jitter so runs are less clock-perfect."""
     if POST_JITTER_MAX_SECONDS <= 0:
@@ -146,8 +122,7 @@ async def main():
     )
 
     automation_tasks = [
-        handle_interactions(bsky_broadcast_client, creds["bsky_user"], creds["gemini"]),
-        update_live_status(mode)
+        handle_interactions(bsky_broadcast_client, creds["bsky_user"], creds["gemini"])
     ]
     if should_update_bsky_bio:
         automation_tasks.append(update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY))
