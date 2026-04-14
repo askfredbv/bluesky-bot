@@ -55,6 +55,23 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Dependency Management (Lock Workflow)
+- Edit dependency intent in `requirements.in` (ranges / compatibility constraints).
+- Regenerate the lock file:
+
+```bash
+pip install pip-tools
+pip-compile --output-file requirements.txt requirements.in
+```
+
+- Install exactly locked versions locally:
+
+```bash
+pip install -r requirements.txt
+```
+
+- CI enforces lock freshness by regenerating `requirements.txt` and failing if there is a diff.
+
 ### Running Tests
 ```bash
 pytest
@@ -78,10 +95,12 @@ pytest
 │   ├── test_ranking.py        # Unit tests for Scholar Gem ranking & deduplication
 │   └── test_protection.py     # Unit tests for security & resilience logic
 ├── .github/
-│   ├── workflows/daily_post.yml  # GitHub Actions schedule (08:00 & 14:30 UTC)
-│   └── dependabot.yml            # Automated dependency vulnerability scanning
-├── pytest.ini                 # Pytest asyncio mode configuration
-├── requirements.txt
+│   ├── workflows/daily_post.yml      # GitHub Actions schedule (08:00 & 14:30 UTC)
+│   ├── workflows/lockfile-check.yml  # Fails when requirements.txt is out of date
+│   └── dependabot.yml                # Automated dependency vulnerability scanning
+├── pytest.ini                     # Pytest asyncio mode configuration
+├── requirements.in                # Human-edited dependency constraints
+├── requirements.txt               # Locked dependency pins
 └── README.md
 ```
 
