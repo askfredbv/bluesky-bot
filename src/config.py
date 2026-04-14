@@ -24,6 +24,10 @@ REPLIED_FILE = Path("replied_to.json")
 
 # Fortress Security (v4.4)
 REPLY_CAP_PER_RUN: int = 10
+REPLY_MAX_CHARS: int = 250
+MENTION_NO_REPLY_PROB: float = 0.2
+MENTION_REPLY_MIN_DELAY_SECONDS: float = 20.0
+MENTION_REPLY_MAX_DELAY_SECONDS: float = 900.0
 MAX_API_RETRIES: int = 3
 BACKOFF_FACTOR: float = 2.0
 JITTER_RANGE: float = 2.0
