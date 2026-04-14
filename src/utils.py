@@ -157,6 +157,12 @@ def is_safe_public_url(url: str) -> bool:
         except ValueError:
             return False
 
+        # is_global=False captures non-public ranges like CGNAT (100.64.0.0/10),
+        # benchmark/testing ranges, and other special-use addresses that should
+        # never be fetched in SSRF-sensitive contexts.
+        if not ip_obj.is_global:
+            return False
+
         if (
             ip_obj.is_private
             or ip_obj.is_loopback
