@@ -48,6 +48,16 @@ async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
             self.access_token = access_token
             self.api_base_url = api_base_url
 
+        def instance(self):
+            return {
+                "configuration": {
+                    "statuses": {
+                        "max_characters": MAX_POST_LENGTH_MASTODON,
+                        "characters_reserved_per_url": 23,
+                    }
+                }
+            }
+
         def status_post(self, status, in_reply_to_id, visibility):
             posted_statuses.append(
                 {
@@ -68,3 +78,36 @@ async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
     assert all(
         len(payload["status"]) <= MAX_POST_LENGTH_MASTODON for payload in posted_statuses
     )
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_does_not_split_long_url_when_weighted_length_fits(monkeypatch):
+    posted_statuses = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            self.access_token = access_token
+            self.api_base_url = api_base_url
+
+        def instance(self):
+            return {
+                "configuration": {
+                    "statuses": {
+                        "max_characters": MAX_POST_LENGTH_MASTODON,
+                        "characters_reserved_per_url": 23,
+                    }
+                }
+            }
+
+        def status_post(self, status, in_reply_to_id, visibility):
+            posted_statuses.append(status)
+            return {"id": len(posted_statuses)}
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.time, "sleep", lambda _: None)
+
+    long_url = "https://example.com/" + ("a" * (MAX_POST_LENGTH_MASTODON + 200))
+    await broadcasters.post_to_mastodon("token", "https://mastodon.example", [long_url])
+
+    assert len(posted_statuses) == 1
+    assert posted_statuses[0] == long_url

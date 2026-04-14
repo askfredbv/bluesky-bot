@@ -2,6 +2,7 @@ import asyncio
 import time
 import random
 import httpx
+import re
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
@@ -28,6 +29,51 @@ def _split_and_constrain_posts(content_list: List[str], max_length: int, platfor
             constrained_posts.append(original_text[i:i + max_length])
 
     return constrained_posts
+
+
+_URL_PATTERN = re.compile(r"https?://\S+")
+
+
+def _mastodon_status_length(text: str, characters_reserved_per_url: int) -> int:
+    """Compute Mastodon status length using URL reservation semantics."""
+    length = len(text)
+    for match in _URL_PATTERN.finditer(text):
+        url_length = len(match.group(0))
+        length += characters_reserved_per_url - url_length
+    return length
+
+
+def _split_mastodon_post(text: str, max_length: int, characters_reserved_per_url: int) -> List[str]:
+    """
+    Split Mastodon text into chunks that satisfy Mastodon's length counting rules.
+    Prefers whitespace boundaries and never slices through a URL.
+    """
+    if _mastodon_status_length(text, characters_reserved_per_url) <= max_length:
+        return [text]
+
+    tokens = re.findall(r"\S+\s*", text)
+    chunks: List[str] = []
+    current = ""
+
+    for token in tokens:
+        candidate = f"{current}{token}"
+        if _mastodon_status_length(candidate, characters_reserved_per_url) <= max_length:
+            current = candidate
+            continue
+
+        if current:
+            chunks.append(current.rstrip())
+            current = token
+        else:
+            # Fallback for very long single non-URL tokens.
+            slice_end = max_length
+            chunks.append(token[:slice_end])
+            current = token[slice_end:]
+
+    if current:
+        chunks.append(current.rstrip())
+
+    return chunks
 
 @retry_with_backoff
 async def post_to_bluesky(username, password, content_list: List[str], link_meta: Optional[Dict[str, Any]] = None):
@@ -84,12 +130,24 @@ async def post_to_mastodon(access_token: str, api_base_url: str, content_list: L
     """Async-wrapped broadcaster for Mastodon."""
     if not access_token: return
 
-    constrained_content_list = _split_and_constrain_posts(
-        content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"
-    )
-
     def _sync_post():
         mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
+        instance_config = mastodon.instance().get("configuration", {})
+        statuses_config = instance_config.get("statuses", {})
+        max_length = statuses_config.get("max_characters", MAX_POST_LENGTH_MASTODON)
+        characters_reserved_per_url = statuses_config.get("characters_reserved_per_url", 23)
+
+        constrained_content_list: List[str] = []
+        for original_text in content_list:
+            split_posts = _split_mastodon_post(
+                original_text, max_length, characters_reserved_per_url
+            )
+            if len(split_posts) > 1:
+                SafeLogger.warn(
+                    f"Mastodon content exceeded {max_length} chars; splitting into safe chunks."
+                )
+            constrained_content_list.extend(split_posts)
+
         last_id = None
         for i, post_text in enumerate(constrained_content_list):
             status = mastodon.status_post(
