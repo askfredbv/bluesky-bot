@@ -60,7 +60,8 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
     temporal = get_temporal_context()
     
     if mode == "curator" and news_items:
-        news_text = "\n".join([f"- {i['title']}: {i['summary']} ({i['link']})" for i in news_items])
+        # FIX: utils.py stores the field as 'description', not 'summary'
+        news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
         instr = SYSTEM_INSTRUCTIONS_CURATOR
         task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nRESEARCH:\n{news_text}\n\nTask: Synthesize a professional thread."
