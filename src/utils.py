@@ -2,18 +2,20 @@ import json
 import re
 import random
 import asyncio
+import os
 import httpx
 import feedparser
 import socket
 import functools
 import ipaddress
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable, TypeVar
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import io
 from PIL import Image
+import fcntl
 from src.config import (
     RSS_FEEDS, SEEN_FILE, REPLIED_FILE, 
     MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE,
@@ -30,6 +32,7 @@ from src.config import (
 from src.logger import SafeLogger
 
 socket.setdefaulttimeout(15)
+T = TypeVar("T")
 
 def retry_with_backoff(func):
     """Decorator to retry an async function with exponential backoff and jitter."""
@@ -49,41 +52,141 @@ def retry_with_backoff(func):
                 await asyncio.sleep(wait_time)
     return wrapper
 
+def _atomic_write_json(file_path: Path, data: Any) -> None:
+    """Atomically write JSON by replacing target with a temp file in same dir."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path_str = tempfile.mkstemp(prefix=f".{file_path.name}.", suffix=".tmp", dir=file_path.parent)
+    temp_path = Path(temp_path_str)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, file_path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+def _load_json_with_repair(
+    file_path: Path,
+    default_factory: Callable[[], T],
+    *,
+    migrate_list_to_seen_shape: bool = False
+) -> T:
+    """
+    Load JSON with corruption repair.
+    - If decode fails, try restoring from .bak.
+    - If backup is also invalid/missing, preserve corrupt file and reset to default.
+    """
+    default_data = default_factory()
+    if not file_path.exists():
+        return default_data
+
+    backup_path = file_path.with_suffix(file_path.suffix + ".bak")
+    try:
+        with open(file_path, "r") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        SafeLogger.error(f"Corrupt JSON detected in {file_path}", e)
+        restored_data = None
+        if backup_path.exists():
+            try:
+                with open(backup_path, "r") as backup_file:
+                    restored_data = json.load(backup_file)
+                _atomic_write_json(file_path, restored_data)
+                SafeLogger.warn(f"Restored {file_path} from backup {backup_path}")
+            except Exception as backup_error:
+                SafeLogger.error(f"Backup restore failed for {file_path}", backup_error)
+
+        if restored_data is None:
+            corrupt_copy = file_path.with_suffix(file_path.suffix + ".corrupt")
+            try:
+                os.replace(file_path, corrupt_copy)
+                SafeLogger.warn(f"Moved corrupt file to {corrupt_copy}")
+            except Exception as move_error:
+                SafeLogger.error(f"Failed moving corrupt file for {file_path}", move_error)
+            _atomic_write_json(file_path, default_data)
+            return default_data
+        data = restored_data
+    except Exception as e:
+        SafeLogger.error(f"Failed to load JSON from {file_path}", e)
+        return default_data
+
+    if migrate_list_to_seen_shape and isinstance(data, list):
+        migrated = {"links": data, "recent_topics": []}
+        _atomic_write_json(file_path, migrated)
+        return migrated  # type: ignore[return-value]
+
+    return data
+
+def _file_lock(lock_path: Path):
+    """Context manager for an advisory process lock."""
+    class _Lock:
+        def __enter__(self):
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = open(lock_path, "w")
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX)
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            self._handle.close()
+            return False
+    return _Lock()
+
 def load_seen_articles() -> Dict[str, Any]:
     """Load seen state including links and recent topics."""
-    if SEEN_FILE.exists():
-        try:
-            with open(SEEN_FILE, "r") as f:
-                data = json.load(f)
-                if isinstance(data, list): # Migration from old format
-                    return {"links": data, "recent_topics": []}
-                return data
-        except Exception as e:
-            SafeLogger.error("Failed to load seen articles", e)
-    return {"links": [], "recent_topics": []}
+    default = {"links": [], "recent_topics": []}
+    data = _load_json_with_repair(
+        SEEN_FILE,
+        lambda: default,
+        migrate_list_to_seen_shape=True
+    )
+    if isinstance(data, dict) and "links" in data and "recent_topics" in data:
+        return data
+    SafeLogger.warn("Unexpected seen_articles format detected; repairing to default shape.")
+    _atomic_write_json(SEEN_FILE, default)
+    return default
 
 def save_seen_articles(seen_data: Dict[str, Any]) -> None:
     try:
-        with open(SEEN_FILE, "w") as f:
-            json.dump(seen_data, f, indent=2)
+        _atomic_write_json(SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".bak"), seen_data)
+        _atomic_write_json(SEEN_FILE, seen_data)
     except Exception as e:
         SafeLogger.error("Failed to save seen articles", e)
 
 def load_replied_to() -> List[str]:
-    if REPLIED_FILE.exists():
-        try:
-            with open(REPLIED_FILE, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            SafeLogger.error("Failed to load replied state", e)
+    data = _load_json_with_repair(REPLIED_FILE, lambda: [])
+    if isinstance(data, list):
+        return data
+    SafeLogger.warn("Unexpected replied_to format detected; repairing to default shape.")
+    _atomic_write_json(REPLIED_FILE, [])
     return []
 
 def save_replied_to(replied_ids: List[str]) -> None:
     try:
-        with open(REPLIED_FILE, "w") as f:
-            json.dump(replied_ids, f, indent=2)
+        _atomic_write_json(REPLIED_FILE.with_suffix(REPLIED_FILE.suffix + ".bak"), replied_ids)
+        _atomic_write_json(REPLIED_FILE, replied_ids)
     except Exception as e:
         SafeLogger.error("Failed to save replied state", e)
+
+def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
+    """Lock-protected read-modify-write for seen_articles.json."""
+    lock_path = SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".lock")
+    with _file_lock(lock_path):
+        current = load_seen_articles()
+        updated = mutator(current)
+        save_seen_articles(updated)
+    return updated
+
+def update_replied_to(mutator: Callable[[List[str]], List[str]]) -> List[str]:
+    """Lock-protected read-modify-write for replied_to.json."""
+    lock_path = REPLIED_FILE.with_suffix(REPLIED_FILE.suffix + ".lock")
+    with _file_lock(lock_path):
+        current = load_replied_to()
+        updated = mutator(current)
+        save_replied_to(updated)
+    return updated
 
 def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
     """Compresses an image to stay under AtProto's 1MB blob limit."""
