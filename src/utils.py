@@ -18,7 +18,7 @@ import io
 from PIL import Image
 import fcntl
 from src.config import (
-    RSS_FEEDS, SEEN_FILE, REPLIED_FILE, 
+    RSS_FEEDS, SEEN_FILE, REPLIED_FILE, RUNTIME_STATE_FILE,
     MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE,
     SOURCE_TIERS, PRODUCT_KEYWORDS, GROUNDBREAKING_KEYWORDS,
     TOPIC_MAP, HIDDEN_GEM_SOURCES,
@@ -188,6 +188,60 @@ def update_replied_to(mutator: Callable[[List[str]], List[str]]) -> List[str]:
         updated = mutator(current)
         save_replied_to(updated)
     return updated
+
+def load_runtime_state() -> Dict[str, Any]:
+    """Load runtime metadata used for cadence gates and cooldowns."""
+    default = {"profile_bio": {}}
+    data = _load_json_with_repair(RUNTIME_STATE_FILE, lambda: default)
+    if isinstance(data, dict) and "profile_bio" in data:
+        return data
+    _atomic_write_json(RUNTIME_STATE_FILE, default)
+    return default
+
+def save_runtime_state(state: Dict[str, Any]) -> None:
+    try:
+        _atomic_write_json(RUNTIME_STATE_FILE.with_suffix(RUNTIME_STATE_FILE.suffix + ".bak"), state)
+        _atomic_write_json(RUNTIME_STATE_FILE, state)
+    except Exception as e:
+        SafeLogger.error("Failed to save runtime state", e)
+
+def update_runtime_state(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
+    """Lock-protected read-modify-write for runtime_state.json."""
+    lock_path = RUNTIME_STATE_FILE.with_suffix(RUNTIME_STATE_FILE.suffix + ".lock")
+    with _file_lock(lock_path):
+        current = load_runtime_state()
+        updated = mutator(current)
+        save_runtime_state(updated)
+    return updated
+
+def should_update_profile_bio(platform: str, desired_bio: str, cooldown_hours: int) -> bool:
+    """Return True when bio text changed or cooldown has elapsed."""
+    state = load_runtime_state()
+    profile_data = state.get("profile_bio", {}).get(platform, {})
+    last_bio = profile_data.get("last_bio", "")
+    last_updated_raw = profile_data.get("updated_at")
+
+    if last_bio != desired_bio:
+        return True
+
+    if not last_updated_raw:
+        return True
+
+    try:
+        last_updated = datetime.fromisoformat(last_updated_raw)
+    except Exception:
+        return True
+
+    return (datetime.now(timezone.utc) - last_updated) >= timedelta(hours=cooldown_hours)
+
+def mark_profile_bio_updated(platform: str, bio_text: str) -> None:
+    """Persist latest bio update metadata for cooldown checks."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    def _mutator(state: Dict[str, Any]) -> Dict[str, Any]:
+        profile = state.setdefault("profile_bio", {})
+        profile[platform] = {"last_bio": bio_text, "updated_at": now_iso}
+        return state
+    update_runtime_state(_mutator)
 
 def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
     """Compresses an image to stay under AtProto's 1MB blob limit."""

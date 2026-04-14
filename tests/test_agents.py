@@ -184,3 +184,17 @@ async def test_handle_interactions_can_skip_reply_for_human_cadence(monkeypatch)
 
     assert sent_posts == []
     assert "at://mention/skip" in replied_state
+
+
+@pytest.mark.asyncio
+async def test_generate_content_falls_back_when_model_returns_non_list(monkeypatch):
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_args, **_kwargs: '{"not":"a list"}')
+
+    content, topic = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+    )
+
+    assert isinstance(content, list)
+    assert len(content) == 1

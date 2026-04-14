@@ -11,7 +11,8 @@ from src.config import (
     MENTOR_PERSONA_VARIANTS, CURATOR_PERSONA_VARIANTS,
     STYLE_MEMORY_POST_WINDOW, STYLE_MEMORY_MAX_OPENERS, STYLE_MEMORY_MAX_HASHTAGS,
     REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
-    MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS
+    MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
+    HASHTAG_OPTIONAL_MIN_CHARS, MIN_THREAD_POSTS, MAX_THREAD_POSTS
 )
 from src.utils import update_replied_to
 from src.logger import SafeLogger
@@ -60,7 +61,18 @@ def validate_summary(text: str) -> Tuple[bool, str]:
     if not text: return False, "Empty output"
     if len(text) < 60: return False, "Too short for high-signal insight"
     if re.search(r'(.)\1{4,}', text): return False, "Detected repetitive pattern/gibberish"
-    if "#" not in text: return False, "Missing thematic hashtags"
+    if "#" not in text and len(text) < HASHTAG_OPTIONAL_MIN_CHARS:
+        return False, "Missing thematic hashtags"
+    return True, "Success"
+
+def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
+    """Validate model output is a thread-like list of strings within configured bounds."""
+    if not isinstance(content_list, list):
+        return False, "Model output is not a list"
+    if not all(isinstance(item, str) and item.strip() for item in content_list):
+        return False, "Thread contains non-string or empty entries"
+    if not (MIN_THREAD_POSTS <= len(content_list) <= MAX_THREAD_POSTS):
+        return False, f"Thread length out of bounds ({len(content_list)})"
     return True, "Success"
 
 def _select_persona_variant(mode: str) -> Tuple[str, str]:
@@ -151,10 +163,14 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
             response_text = await asyncio.to_thread(_sync_generate, api_key, full_prompt)
             clean_text = response_text.replace('```json', '').replace('```', '').strip()
             content_list = json.loads(clean_text)
+            is_shape_valid, shape_reason = _validate_thread_shape(content_list)
+            if not is_shape_valid:
+                raise ValueError(shape_reason)
             
-            # Sub-validation of the primary post
-            is_valid, reason = validate_summary(content_list[0])
-            if is_valid: return content_list, topic
+            post_validations = [validate_summary(post) for post in content_list]
+            if all(is_valid for is_valid, _ in post_validations):
+                return content_list, topic
+            reason = post_validations[0][1]
             
             # Repair Attempt: Force hashtags if missing but length is good
             if reason == "Missing thematic hashtags":

@@ -10,11 +10,12 @@ from dotenv import load_dotenv
 from src.config import (
     SEEN_FILE, APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
     MAX_POST_LENGTH_BSKY, POST_JITTER_MIN_SECONDS, POST_JITTER_MAX_SECONDS,
-    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE
+    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
+    PROFILE_BIO_UPDATE_COOLDOWN_HOURS
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
-    get_link_metadata
+    get_link_metadata, should_update_profile_bio, mark_profile_bio_updated
 )
 from src.agents import generate_content, handle_interactions
 from src.broadcasters import (
@@ -137,13 +138,26 @@ async def main():
     bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
     # 6. Post-Run Automation
+    should_update_bsky_bio = should_update_profile_bio(
+        "bluesky", APPROVED_BIO_BSKY, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
+    )
+    should_update_masto_bio = should_update_profile_bio(
+        "mastodon", APPROVED_BIO_MASTODON, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
+    )
+
     automation_tasks = [
         handle_interactions(bsky_broadcast_client, creds["bsky_user"], creds["gemini"]),
-        update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY),
-        update_profile_bio_mastodon(creds["masto_token"], creds["masto_url"], APPROVED_BIO_MASTODON),
         update_live_status(mode)
     ]
+    if should_update_bsky_bio:
+        automation_tasks.append(update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY))
+    if should_update_masto_bio:
+        automation_tasks.append(update_profile_bio_mastodon(creds["masto_token"], creds["masto_url"], APPROVED_BIO_MASTODON))
     await asyncio.gather(*automation_tasks, return_exceptions=True)
+    if should_update_bsky_bio:
+        mark_profile_bio_updated("bluesky", APPROVED_BIO_BSKY)
+    if should_update_masto_bio:
+        mark_profile_bio_updated("mastodon", APPROVED_BIO_MASTODON)
 
     # 7. Knowledge Persistence
     if mode == "curator" and news_items:

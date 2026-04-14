@@ -17,10 +17,14 @@ THREAD_PAUSE_PROFILES = {
     "reflective": (60.0, 180.0),
 }
 DEFAULT_THREAD_PAUSE_PROFILE: str = "normal"
+HASHTAG_OPTIONAL_MIN_CHARS: int = 110
+MIN_THREAD_POSTS: int = 1
+MAX_THREAD_POSTS: int = 5
 
 # State Files
 SEEN_FILE = Path("seen_articles.json")
 REPLIED_FILE = Path("replied_to.json")
+RUNTIME_STATE_FILE = Path("runtime_state.json")
 
 # Fortress Security (v4.4)
 REPLY_CAP_PER_RUN: int = 10
@@ -28,6 +32,7 @@ REPLY_MAX_CHARS: int = 250
 MENTION_NO_REPLY_PROB: float = 0.2
 MENTION_REPLY_MIN_DELAY_SECONDS: float = 20.0
 MENTION_REPLY_MAX_DELAY_SECONDS: float = 900.0
+PROFILE_BIO_UPDATE_COOLDOWN_HOURS: int = 168
 MAX_API_RETRIES: int = 3
 BACKOFF_FACTOR: float = 2.0
 JITTER_RANGE: float = 2.0
