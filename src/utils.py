@@ -28,7 +28,9 @@ from src.config import (
     FEED_REQUEST_WRITE_TIMEOUT_SECONDS,
     FEED_REQUEST_POOL_TIMEOUT_SECONDS,
     FEED_MAX_CONNECTIONS,
-    FEED_MAX_KEEPALIVE_CONNECTIONS
+    FEED_MAX_KEEPALIVE_CONNECTIONS,
+    METADATA_FETCH_ALLOWED_DOMAINS,
+    METADATA_FETCH_BLOCKED_DOMAINS
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -437,6 +439,31 @@ def _resolve_public_ip_candidates(hostname: str) -> Optional[List[str]]:
 
     return candidate_ips or None
 
+def _hostname_matches_policy(hostname: str, domain_rule: str) -> bool:
+    normalized_hostname = hostname.lower().strip(".")
+    normalized_rule = domain_rule.lower().strip().strip(".")
+    if not normalized_rule:
+        return False
+    return normalized_hostname == normalized_rule or normalized_hostname.endswith(f".{normalized_rule}")
+
+def is_allowed_metadata_fetch_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    if any(_hostname_matches_policy(hostname, domain) for domain in METADATA_FETCH_BLOCKED_DOMAINS):
+        SafeLogger.warn("domain_policy_blocked", "Blocked URL by metadata domain policy denylist", url=url, hostname=hostname)
+        return False
+
+    if METADATA_FETCH_ALLOWED_DOMAINS and not any(
+        _hostname_matches_policy(hostname, domain) for domain in METADATA_FETCH_ALLOWED_DOMAINS
+    ):
+        SafeLogger.warn("domain_policy_blocked", "Blocked URL by metadata domain policy allowlist", url=url, hostname=hostname)
+        return False
+
+    return True
+
 @contextmanager
 def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
     """
@@ -486,6 +513,9 @@ async def get_with_safe_redirects(
     initial_scheme = urlparse(url).scheme
 
     for _ in range(max_redirects + 1):
+        if not is_allowed_metadata_fetch_url(current_url):
+            return None
+
         parsed_current = urlparse(current_url)
         hostname = parsed_current.hostname
         if not hostname:
@@ -520,6 +550,9 @@ async def get_with_safe_redirects(
                 SafeLogger.warn("cross_scheme_redirect_blocked", "Blocked cross-scheme redirect", from_url=current_url, to_url=next_url)
                 return None
 
+            if not is_allowed_metadata_fetch_url(next_url):
+                return None
+
             if not is_safe_public_url(next_url):
                 SafeLogger.warn("unsafe_redirect_target_blocked", "Blocked unsafe redirect target", url=next_url)
                 return None
@@ -539,6 +572,8 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
 
     if not is_safe_public_url(url):
         SafeLogger.warn("unsafe_article_url_blocked", "Blocked unsafe article URL", url=url)
+        return fallback
+    if not is_allowed_metadata_fetch_url(url):
         return fallback
 
     try:
@@ -560,6 +595,8 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
                 if img_url:
                     if not is_safe_public_url(img_url):
                         SafeLogger.warn("unsafe_og_image_url_blocked", "Blocked unsafe og:image URL", url=img_url)
+                    elif not is_allowed_metadata_fetch_url(img_url):
+                        SafeLogger.warn("domain_policy_blocked", "Blocked og:image by metadata domain policy", url=img_url)
                     else:
                         img_res = await get_with_safe_redirects(client, img_url, timeout=5.0)
                         if img_res and img_res.status_code == 200:
