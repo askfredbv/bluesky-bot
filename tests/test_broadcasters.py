@@ -28,9 +28,12 @@ async def test_post_to_bluesky_splits_overlong_content(monkeypatch):
     async def no_sleep(_):
         return None
 
+    def capture_warn(event, message="", **fields):
+        warnings.append((event, message, fields))
+
     monkeypatch.setattr(broadcasters, "AsyncClient", DummyAsyncClient)
     monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(broadcasters.SafeLogger, "warn", warnings.append)
+    monkeypatch.setattr(broadcasters.SafeLogger, "warn", capture_warn)
 
     overlong = "x" * (MAX_POST_LENGTH_BSKY + 25)
     await broadcasters.post_to_bluesky("user", "pass", [overlong])
