@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import random
 from datetime import datetime, timezone
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -8,7 +9,8 @@ from dotenv import load_dotenv
 # Internal Imports
 from src.config import (
     SEEN_FILE, APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
-    MAX_POST_LENGTH_BSKY
+    MAX_POST_LENGTH_BSKY, POST_JITTER_MIN_SECONDS, POST_JITTER_MAX_SECONDS,
+    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
@@ -56,6 +58,18 @@ async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
     except Exception as e:
         SafeLogger.error("Failed to update status dashboard", e)
 
+async def apply_humanized_post_delay():
+    """Inject pre-post timing jitter so runs are less clock-perfect."""
+    if POST_JITTER_MAX_SECONDS <= 0:
+        return
+    lower = max(0, POST_JITTER_MIN_SECONDS)
+    upper = max(lower, POST_JITTER_MAX_SECONDS)
+    wait_seconds = random.randint(lower, upper)
+    if wait_seconds == 0:
+        return
+    print(f"Humanized delay before posting: {wait_seconds}s")
+    await asyncio.sleep(wait_seconds)
+
 async def main():
     print("--- AskFred Engine v4.6 Resilience Upgrade ---")
     
@@ -99,12 +113,20 @@ async def main():
     
     # 4. Content Synthesis (Temporal Aware)
     content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
+    thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
+    await apply_humanized_post_delay()
 
     # 5. Sage Parallel Broadcasting
     print(f"Initiating Concurrent Delivery to Bluesky and Mastodon...")
     broadcast_tasks = [
-        post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, link_meta),
-        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list)
+        post_to_bluesky(
+            creds["bsky_user"], creds["bsky_pass"], content_list, link_meta,
+            thread_pause_profile=thread_pause_profile
+        ),
+        post_to_mastodon(
+            creds["masto_token"], creds["masto_url"], content_list,
+            thread_pause_profile=thread_pause_profile
+        )
     ]
     
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)

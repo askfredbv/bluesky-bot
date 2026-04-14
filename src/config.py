@@ -6,6 +6,14 @@ MAX_POST_LENGTH_BSKY: int = 300
 MAX_POST_LENGTH_MASTODON: int = 500
 MAX_GENERATION_RETRIES: int = 3
 RECENT_POSTS_LIMIT: int = 20
+POST_JITTER_MIN_SECONDS: int = 120
+POST_JITTER_MAX_SECONDS: int = 1800
+THREAD_PAUSE_PROFILES = {
+    "quick": (4.0, 20.0),
+    "normal": (20.0, 75.0),
+    "reflective": (60.0, 180.0),
+}
+DEFAULT_THREAD_PAUSE_PROFILE: str = "normal"
 
 # State Files
 SEEN_FILE = Path("seen_articles.json")

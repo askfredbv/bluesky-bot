@@ -5,7 +5,10 @@ import httpx
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
-from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
+from src.config import (
+    MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON,
+    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE
+)
 from src.utils import retry_with_backoff
 from src.logger import SafeLogger
 
@@ -29,8 +32,21 @@ def _split_and_constrain_posts(content_list: List[str], max_length: int, platfor
 
     return constrained_posts
 
+def _sample_thread_pause(profile_name: str) -> float:
+    """Sample a human-like pause between thread posts using named rhythm profiles."""
+    low, high = THREAD_PAUSE_PROFILES.get(
+        profile_name, THREAD_PAUSE_PROFILES[DEFAULT_THREAD_PAUSE_PROFILE]
+    )
+    return random.uniform(low, high)
+
 @retry_with_backoff
-async def post_to_bluesky(username, password, content_list: List[str], link_meta: Optional[Dict[str, Any]] = None):
+async def post_to_bluesky(
+    username,
+    password,
+    content_list: List[str],
+    link_meta: Optional[Dict[str, Any]] = None,
+    thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
+):
     """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds)."""
     print(f"Broadcasting to Bluesky (@{username})...")
     client = AsyncClient()
@@ -75,12 +91,17 @@ async def post_to_bluesky(username, password, content_list: List[str], link_meta
         
         # Intra-thread jitter
         if len(constrained_content_list) > 1 and i < len(constrained_content_list) - 1:
-            await asyncio.sleep(random.uniform(1.0, 3.0))
+            await asyncio.sleep(_sample_thread_pause(thread_pause_profile))
     
     return client
 
 @retry_with_backoff
-async def post_to_mastodon(access_token: str, api_base_url: str, content_list: List[str]):
+async def post_to_mastodon(
+    access_token: str,
+    api_base_url: str,
+    content_list: List[str],
+    thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
+):
     """Async-wrapped broadcaster for Mastodon."""
     if not access_token: return
 
@@ -99,7 +120,7 @@ async def post_to_mastodon(access_token: str, api_base_url: str, content_list: L
             )
             last_id = status['id']
             if len(constrained_content_list) > 1:
-                time.sleep(random.uniform(1.0, 3.0))
+                time.sleep(_sample_thread_pause(thread_pause_profile))
             
     await asyncio.to_thread(_sync_post)
 
