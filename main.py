@@ -1,18 +1,20 @@
-import os
 import sys
 import asyncio
+import random
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from dotenv import load_dotenv
 
 # Internal Imports
 from src.config import (
-    SEEN_FILE, APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
-    MAX_POST_LENGTH_BSKY
+    APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
+    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
+    PROFILE_BIO_UPDATE_COOLDOWN_HOURS
 )
 from src.utils import (
-    load_seen_articles, save_seen_articles, fetch_news,
-    get_link_metadata
+    load_seen_articles, update_seen_articles, fetch_news,
+    get_link_metadata, should_update_profile_bio, mark_profile_bio_updated
 )
 from src.agents import generate_content, handle_interactions
 from src.broadcasters import (
@@ -20,6 +22,7 @@ from src.broadcasters import (
     update_profile_bio, update_profile_bio_mastodon
 )
 from src.logger import SafeLogger
+from src.settings import Settings, SettingsValidationError
 
 load_dotenv()
 
@@ -29,52 +32,42 @@ async def get_recent_posts(client, handle: str) -> List[str]:
         response = await client.app.bsky.feed.get_author_feed(actor=handle, limit=10)
         return [p.post.record.text for p in response.feed if hasattr(p.post.record, 'text')]
     except Exception as e:
-        SafeLogger.error("Failed to fetch recent posts", e)
+        SafeLogger.error("recent_posts_fetch_failed", "Failed to fetch recent posts", exception=e, platform="bluesky")
         return []
 
-async def update_live_status(mode: str, signal_strength: str = "Elite (Async)"):
-    """v4.3 Elite Feature: Automatically update the README dashboard."""
+async def apply_humanized_post_delay(settings: Settings):
+    """Inject pre-post timing jitter so runs are less clock-perfect."""
+    if settings.platform.post_jitter_max_seconds <= 0:
+        return
+    lower = max(0, settings.platform.post_jitter_min_seconds)
+    upper = max(lower, settings.platform.post_jitter_max_seconds)
+    wait_seconds = random.randint(lower, upper)
+    if wait_seconds == 0:
+        return
+    SafeLogger.info("post_delay_applied", "Humanized delay before posting", attempt=1, platform="system", wait_seconds=wait_seconds)
+    await asyncio.sleep(wait_seconds)
+
+def load_settings_or_exit() -> Settings:
     try:
-        readme_path = os.path.join(os.getcwd(), "README.md")
-        with open(readme_path, "r") as f:
-            lines = f.readlines()
-        
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        icon = "☕" if mode == "curator" else "💡"
-        
-        new_lines = []
-        for line in lines:
-            if "| **Broadcaster** |" in line:
-                new_lines.append(f"| **Broadcaster** | Operational | {today} | {icon} {mode.capitalize()} |\n")
-            elif "| **Signal Strength** |" in line:
-                new_lines.append(f"| **Signal Strength** | {signal_strength} | -- | -- |\n")
-            else:
-                new_lines.append(line)
-        
-        with open(readme_path, "w") as f:
-            f.writelines(new_lines)
-    except Exception as e:
-        SafeLogger.error("Failed to update status dashboard", e)
+        return Settings.from_env()
+    except SettingsValidationError as exc:
+        SafeLogger.error("settings_validation_failed", "Configuration error", exception=exc, platform="system")
+        sys.exit(1)
+
 
 async def main():
-    print("--- AskFred Engine v4.6 Resilience Upgrade ---")
-    
-    # Environment Check
-    creds = {
-        "gemini": os.environ.get("GEMINI_API_KEY"),
-        "bsky_user": os.environ.get("BLUESKY_USERNAME", "askfred.be"),
-        "bsky_pass": os.environ.get("BLUESKY_APP_PASSWORD") or os.environ.get("BLUESKY_PASSWORD"),
-        "masto_token": os.environ.get("MASTODON_ACCESS_TOKEN"),
-        "masto_url": os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
-    }
+    run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    SafeLogger.configure(run_id=run_id, platform="system")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.6 Resilience Upgrade ---")
 
-    if not all([creds["gemini"], creds["bsky_user"], creds["bsky_pass"]]):
-        print("Error: Missing core credentials.")
-        sys.exit(1)
+    settings = load_settings_or_exit()
+    creds = settings.credentials
 
     # 1. Slot Strategy
     current_hour = datetime.now(timezone.utc).hour
     mode = "curator" if current_hour < 11 else "mentor"
+    SafeLogger.configure(mode=mode)
+    SafeLogger.info("mode_selected", "Execution mode selected", mode=mode)
     
     # 2. State & Context (Topic Memory)
     seen_data = load_seen_articles()
@@ -85,8 +78,9 @@ async def main():
     if mode == "curator":
         news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
         if len(news_items) < 3:
-            print(f"Low high-signal news volume ({len(news_items)}). Shifting to Strategist mode.")
+            SafeLogger.warn("news_volume_low", "Low high-signal news volume, shifting mode", mode=mode, selected_items=len(news_items))
             mode = "strategist"
+            SafeLogger.configure(mode=mode)
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
@@ -94,34 +88,54 @@ async def main():
     # Silent handshake for Bsky context
     from atproto import AsyncClient
     bsky_client = AsyncClient()
-    await bsky_client.login(creds["bsky_user"], creds["bsky_pass"])
-    recent_posts = await get_recent_posts(bsky_client, creds["bsky_user"])
+    await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
+    recent_posts = await get_recent_posts(bsky_client, creds.bluesky_username)
     
     # 4. Content Synthesis (Temporal Aware)
-    content_list, chosen_topic = await generate_content(creds["gemini"], recent_posts, mode=mode, news_items=news_items)
+    content_list, chosen_topic = await generate_content(creds.gemini_api_key, recent_posts, mode=mode, news_items=news_items)
+    thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
+    await apply_humanized_post_delay(settings)
 
     # 5. Sage Parallel Broadcasting
-    print(f"Initiating Concurrent Delivery to Bluesky and Mastodon...")
+    SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
     broadcast_tasks = [
-        post_to_bluesky(creds["bsky_user"], creds["bsky_pass"], content_list, link_meta),
-        post_to_mastodon(creds["masto_token"], creds["masto_url"], content_list)
+        post_to_bluesky(
+            creds.bluesky_username, creds.bluesky_password, content_list, link_meta,
+            thread_pause_profile=thread_pause_profile
+        ),
+        post_to_mastodon(
+            creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
+            thread_pause_profile=thread_pause_profile
+        )
     ]
     
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     for r in results:
         if isinstance(r, Exception):
-            SafeLogger.error("Broadcast task failed", r)
+            SafeLogger.error("broadcast_task_failed", "Broadcast task failed", exception=r, platform="multi")
             
     bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
     # 6. Post-Run Automation
+    should_update_bsky_bio = should_update_profile_bio(
+        "bluesky", APPROVED_BIO_BSKY, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
+    )
+    should_update_masto_bio = should_update_profile_bio(
+        "mastodon", APPROVED_BIO_MASTODON, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
+    )
+
     automation_tasks = [
-        handle_interactions(bsky_broadcast_client, creds["bsky_user"], creds["gemini"]),
-        update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY),
-        update_profile_bio_mastodon(creds["masto_token"], creds["masto_url"], APPROVED_BIO_MASTODON),
-        update_live_status(mode)
+        handle_interactions(bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
     ]
+    if should_update_bsky_bio:
+        automation_tasks.append(update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY))
+    if should_update_masto_bio:
+        automation_tasks.append(update_profile_bio_mastodon(creds.mastodon_access_token, creds.mastodon_api_base_url, APPROVED_BIO_MASTODON))
     await asyncio.gather(*automation_tasks, return_exceptions=True)
+    if should_update_bsky_bio:
+        mark_profile_bio_updated("bluesky", APPROVED_BIO_BSKY)
+    if should_update_masto_bio:
+        mark_profile_bio_updated("mastodon", APPROVED_BIO_MASTODON)
 
     # 7. Knowledge Persistence
     if mode == "curator" and news_items:
@@ -132,9 +146,9 @@ async def main():
         if topic_cat != 'General':
             seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
             
-        save_seen_articles(seen_data)
+        update_seen_articles(lambda _: seen_data)
 
-    print(f"--- [v4.6 Resilience] Intelligence Cycle Complete ({mode}) ---")
+    SafeLogger.info("run_completed", "Intelligence cycle complete", mode=mode, platform="system")
 
 if __name__ == "__main__":
     asyncio.run(main())

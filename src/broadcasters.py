@@ -1,14 +1,19 @@
 import asyncio
-import time
 import random
 import httpx
 import re
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
-from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
+from src.config import (
+    MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON,
+    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE
+)
 from src.utils import retry_with_backoff
 from src.logger import SafeLogger
+
+MASTODON_POST_TIMEOUT_SECONDS = 20.0
+MASTODON_POST_MAX_ATTEMPTS = 3
 
 def _split_and_constrain_posts(content_list: List[str], max_length: int, platform_name: str) -> List[str]:
     """
@@ -23,62 +28,33 @@ def _split_and_constrain_posts(content_list: List[str], max_length: int, platfor
             continue
 
         SafeLogger.warn(
-            f"{platform_name} content exceeded {max_length} chars; splitting into safe chunks."
+            "content_chunk_split",
+            f"{platform_name} content exceeded max length; splitting into safe chunks.",
+            platform=platform_name.lower(),
+            max_length=max_length
         )
         for i in range(0, len(original_text), max_length):
             constrained_posts.append(original_text[i:i + max_length])
 
     return constrained_posts
 
-
-_URL_PATTERN = re.compile(r"https?://\S+")
-
-
-def _mastodon_status_length(text: str, characters_reserved_per_url: int) -> int:
-    """Compute Mastodon status length using URL reservation semantics."""
-    length = len(text)
-    for match in _URL_PATTERN.finditer(text):
-        url_length = len(match.group(0))
-        length += characters_reserved_per_url - url_length
-    return length
-
-
-def _split_mastodon_post(text: str, max_length: int, characters_reserved_per_url: int) -> List[str]:
-    """
-    Split Mastodon text into chunks that satisfy Mastodon's length counting rules.
-    Prefers whitespace boundaries and never slices through a URL.
-    """
-    if _mastodon_status_length(text, characters_reserved_per_url) <= max_length:
-        return [text]
-
-    tokens = re.findall(r"\S+\s*", text)
-    chunks: List[str] = []
-    current = ""
-
-    for token in tokens:
-        candidate = f"{current}{token}"
-        if _mastodon_status_length(candidate, characters_reserved_per_url) <= max_length:
-            current = candidate
-            continue
-
-        if current:
-            chunks.append(current.rstrip())
-            current = token
-        else:
-            # Fallback for very long single non-URL tokens.
-            slice_end = max_length
-            chunks.append(token[:slice_end])
-            current = token[slice_end:]
-
-    if current:
-        chunks.append(current.rstrip())
-
-    return chunks
+def _sample_thread_pause(profile_name: str) -> float:
+    """Sample a human-like pause between thread posts using named rhythm profiles."""
+    low, high = THREAD_PAUSE_PROFILES.get(
+        profile_name, THREAD_PAUSE_PROFILES[DEFAULT_THREAD_PAUSE_PROFILE]
+    )
+    return random.uniform(low, high)
 
 @retry_with_backoff
-async def post_to_bluesky(username, password, content_list: List[str], link_meta: Optional[Dict[str, Any]] = None):
+async def post_to_bluesky(
+    username,
+    password,
+    content_list: List[str],
+    link_meta: Optional[Dict[str, Any]] = None,
+    thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
+):
     """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds)."""
-    print(f"Broadcasting to Bluesky (@{username})...")
+    SafeLogger.info("broadcast_started", "Broadcasting to Bluesky", platform="bluesky")
     client = AsyncClient()
     await client.login(username, password)
 
@@ -99,7 +75,12 @@ async def post_to_bluesky(username, password, content_list: List[str], link_meta
                     upload = await client.upload_blob(link_meta['image_data'])
                     thumb_blob = upload.blob
                 except Exception as e:
-                    SafeLogger.error("Failed to upload Link Preview thumbnail", e)
+                    SafeLogger.error(
+                        "thumbnail_upload_failed",
+                        "Failed to upload link preview thumbnail",
+                        exception=e,
+                        platform="bluesky"
+                    )
             
             embed = models.AppBskyEmbedExternal.Main(
                 external=models.AppBskyEmbedExternal.External(
@@ -121,45 +102,87 @@ async def post_to_bluesky(username, password, content_list: List[str], link_meta
         
         # Intra-thread jitter
         if len(constrained_content_list) > 1 and i < len(constrained_content_list) - 1:
-            await asyncio.sleep(random.uniform(1.0, 3.0))
+            await asyncio.sleep(_sample_thread_pause(thread_pause_profile))
     
     return client
 
 @retry_with_backoff
-async def post_to_mastodon(access_token: str, api_base_url: str, content_list: List[str]):
+async def post_to_mastodon(
+    access_token: str,
+    api_base_url: str,
+    content_list: List[str],
+    thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
+):
     """Async-wrapped broadcaster for Mastodon."""
     if not access_token: return
 
-    def _sync_post():
-        mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
-        instance_config = mastodon.instance().get("configuration", {})
-        statuses_config = instance_config.get("statuses", {})
-        max_length = statuses_config.get("max_characters", MAX_POST_LENGTH_MASTODON)
-        characters_reserved_per_url = statuses_config.get("characters_reserved_per_url", 23)
+    constrained_content_list = _split_and_constrain_posts(
+        content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"
+    )
 
-        constrained_content_list: List[str] = []
-        for original_text in content_list:
-            split_posts = _split_mastodon_post(
-                original_text, max_length, characters_reserved_per_url
-            )
-            if len(split_posts) > 1:
-                SafeLogger.warn(
-                    f"Mastodon content exceeded {max_length} chars; splitting into safe chunks."
+    mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
+    total_posts = len(constrained_content_list)
+    posted_count = 0
+    last_id = None
+
+    async def _status_post_with_timeout_and_retry(post_text: str, reply_to_id: Optional[str]):
+        for attempt in range(1, MASTODON_POST_MAX_ATTEMPTS + 1):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(
+                        mastodon.status_post,
+                        status=post_text,
+                        in_reply_to_id=reply_to_id,
+                        visibility='public'
+                    ),
+                    timeout=MASTODON_POST_TIMEOUT_SECONDS
                 )
-            constrained_content_list.extend(split_posts)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if attempt == MASTODON_POST_MAX_ATTEMPTS:
+                    raise
+                SafeLogger.warn(
+                    "mastodon_post_retry",
+                    "Retrying Mastodon post after failure",
+                    platform="mastodon",
+                    attempt=attempt,
+                    max_attempts=MASTODON_POST_MAX_ATTEMPTS,
+                    error_type=type(e).__name__
+                )
+                await asyncio.sleep(min(2 ** attempt, 5))
 
-        last_id = None
+    try:
         for i, post_text in enumerate(constrained_content_list):
-            status = mastodon.status_post(
-                status=post_text,
-                in_reply_to_id=last_id,
-                visibility='public'
+            status = await _status_post_with_timeout_and_retry(post_text, last_id)
+            last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
+            posted_count += 1
+
+            if total_posts > 1 and i < total_posts - 1:
+                await asyncio.sleep(_sample_thread_pause(thread_pause_profile))
+    except asyncio.CancelledError:
+        if posted_count < total_posts:
+            SafeLogger.warn(
+                "mastodon_partial_delivery",
+                "Mastodon thread partially delivered",
+                platform="mastodon",
+                posted=posted_count,
+                total=total_posts,
+                reason="cancelled"
             )
-            last_id = status['id']
-            if len(constrained_content_list) > 1:
-                time.sleep(random.uniform(1.0, 3.0))
-            
-    await asyncio.to_thread(_sync_post)
+        raise
+    except Exception as e:
+        if posted_count < total_posts:
+            SafeLogger.warn(
+                "mastodon_partial_delivery",
+                "Mastodon thread partially delivered",
+                platform="mastodon",
+                posted=posted_count,
+                total=total_posts,
+                reason="error",
+                error_type=type(e).__name__
+            )
+        raise
 
 
 async def update_profile_bio(client: AsyncClient, bio_text: str):
@@ -170,7 +193,7 @@ async def update_profile_bio(client: AsyncClient, bio_text: str):
         profile_dict['description'] = bio_text
         await client.com.atproto.repo.put_record(collection='app.bsky.actor.profile', repo=client.me.did, rkey='self', record=profile_dict)
     except Exception as e:
-        SafeLogger.error("Failed to update Bluesky bio", e)
+        SafeLogger.error("bluesky_bio_update_failed", "Failed to update Bluesky bio", exception=e, platform="bluesky")
 
 async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
     if not token: return
@@ -180,4 +203,4 @@ async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
             mastodon.account_update_credentials(note=bio_text)
         await asyncio.to_thread(_sync_bio)
     except Exception as e:
-        SafeLogger.error("Failed to update Mastodon bio", e)
+        SafeLogger.error("mastodon_bio_update_failed", "Failed to update Mastodon bio", exception=e, platform="mastodon")
