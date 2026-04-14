@@ -1,21 +1,63 @@
 import json
 import logging
+import math
 import os
+import re
+from collections import Counter
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Pattern
 
 
 class _SecretRedactionFilter(logging.Filter):
     """Redacts environment-based secrets from all string log content."""
+
+    _MIN_SECRET_LENGTH = 8
+    _MIN_SECRET_ENTROPY = 2.5
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._secret_patterns: List[Pattern[str]] = []
+        self.refresh_secrets()
+
+    @classmethod
+    def _has_min_entropy(cls, value: str) -> bool:
+        if len(value) < cls._MIN_SECRET_LENGTH:
+            return False
+
+        counts = Counter(value)
+        length = len(value)
+        entropy = -sum((count / length) * math.log2(count / length) for count in counts.values())
+        return entropy >= cls._MIN_SECRET_ENTROPY
+
+    @classmethod
+    def _is_redactable_secret(cls, key: str, secret: str) -> bool:
+        if not secret:
+            return False
+        if not ("KEY" in key or "TOKEN" in key or "PASSWORD" in key):
+            return False
+        return cls._has_min_entropy(secret)
+
+    def refresh_secrets(self) -> None:
+        patterns: List[Pattern[str]] = []
+        seen = set()
+        for key, secret in os.environ.items():
+            if not self._is_redactable_secret(key, secret):
+                continue
+            if secret in seen:
+                continue
+            seen.add(secret)
+            patterns.append(re.compile(re.escape(secret)))
+        self._secret_patterns = patterns
 
     def _sanitize(self, value: Any) -> Any:
         if value is None:
             return None
         if not isinstance(value, str):
             value = str(value)
-        for key, secret in os.environ.items():
-            if ("KEY" in key or "TOKEN" in key or "PASSWORD" in key) and secret and len(secret) > 4:
-                value = value.replace(secret, "[REDACTED]")
+        if not self._secret_patterns:
+            return value
+        for pattern in self._secret_patterns:
+            value = pattern.sub("[REDACTED]", value)
         return value
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -62,6 +104,7 @@ class SafeLogger:
     _logger = logging.getLogger("askfred")
     _is_configured = False
     _context: Dict[str, Any] = {"run_id": None, "platform": None, "mode": None}
+    _redaction_filter: Optional[_SecretRedactionFilter] = None
 
     @classmethod
     def _configure_if_needed(cls) -> None:
@@ -71,10 +114,17 @@ class SafeLogger:
         cls._logger.propagate = False
         handler = logging.StreamHandler()
         handler.setFormatter(_JsonFormatter())
-        handler.addFilter(_SecretRedactionFilter())
+        cls._redaction_filter = _SecretRedactionFilter()
+        handler.addFilter(cls._redaction_filter)
         cls._logger.handlers.clear()
         cls._logger.addHandler(handler)
         cls._is_configured = True
+
+    @classmethod
+    def refresh_redaction_cache(cls) -> None:
+        cls._configure_if_needed()
+        if cls._redaction_filter is not None:
+            cls._redaction_filter.refresh_secrets()
 
     @classmethod
     def configure(cls, *, run_id: Optional[str] = None, platform: Optional[str] = None, mode: Optional[str] = None) -> None:
