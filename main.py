@@ -2,6 +2,7 @@ import sys
 import asyncio
 import random
 import uuid
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -52,6 +53,11 @@ def load_settings_or_exit() -> Settings:
         return Settings.from_env()
     except SettingsValidationError as exc:
         SafeLogger.error("settings_validation_failed", "Configuration error", exception=exc, platform="system")
+        invalid_variables = sorted(set(re.findall(r"\b[A-Z][A-Z0-9_]+\b", str(exc))))
+        if invalid_variables:
+            print(f"Configuration error: {exc} (invalid: {', '.join(invalid_variables)})")
+        else:
+            print(f"Configuration error: {exc}")
         sys.exit(1)
 
 
