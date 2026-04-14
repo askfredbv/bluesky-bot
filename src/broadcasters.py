@@ -33,8 +33,17 @@ def _split_and_constrain_posts(content_list: List[str], max_length: int, platfor
             platform=platform_name.lower(),
             max_length=max_length
         )
-        for i in range(0, len(original_text), max_length):
-            constrained_posts.append(original_text[i:i + max_length])
+        remaining = original_text.strip()
+        while remaining:
+            if len(remaining) <= max_length:
+                constrained_posts.append(remaining)
+                break
+            split_at = remaining.rfind(" ", 0, max_length)
+            if split_at == -1:
+                split_at = max_length  # hard fallback: no spaces in chunk
+            chunk = remaining[:split_at].rstrip()
+            constrained_posts.append(chunk)
+            remaining = remaining[split_at:].lstrip()
 
     return constrained_posts
 

@@ -75,6 +75,14 @@ def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
         return False, "Thread contains non-string or empty entries"
     if not (MIN_THREAD_POSTS <= len(content_list) <= MAX_THREAD_POSTS):
         return False, f"Thread length out of bounds ({len(content_list)})"
+    for idx, item in enumerate(content_list):
+        if len(item) > MAX_POST_LENGTH_BSKY:
+            SafeLogger.warn(
+                "post_length_exceeded",
+                f"Post {idx} is {len(item)} chars, exceeds {MAX_POST_LENGTH_BSKY}",
+                post_index=idx,
+                length=len(item)
+            )
     return True, "Success"
 
 def _select_persona_variant(mode: str) -> Tuple[str, str]:
@@ -156,17 +164,41 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
         instr = f"{SYSTEM_INSTRUCTIONS_CURATOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
-        task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nRESEARCH:\n{news_text}\n\nTask: Synthesize a professional thread."
+        task = (
+            f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
+            "ITEMS TO WORK WITH:\n"
+            f"{news_text}\n\n"
+            "Write the thread. Start with whichever item has the most interesting 'so what' — "
+            "not necessarily the most prominent headline. Connect where it makes sense, but don't force links."
+        )
     elif mode == "strategist":
         topic = random.choice(SECONDARY_TOPICS)
         instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
-        task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nSTRATEGIC DISCUSSION: {topic}\n\nTask: Share deep, abstract mentorship and philosophical insight purely on this topic."
+        task = (
+            f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
+            f"TOPIC: {topic}\n\n"
+            "Write the thread. This is the longer-horizon take — not 'what to do Monday' but "
+            "'what does this look like in five years and what should someone be building toward now'."
+        )
     else:
         topic = random.choice(["Career", "Automation", "Work-Life Balance", "Learning"])
         instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
-        task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nTOPIC: {topic}\n\nTask: Share mentorship wisdom."
+        task = (
+            f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
+            f"TOPIC: {topic}\n\n"
+            "Write the thread. Find the angle on this topic that most people don't articulate — "
+            "the thing that's obvious in hindsight but that someone earlier in their career genuinely hasn't heard yet."
+        )
 
-    full_prompt = f"{instr}\n\n{task}\n\n{style_constraints}\nFormat as a JSON list of strings (3-5 posts)."
+    format_instruction = (
+        "OUTPUT FORMAT:\n"
+        "Return ONLY a JSON array of strings, like: [\"post one\", \"post two\"]\n"
+        "- 3 to 5 strings\n"
+        f"- Each string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
+        "- Never cut off mid-word or mid-sentence\n"
+        "- No thread numbers, labels, or markdown outside the JSON array"
+    )
+    full_prompt = f"{instr}\n\n{task}\n\n{style_constraints}\n\n{format_instruction}"
     
     fallback_post = f"Sharing concise insights on {topic}. #AI #Tech"
 
