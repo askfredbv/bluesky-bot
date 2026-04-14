@@ -8,7 +8,16 @@ from src import utils
 
 
 class _DummyClient:
-    async def get(self, url):
+    async def get(self, url, **kwargs):
+        return SimpleNamespace(text="<rss />")
+
+
+class _TimeoutCaptureClient:
+    def __init__(self):
+        self.last_timeout = None
+
+    async def get(self, url, **kwargs):
+        self.last_timeout = kwargs.get("timeout")
         return SimpleNamespace(text="<rss />")
 
 
@@ -38,3 +47,12 @@ def test_fetch_single_feed_keeps_entries_when_bozo(monkeypatch):
     assert len(items) == 1
     assert items[0]["title"] == "Recoverable parse warning item"
     assert items[0]["description"] == "Still valid."
+
+
+def test_fetch_single_feed_passes_explicit_timeout():
+    client = _TimeoutCaptureClient()
+    timeout = utils.httpx.Timeout(connect=1.0, read=2.0, write=3.0, pool=4.0)
+
+    asyncio.run(utils.fetch_single_feed(client, "https://example.com/rss", timeout=timeout))
+
+    assert client.last_timeout is timeout
