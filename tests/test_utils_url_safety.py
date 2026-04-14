@@ -25,3 +25,11 @@ def test_is_safe_public_url_accepts_public_ip(monkeypatch):
 
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
     assert is_safe_public_url("https://example.com/article") is True
+
+
+def test_is_safe_public_url_rejects_cgnat_shared_space(monkeypatch):
+    def mock_getaddrinfo(*args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.0.1", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
+    assert is_safe_public_url("https://example.com/article") is False
