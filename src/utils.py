@@ -6,6 +6,7 @@ import httpx
 import feedparser
 import socket
 import functools
+import ipaddress
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
@@ -122,12 +123,117 @@ def normalise_url(url: str, base_url: str = "") -> Optional[str]:
     SafeLogger.warn(f"Could not normalise relative URL without base: {url}")
     return None
 
+def is_safe_public_url(url: str) -> bool:
+    """
+    Validates that a URL is public and safe to request.
+    Rejects non-HTTP(S), localhost-like hosts, and private/non-routable IPs.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    if hostname.lower() in {"localhost"}:
+        return False
+
+    try:
+        resolved = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+    except Exception:
+        return False
+
+    for result in resolved:
+        ip_str = result[4][0]
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        ):
+            return False
+
+    return True
+
+async def get_with_safe_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: float = 10.0,
+    max_redirects: int = 5
+) -> Optional[httpx.Response]:
+    """
+    Fetch a URL while validating each redirect target and disallowing scheme changes.
+    """
+    current_url = url
+    initial_scheme = urlparse(url).scheme
+
+    for _ in range(max_redirects + 1):
+        if not is_safe_public_url(current_url):
+            SafeLogger.warn(f"Blocked unsafe URL request: {current_url}")
+            return None
+
+        response = await client.get(
+            current_url,
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=False
+        )
+
+        if response.is_redirect:
+            location = response.headers.get("location")
+            if not location:
+                return response
+            next_url = urljoin(str(response.url), location)
+
+            parsed_next = urlparse(next_url)
+            if parsed_next.scheme != initial_scheme:
+                SafeLogger.warn(
+                    f"Blocked cross-scheme redirect from {current_url} to {next_url}"
+                )
+                return None
+
+            if not is_safe_public_url(next_url):
+                SafeLogger.warn(f"Blocked unsafe redirect target: {next_url}")
+                return None
+
+            current_url = next_url
+            continue
+
+        return response
+
+    SafeLogger.warn(f"Blocked URL due to too many redirects: {url}")
+    return None
+
 async def get_link_metadata(url: str) -> Dict[str, Any]:
     """Scrapes OpenGraph metadata from a URL (v4.5 Sage replacement for DALL-E)."""
+    fallback = {"title": "Source Link", "description": "", "image_data": None, "url": url}
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+
+    if not is_safe_public_url(url):
+        SafeLogger.warn(f"Blocked unsafe article URL: {url}")
+        return fallback
+
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-            response = await client.get(url, headers=headers)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await get_with_safe_redirects(client, url, headers=headers, timeout=10.0)
+            if response is None:
+                return fallback
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
@@ -140,12 +246,15 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
             if og_image and og_image.get('content'):
                 img_url = normalise_url(og_image['content'], base_url=url)
                 if img_url:
-                    img_res = await client.get(img_url, timeout=5.0)
-                    if img_res.status_code == 200:
-                        img_data = img_res.content
-                        if len(img_data) > 900 * 1024:
-                            print(f"Compressing large OpenGraph image ({len(img_data)//1024}KB)...")
-                            img_data = compress_image(img_data)
+                    if not is_safe_public_url(img_url):
+                        SafeLogger.warn(f"Blocked unsafe og:image URL: {img_url}")
+                    else:
+                        img_res = await get_with_safe_redirects(client, img_url, timeout=5.0)
+                        if img_res and img_res.status_code == 200:
+                            img_data = img_res.content
+                            if len(img_data) > 900 * 1024:
+                                print(f"Compressing large OpenGraph image ({len(img_data)//1024}KB)...")
+                                img_data = compress_image(img_data)
 
             return {
                 "title": og_title['content'] if og_title else soup.title.string if soup.title else "Technical Insight",
@@ -155,7 +264,7 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
             }
     except Exception as e:
         SafeLogger.error(f"Metadata extraction failed for {url}", e)
-        return {"title": "Source Link", "description": "", "image_data": None, "url": url}
+        return fallback
 
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 5-factor score (Elite v4.5 pattern)."""
