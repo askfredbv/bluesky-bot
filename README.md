@@ -28,9 +28,11 @@ GitHub Actions (cron)
 
 **Content scoring** uses five factors: source tier, product-launch signals, technical depth keywords, time decay (0.5 pts/hour), and a topic diversity penalty to avoid repetition. arXiv papers get priority injection if they don't survive the scoring on their own.
 
-**Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones.
+**Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones. The system prompts in `src/config.py` include verbatim examples from his writing as style anchors for the model.
 
-**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. Atomic JSON writes with backup/restore for state files. Hard cap of 10 mention replies per run.
+**Post formatting**: each post in a thread is generated within the 300-character Bluesky limit. If a post still overflows (rare), it is split at a word boundary — never mid-word.
+
+**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. Atomic JSON writes with backup/restore for state files — corrupt files are preserved with a timestamped name before resetting to default. Hard cap of 10 mention replies per run.
 
 ---
 
@@ -90,6 +92,14 @@ The main levers are all in `src/config.py`:
 - **`SECONDARY_TOPICS`** — the topic pool for Mentor and Strategist modes
 - **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
 - **`APPROVED_BIO_BSKY` / `APPROVED_BIO_MASTODON`** — profile bios, refreshed on a weekly cooldown
+- **`MENTION_SANITIZE_MAX_CHARS`** / **`FEED_SUMMARY_MAX_CHARS`** — character caps for mention input and RSS feed summaries (both default 500)
+
+The following can also be overridden via environment variables without touching code:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `POST_JITTER_MIN_SECONDS` | `120` | Minimum pre-post delay (set to `30` in Actions) |
+| `POST_JITTER_MAX_SECONDS` | `1800` | Maximum pre-post delay (set to `300` in Actions) |
 
 ---
 
