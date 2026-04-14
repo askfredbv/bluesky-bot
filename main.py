@@ -4,7 +4,8 @@ import random
 import uuid
 import re
 from datetime import datetime, timezone
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
 # Internal Imports
@@ -26,6 +27,41 @@ from src.logger import SafeLogger
 from src.settings import Settings, SettingsValidationError
 
 load_dotenv()
+
+
+@dataclass(frozen=True)
+class ModeSelectionPayload:
+    mode: str
+    current_hour_utc: int
+
+
+@dataclass(frozen=True)
+class ContentPrepPayload:
+    mode: str
+    seen_data: Dict[str, List[str]]
+    news_items: List[Dict[str, Any]]
+    link_meta: Optional[Dict[str, Any]]
+    bsky_client: Any
+    recent_posts: List[str]
+
+
+@dataclass(frozen=True)
+class BroadcastPayload:
+    mode: str
+    seen_data: Dict[str, List[str]]
+    news_items: List[Dict[str, Any]]
+    content_list: List[str]
+    chosen_topic: str
+    thread_pause_profile: str
+    bsky_broadcast_client: Any
+
+
+@dataclass(frozen=True)
+class AutomationPayload:
+    mode: str
+    seen_data: Dict[str, List[str]]
+    news_items: List[Dict[str, Any]]
+
 
 async def get_recent_posts(client, handle: str) -> List[str]:
     """Fetched recent posts silently from a logged-in client."""
@@ -61,24 +97,18 @@ def load_settings_or_exit() -> Settings:
         sys.exit(1)
 
 
-async def main():
-    run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
-    SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.6 Resilience Upgrade ---")
-
-    settings = load_settings_or_exit()
-    creds = settings.credentials
-
-    # 1. Slot Strategy
+async def mode_selection_stage() -> ModeSelectionPayload:
     current_hour = datetime.now(timezone.utc).hour
     mode = "curator" if current_hour < 11 else "mentor"
     SafeLogger.configure(mode=mode)
     SafeLogger.info("mode_selected", "Execution mode selected", mode=mode)
-    
-    # 2. State & Context (Topic Memory)
+    return ModeSelectionPayload(mode=mode, current_hour_utc=current_hour)
+
+
+async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> ContentPrepPayload:
+    mode = mode_payload.mode
     seen_data = load_seen_articles()
-    
-    # 3. Weighted Curation
+
     news_items = []
     link_meta = None
     if mode == "curator":
@@ -91,7 +121,6 @@ async def main():
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
 
-    # Silent handshake for Bsky context
     from atproto import AsyncClient
     bsky_client = AsyncClient()
     recent_posts = []
@@ -106,13 +135,30 @@ async def main():
             error_type=type(exc).__name__,
             fallback_recent_posts_count=0,
         )
-    
-    # 4. Content Synthesis (Temporal Aware)
-    content_list, chosen_topic = await generate_content(creds.gemini_api_key, recent_posts, mode=mode, news_items=news_items)
+
+    return ContentPrepPayload(
+        mode=mode,
+        seen_data=seen_data,
+        news_items=news_items,
+        link_meta=link_meta,
+        bsky_client=bsky_client,
+        recent_posts=recent_posts,
+    )
+
+
+async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Settings, creds: Any) -> BroadcastPayload:
+    mode = content_prep.mode
+    news_items = content_prep.news_items
+    link_meta = content_prep.link_meta
+    content_list, chosen_topic = await generate_content(
+        creds.gemini_api_key,
+        content_prep.recent_posts,
+        mode=mode,
+        news_items=news_items,
+    )
     thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
     await apply_humanized_post_delay(settings)
 
-    # 5. Sage Parallel Broadcasting
     SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
     broadcast_tasks = [
         post_to_bluesky(
@@ -124,15 +170,25 @@ async def main():
             thread_pause_profile=thread_pause_profile
         )
     ]
-    
+
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     for r in results:
         if isinstance(r, Exception):
             SafeLogger.error("broadcast_task_failed", "Broadcast task failed", exception=r, platform="multi")
-            
-    bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else bsky_client
 
-    # 6. Post-Run Automation
+    bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else content_prep.bsky_client
+    return BroadcastPayload(
+        mode=mode,
+        seen_data=content_prep.seen_data,
+        news_items=news_items,
+        content_list=content_list,
+        chosen_topic=chosen_topic,
+        thread_pause_profile=thread_pause_profile,
+        bsky_broadcast_client=bsky_broadcast_client,
+    )
+
+
+async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
     should_update_bsky_bio = should_update_profile_bio(
         "bluesky", APPROVED_BIO_BSKY, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
     )
@@ -141,10 +197,10 @@ async def main():
     )
 
     automation_tasks = [
-        handle_interactions(bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
+        handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
     ]
     if should_update_bsky_bio:
-        automation_tasks.append(update_profile_bio(bsky_broadcast_client, APPROVED_BIO_BSKY))
+        automation_tasks.append(update_profile_bio(broadcast.bsky_broadcast_client, APPROVED_BIO_BSKY))
     if should_update_masto_bio:
         automation_tasks.append(update_profile_bio_mastodon(creds.mastodon_access_token, creds.mastodon_api_base_url, APPROVED_BIO_MASTODON))
     await asyncio.gather(*automation_tasks, return_exceptions=True)
@@ -153,18 +209,43 @@ async def main():
     if should_update_masto_bio:
         mark_profile_bio_updated("mastodon", APPROVED_BIO_MASTODON)
 
-    # 7. Knowledge Persistence
+    return AutomationPayload(
+        mode=broadcast.mode,
+        seen_data=broadcast.seen_data,
+        news_items=broadcast.news_items,
+    )
+
+
+async def persistence_stage(automation: AutomationPayload) -> None:
+    mode = automation.mode
+    news_items = automation.news_items
+    seen_data = automation.seen_data
     if mode == "curator" and news_items:
         seen_data["links"] = (seen_data["links"] + [i['link'] for i in news_items])[-200:]
-        
+
         # Sense topic to update memory
         topic_cat = news_items[0].get('detected_topic', 'General')
         if topic_cat != 'General':
             seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
-            
+
         update_seen_articles(lambda _: seen_data)
 
-    SafeLogger.info("run_completed", "Intelligence cycle complete", mode=mode, platform="system")
+
+async def main():
+    run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    SafeLogger.configure(run_id=run_id, platform="system")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.6 Resilience Upgrade ---")
+
+    settings = load_settings_or_exit()
+    creds = settings.credentials
+
+    mode_payload = await mode_selection_stage()
+    content_prep = await content_prep_stage(mode_payload, creds)
+    broadcast = await broadcasting_stage(content_prep, settings, creds)
+    automation = await post_run_automation_stage(broadcast, creds)
+    await persistence_stage(automation)
+
+    SafeLogger.info("run_completed", "Intelligence cycle complete", mode=automation.mode, platform="system")
 
 if __name__ == "__main__":
     asyncio.run(main())
