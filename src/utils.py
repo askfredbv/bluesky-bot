@@ -9,6 +9,7 @@ import feedparser
 import socket
 import functools
 import ipaddress
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, TypeVar
 from datetime import datetime, timezone, timedelta
@@ -396,31 +397,77 @@ def is_safe_public_url(url: str) -> bool:
     if hostname.lower() in {"localhost"}:
         return False
 
+    return _resolve_public_ip_candidates(hostname) is not None
+
+def _is_public_ip(ip_str: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+
+    return not (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_reserved
+        or ip_obj.is_unspecified
+    )
+
+def _resolve_public_ip_candidates(hostname: str) -> Optional[List[str]]:
     try:
         resolved = socket.getaddrinfo(hostname, None)
     except socket.gaierror:
-        return False
+        return None
     except Exception:
-        return False
+        return None
 
+    candidate_ips: List[str] = []
+    seen: set[str] = set()
     for result in resolved:
         ip_str = result[4][0]
-        try:
-            ip_obj = ipaddress.ip_address(ip_str)
-        except ValueError:
-            return False
+        if ip_str in seen:
+            continue
+        seen.add(ip_str)
+        if not _is_public_ip(ip_str):
+            return None
+        candidate_ips.append(ip_str)
 
-        if (
-            ip_obj.is_private
-            or ip_obj.is_loopback
-            or ip_obj.is_link_local
-            or ip_obj.is_multicast
-            or ip_obj.is_reserved
-            or ip_obj.is_unspecified
-        ):
-            return False
+    return candidate_ips or None
 
-    return True
+@contextmanager
+def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
+    """
+    Temporarily constrains DNS resolution for one hostname to a prevalidated set.
+    If the resolver returns addresses outside the allowed set, resolution is blocked.
+    """
+    original_getaddrinfo = socket.getaddrinfo
+    canonical_hostname = hostname.lower()
+    allowed_set = set(allowed_ips)
+
+    def guarded_getaddrinfo(host: str, *args, **kwargs):
+        if str(host).lower() != canonical_hostname:
+            return original_getaddrinfo(host, *args, **kwargs)
+
+        current = original_getaddrinfo(host, *args, **kwargs)
+        current_ips = {entry[4][0] for entry in current}
+        if not current_ips:
+            raise socket.gaierror(f"No DNS records found for {host}")
+
+        unexpected = current_ips - allowed_set
+        if unexpected:
+            raise socket.gaierror(f"Resolver returned unexpected address for {host}")
+
+        filtered = [entry for entry in current if entry[4][0] in allowed_set]
+        if not filtered:
+            raise socket.gaierror(f"No allowed DNS records found for {host}")
+        return filtered
+
+    socket.getaddrinfo = guarded_getaddrinfo
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
 
 async def get_with_safe_redirects(
     client: httpx.AsyncClient,
@@ -437,16 +484,28 @@ async def get_with_safe_redirects(
     initial_scheme = urlparse(url).scheme
 
     for _ in range(max_redirects + 1):
-        if not is_safe_public_url(current_url):
+        parsed_current = urlparse(current_url)
+        hostname = parsed_current.hostname
+        if not hostname:
             SafeLogger.warn(f"Blocked unsafe URL request: {current_url}")
             return None
 
-        response = await client.get(
-            current_url,
-            headers=headers,
-            timeout=timeout,
-            follow_redirects=False
-        )
+        candidate_ips = _resolve_public_ip_candidates(hostname)
+        if not candidate_ips:
+            SafeLogger.warn(f"Blocked unsafe URL request: {current_url}")
+            return None
+
+        try:
+            with _resolver_pinned_to_ips(hostname, candidate_ips):
+                response = await client.get(
+                    current_url,
+                    headers=headers,
+                    timeout=timeout,
+                    follow_redirects=False
+                )
+        except Exception as e:
+            SafeLogger.warn(f"Blocked URL request after DNS validation for {current_url}: {e}")
+            return None
 
         if response.is_redirect:
             location = response.headers.get("location")
