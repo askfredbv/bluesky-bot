@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from google import genai
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
-    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS
+    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS,
+    MENTOR_PERSONA_VARIANTS, CURATOR_PERSONA_VARIANTS,
+    STYLE_MEMORY_POST_WINDOW, STYLE_MEMORY_MAX_OPENERS, STYLE_MEMORY_MAX_HASHTAGS
 )
 from src.utils import update_replied_to
 from src.logger import SafeLogger
@@ -49,6 +51,53 @@ def validate_summary(text: str) -> Tuple[bool, str]:
     if "#" not in text: return False, "Missing thematic hashtags"
     return True, "Success"
 
+def _select_persona_variant(mode: str) -> Tuple[str, str]:
+    """Select a lightweight persona variant to diversify voice while keeping core role."""
+    variants = CURATOR_PERSONA_VARIANTS if mode == "curator" else MENTOR_PERSONA_VARIANTS
+    variant_name = random.choice(list(variants.keys()))
+    return variant_name, variants[variant_name]
+
+def _extract_style_fingerprints(recent_posts: List[str]) -> Dict[str, List[str]]:
+    """Extract repeated openings and hashtags from recent posts."""
+    window = recent_posts[:STYLE_MEMORY_POST_WINDOW]
+    opening_counts: Dict[str, int] = {}
+    hashtag_counts: Dict[str, int] = {}
+
+    for post in window:
+        words = post.split()
+        if words:
+            opening = " ".join(words[:4]).lower()
+            opening_counts[opening] = opening_counts.get(opening, 0) + 1
+
+        for tag in re.findall(r"#\w+", post):
+            norm = tag.lower()
+            hashtag_counts[norm] = hashtag_counts.get(norm, 0) + 1
+
+    repeated_openers = [
+        opener for opener, count in sorted(opening_counts.items(), key=lambda x: x[1], reverse=True)
+        if count > 1
+    ][:STYLE_MEMORY_MAX_OPENERS]
+    repeated_hashtags = [
+        tag for tag, count in sorted(hashtag_counts.items(), key=lambda x: x[1], reverse=True)
+        if count > 1
+    ][:STYLE_MEMORY_MAX_HASHTAGS]
+
+    return {
+        "repeated_openers": repeated_openers,
+        "repeated_hashtags": repeated_hashtags
+    }
+
+def _build_avoidance_constraints(style_fingerprints: Dict[str, List[str]]) -> str:
+    """Format style memory into prompt-safe constraints."""
+    openers = style_fingerprints.get("repeated_openers", [])
+    hashtags = style_fingerprints.get("repeated_hashtags", [])
+    return (
+        "RECENT STYLE SIGNALS (AVOID REPETITION):\n"
+        f"- Reused opening patterns: {openers if openers else 'None'}\n"
+        f"- Reused hashtags: {hashtags if hashtags else 'None'}\n"
+        "- Vary sentence openings, rhetorical shape, and hashtag selection."
+    )
+
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
     client = genai.Client(api_key=api_key)
@@ -61,23 +110,26 @@ def _sync_generate(api_key: str, full_prompt: str) -> str:
 async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], str]:
     """Generates content asynchronously with Rescue logic and Temporal Context."""
     temporal = get_temporal_context()
+    variant_name, variant_instruction = _select_persona_variant(mode)
+    style_fingerprints = _extract_style_fingerprints(recent_posts)
+    style_constraints = _build_avoidance_constraints(style_fingerprints)
     
     if mode == "curator" and news_items:
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
-        instr = SYSTEM_INSTRUCTIONS_CURATOR
+        instr = f"{SYSTEM_INSTRUCTIONS_CURATOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
         task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nRESEARCH:\n{news_text}\n\nTask: Synthesize a professional thread."
     elif mode == "strategist":
         topic = random.choice(SECONDARY_TOPICS)
-        instr = SYSTEM_INSTRUCTIONS_MENTOR
+        instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
         task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nSTRATEGIC DISCUSSION: {topic}\n\nTask: Share deep, abstract mentorship and philosophical insight purely on this topic."
     else:
         topic = random.choice(["Career", "Automation", "Work-Life Balance", "Learning"])
-        instr = SYSTEM_INSTRUCTIONS_MENTOR
+        instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
         task = f"Context: {temporal['day']} {temporal['session']}.\nTheme: {temporal['theme']}\n\nTOPIC: {topic}\n\nTask: Share mentorship wisdom."
 
-    full_prompt = f"{instr}\n\n{task}\n\nRECENTLY SAID (AVOID): {', '.join(recent_posts[:3])}\nFormat as a JSON list of strings (3-5 posts)."
+    full_prompt = f"{instr}\n\n{task}\n\n{style_constraints}\nFormat as a JSON list of strings (3-5 posts)."
     
     fallback_post = f"Sharing concise insights on {topic}. #AI #Tech"
 

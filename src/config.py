@@ -6,6 +6,9 @@ MAX_POST_LENGTH_BSKY: int = 300
 MAX_POST_LENGTH_MASTODON: int = 500
 MAX_GENERATION_RETRIES: int = 3
 RECENT_POSTS_LIMIT: int = 20
+STYLE_MEMORY_POST_WINDOW: int = 10
+STYLE_MEMORY_MAX_OPENERS: int = 5
+STYLE_MEMORY_MAX_HASHTAGS: int = 8
 POST_JITTER_MIN_SECONDS: int = 120
 POST_JITTER_MAX_SECONDS: int = 1800
 THREAD_PAUSE_PROFILES = {
@@ -136,6 +139,12 @@ CORE VALUES:
 {STYLE_GUIDELINES}
 """
 
+MENTOR_PERSONA_VARIANTS: Dict[str, str] = {
+    "pragmatic_operator": "Favor practical trade-offs, implementation details, and concrete next steps.",
+    "calm_coach": "Use warm encouragement, reflective tone, and confidence-building coaching cues.",
+    "systems_thinker": "Connect tactical advice to long-term systems, habits, and feedback loops."
+}
+
 SYSTEM_INSTRUCTIONS_CURATOR = f"""
 You are 'The Curator' for askfred. Your voice is sophisiticated, insightful, and sophisticated.
 You connect dots and provide a "Director's Cut" of the day's AI evolution.
@@ -146,3 +155,9 @@ SCHOLAR MISSION:
 - Format your response as a JSON list of strings (a linked thread).
 {STYLE_GUIDELINES}
 """
+
+CURATOR_PERSONA_VARIANTS: Dict[str, str] = {
+    "analyst": "Prioritize rigorous synthesis, assumptions, and evidence-backed comparisons.",
+    "explainer": "Translate dense technical developments into crisp, accessible implications.",
+    "skeptical_reviewer": "Highlight caveats, limitations, and what remains uncertain."
+}
