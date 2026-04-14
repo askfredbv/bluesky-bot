@@ -238,7 +238,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.6 Resilience Upgrade ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.7.0 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials
