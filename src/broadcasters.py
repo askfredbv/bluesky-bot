@@ -27,7 +27,10 @@ def _split_and_constrain_posts(content_list: List[str], max_length: int, platfor
             continue
 
         SafeLogger.warn(
-            f"{platform_name} content exceeded {max_length} chars; splitting into safe chunks."
+            "content_chunk_split",
+            f"{platform_name} content exceeded max length; splitting into safe chunks.",
+            platform=platform_name.lower(),
+            max_length=max_length
         )
         for i in range(0, len(original_text), max_length):
             constrained_posts.append(original_text[i:i + max_length])
@@ -50,7 +53,7 @@ async def post_to_bluesky(
     thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
 ):
     """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds)."""
-    print(f"Broadcasting to Bluesky (@{username})...")
+    SafeLogger.info("broadcast_started", "Broadcasting to Bluesky", platform="bluesky")
     client = AsyncClient()
     await client.login(username, password)
 
@@ -71,7 +74,12 @@ async def post_to_bluesky(
                     upload = await client.upload_blob(link_meta['image_data'])
                     thumb_blob = upload.blob
                 except Exception as e:
-                    SafeLogger.error("Failed to upload Link Preview thumbnail", e)
+                    SafeLogger.error(
+                        "thumbnail_upload_failed",
+                        "Failed to upload link preview thumbnail",
+                        exception=e,
+                        platform="bluesky"
+                    )
             
             embed = models.AppBskyEmbedExternal.Main(
                 external=models.AppBskyEmbedExternal.External(
@@ -134,9 +142,12 @@ async def post_to_mastodon(
                 if attempt == MASTODON_POST_MAX_ATTEMPTS:
                     raise
                 SafeLogger.warn(
-                    f"Mastodon post retry: "
-                    f"{{'attempt': {attempt}, 'max_attempts': {MASTODON_POST_MAX_ATTEMPTS}, "
-                    f"'error_type': '{type(e).__name__}'}}"
+                    "mastodon_post_retry",
+                    "Retrying Mastodon post after failure",
+                    platform="mastodon",
+                    attempt=attempt,
+                    max_attempts=MASTODON_POST_MAX_ATTEMPTS,
+                    error_type=type(e).__name__
                 )
                 await asyncio.sleep(min(2 ** attempt, 5))
 
@@ -151,16 +162,24 @@ async def post_to_mastodon(
     except asyncio.CancelledError:
         if posted_count < total_posts:
             SafeLogger.warn(
-                f"Mastodon thread partial delivery: "
-                f"{{'posted': {posted_count}, 'total': {total_posts}, 'reason': 'cancelled'}}"
+                "mastodon_partial_delivery",
+                "Mastodon thread partially delivered",
+                platform="mastodon",
+                posted=posted_count,
+                total=total_posts,
+                reason="cancelled"
             )
         raise
     except Exception as e:
         if posted_count < total_posts:
             SafeLogger.warn(
-                f"Mastodon thread partial delivery: "
-                f"{{'posted': {posted_count}, 'total': {total_posts}, "
-                f"'reason': 'error', 'error_type': '{type(e).__name__}'}}"
+                "mastodon_partial_delivery",
+                "Mastodon thread partially delivered",
+                platform="mastodon",
+                posted=posted_count,
+                total=total_posts,
+                reason="error",
+                error_type=type(e).__name__
             )
         raise
 
@@ -173,7 +192,7 @@ async def update_profile_bio(client: AsyncClient, bio_text: str):
         profile_dict['description'] = bio_text
         await client.com.atproto.repo.put_record(collection='app.bsky.actor.profile', repo=client.me.did, rkey='self', record=profile_dict)
     except Exception as e:
-        SafeLogger.error("Failed to update Bluesky bio", e)
+        SafeLogger.error("bluesky_bio_update_failed", "Failed to update Bluesky bio", exception=e, platform="bluesky")
 
 async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
     if not token: return
@@ -183,4 +202,4 @@ async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
             mastodon.account_update_credentials(note=bio_text)
         await asyncio.to_thread(_sync_bio)
     except Exception as e:
-        SafeLogger.error("Failed to update Mastodon bio", e)
+        SafeLogger.error("mastodon_bio_update_failed", "Failed to update Mastodon bio", exception=e, platform="mastodon")
