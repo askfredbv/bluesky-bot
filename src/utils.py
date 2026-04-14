@@ -18,7 +18,14 @@ from src.config import (
     RSS_FEEDS, SEEN_FILE, REPLIED_FILE, 
     MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE,
     SOURCE_TIERS, PRODUCT_KEYWORDS, GROUNDBREAKING_KEYWORDS,
-    TOPIC_MAP, HIDDEN_GEM_SOURCES
+    TOPIC_MAP, HIDDEN_GEM_SOURCES,
+    FEED_FETCH_CONCURRENCY,
+    FEED_REQUEST_CONNECT_TIMEOUT_SECONDS,
+    FEED_REQUEST_READ_TIMEOUT_SECONDS,
+    FEED_REQUEST_WRITE_TIMEOUT_SECONDS,
+    FEED_REQUEST_POOL_TIMEOUT_SECONDS,
+    FEED_MAX_CONNECTIONS,
+    FEED_MAX_KEEPALIVE_CONNECTIONS
 )
 from src.logger import SafeLogger
 
@@ -304,8 +311,13 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
 
 async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[str, Any]]:
     try:
-        response = await client.get(url, timeout=10.0)
+        response = await client.get(url)
         feed = feedparser.parse(response.text)
+        if feed.bozo:
+            SafeLogger.warn(
+                f"event=feed_parse_failure url={url} parse_error={type(feed.bozo_exception).__name__}"
+            )
+            return []
         items = []
         now = datetime.now(timezone.utc)
         lookback = now - timedelta(days=2)
@@ -336,16 +348,39 @@ async def fetch_single_feed(client: httpx.AsyncClient, url: str) -> List[Dict[st
                 "pub_date": pub_date
             })
         return items
+    except httpx.TimeoutException as e:
+        SafeLogger.warn(f"event=feed_timeout url={url} error={type(e).__name__}")
+        return []
     except Exception as e:
-        SafeLogger.error(f"Error parsing feed {url}", e)
+        SafeLogger.warn(f"event=feed_fetch_failure url={url} error={type(e).__name__}")
         return []
 
 async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int = 5) -> List[Dict[str, Any]]:
     """Weighted asynchronous fetch with Hidden Gem injection (v4.5 Sage)."""
     print(f"Fetching news from {len(RSS_FEEDS)} feeds with Sage Intelligence...")
-    
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        tasks = [fetch_single_feed(client, url) for url in RSS_FEEDS]
+
+    timeout = httpx.Timeout(
+        connect=FEED_REQUEST_CONNECT_TIMEOUT_SECONDS,
+        read=FEED_REQUEST_READ_TIMEOUT_SECONDS,
+        write=FEED_REQUEST_WRITE_TIMEOUT_SECONDS,
+        pool=FEED_REQUEST_POOL_TIMEOUT_SECONDS
+    )
+    limits = httpx.Limits(
+        max_connections=FEED_MAX_CONNECTIONS,
+        max_keepalive_connections=FEED_MAX_KEEPALIVE_CONNECTIONS
+    )
+    semaphore = asyncio.Semaphore(FEED_FETCH_CONCURRENCY)
+
+    async def _fetch_with_semaphore(url: str) -> List[Dict[str, Any]]:
+        async with semaphore:
+            return await fetch_single_feed(client, url)
+
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=timeout,
+        limits=limits
+    ) as client:
+        tasks = [_fetch_with_semaphore(url) for url in RSS_FEEDS]
         results = await asyncio.gather(*tasks)
     
     all_raw = [item for sublist in results for item in sublist]
