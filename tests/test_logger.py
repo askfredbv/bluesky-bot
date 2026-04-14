@@ -105,3 +105,22 @@ def test_short_or_low_entropy_secrets_are_not_redacted(monkeypatch):
 
     record = _read_records(stream)[0]
     assert record["message"] == "short=abcd123 low=aaaaaaaaaaaaaaaa"
+
+
+def test_json_record_contains_expected_core_fields():
+    _reset_logger_state()
+    SafeLogger.configure(run_id="run-xyz", platform="system", mode="mentor")
+    stream = _capture_stream()
+
+    SafeLogger.info("core_fields", "hello", attempt=2, extra_key="value")
+
+    record = _read_records(stream)[0]
+    assert record["timestamp"]
+    assert record["level"] == "INFO"
+    assert record["event"] == "core_fields"
+    assert record["message"] == "hello"
+    assert record["run_id"] == "run-xyz"
+    assert record["platform"] == "system"
+    assert record["mode"] == "mentor"
+    assert record["attempt"] == 2
+    assert record["extra_key"] == "value"
