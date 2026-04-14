@@ -1,6 +1,6 @@
 import pytest
 
-from src.agents import generate_content, handle_interactions, _truncate_for_platform
+from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate
 from src.config import REPLY_MAX_CHARS
 
 
@@ -198,3 +198,44 @@ async def test_generate_content_falls_back_when_model_returns_non_list(monkeypat
 
     assert isinstance(content, list)
     assert len(content) == 1
+
+
+def test_sync_generate_reuses_cached_client(monkeypatch):
+    call_count = {"count": 0}
+    test_cache = {}
+
+    class DummyResponse:
+        text = "ok"
+
+    class DummyModels:
+        def generate_content(self, model, contents):
+            return DummyResponse()
+
+    class DummyClient:
+        def __init__(self, api_key):
+            call_count["count"] += 1
+            self.models = DummyModels()
+
+    monkeypatch.setattr("src.agents._CLIENT_CACHE", test_cache)
+    monkeypatch.setattr("src.agents.genai.Client", DummyClient)
+
+    assert _sync_generate("fake-key", "prompt 1") == "ok"
+    assert _sync_generate("fake-key", "prompt 2") == "ok"
+    assert call_count["count"] == 1
+
+
+def test_sync_generate_missing_key_raises_clear_error():
+    with pytest.raises(ValueError, match="missing or empty"):
+        _sync_generate("", "prompt")
+
+
+def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
+    monkeypatch.setattr("src.agents._CLIENT_CACHE", {})
+
+    def _raise_client_error(*_args, **_kwargs):
+        raise RuntimeError("bad credentials")
+
+    monkeypatch.setattr("src.agents.genai.Client", _raise_client_error)
+
+    with pytest.raises(ValueError, match="Failed to initialize Gemini client"):
+        _sync_generate("invalid-key", "prompt")

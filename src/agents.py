@@ -17,6 +17,8 @@ from src.config import (
 from src.utils import update_replied_to
 from src.logger import SafeLogger
 
+_CLIENT_CACHE: Dict[str, Any] = {}
+
 def _sanitize_mention(text: str) -> str:
     """Apply strict input shaping for untrusted mention content (Fortress v4.5)."""
     # Normalize all whitespace runs (including new lines and tabs) to single spaces.
@@ -124,7 +126,18 @@ def _build_avoidance_constraints(style_fingerprints: Dict[str, List[str]]) -> st
 
 def _sync_generate(api_key: str, full_prompt: str) -> str:
     """Helper for synchronous Gemini call."""
-    client = genai.Client(api_key=api_key)
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("Gemini API key is missing or empty.")
+
+    cache_key = api_key.strip()
+    client = _CLIENT_CACHE.get(cache_key)
+    if client is None:
+        try:
+            client = genai.Client(api_key=cache_key)
+        except Exception as exc:
+            raise ValueError("Failed to initialize Gemini client. Verify the API key is valid.") from exc
+        _CLIENT_CACHE[cache_key] = client
+
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=full_prompt,
