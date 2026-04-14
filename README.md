@@ -77,6 +77,11 @@ pip install -r requirements.txt
 pytest
 ```
 
+### Supported Platforms
+- **Linux / macOS (POSIX):** File-based state locks use `fcntl.flock` advisory locks.
+- **Windows:** File-based state locks use `msvcrt.locking` on a fixed lock region.
+- The public lock helper API remains unchanged (`_file_lock` in `src/utils.py`), so callers are platform-agnostic.
+
 ---
 
 ## 📂 Project Structure

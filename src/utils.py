@@ -17,7 +17,6 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import io
 from PIL import Image
-import fcntl
 from src.config import (
     RSS_FEEDS, SEEN_FILE, REPLIED_FILE, RUNTIME_STATE_FILE,
     MAX_API_RETRIES, BACKOFF_FACTOR, JITTER_RANGE,
@@ -32,6 +31,7 @@ from src.config import (
     FEED_MAX_KEEPALIVE_CONNECTIONS
 )
 from src.logger import SafeLogger
+from src.file_lock import file_lock
 
 T = TypeVar("T")
 STATE_STORE_TIMEOUT_SECONDS = 10.0
@@ -202,18 +202,7 @@ def _load_json_with_repair(
 
 def _file_lock(lock_path: Path):
     """Context manager for an advisory process lock."""
-    class _Lock:
-        def __enter__(self):
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            self._handle = open(lock_path, "w")
-            fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX)
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
-            self._handle.close()
-            return False
-    return _Lock()
+    return file_lock(lock_path)
 
 def load_seen_articles() -> Dict[str, Any]:
     """Load seen state including links and recent topics."""
