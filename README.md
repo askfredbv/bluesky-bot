@@ -19,7 +19,7 @@ If the morning news volume is low (fewer than 3 high-signal items), the bot fall
 ## How it works
 
 ```
-GitHub Actions (cron)
+cron-job.org → GitHub Actions (workflow_dispatch)
   → fetch RSS feeds + score items          (src/utils.py)
   → generate thread via Gemini              (src/agents.py)
   → post to Bluesky + Mastodon in parallel (src/broadcasters.py)
@@ -120,7 +120,7 @@ The following can also be overridden via environment variables without touching 
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
 ├── tests/                     # pytest suite (76 tests)
 ├── .github/
-│   ├── workflows/daily_post.yml      # Cron schedule: 08:00 and 14:30 UTC
+│   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
 │   ├── workflows/lockfile-check.yml  # Fails if requirements.txt is stale
 │   └── dependabot.yml                # Dependency vulnerability scanning
 ├── pytest.ini
