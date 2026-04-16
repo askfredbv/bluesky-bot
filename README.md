@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.8.0)
+# Bluesky & Mastodon Daily Poster (v4.8.1)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -40,7 +40,7 @@ To improve observability of the external trigger path, `.github/workflows/schedu
 
 **Post formatting**: each post in a thread is generated within the 300-character Bluesky limit. If a post still overflows (rare), it is split at a word boundary — never mid-word.
 
-**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. Atomic JSON writes with backup/restore for state files — corrupt files are preserved with a timestamped name before resetting to default. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures (quota, unavailability) automatically advance to the next model.
+**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. State (`seen_articles`, `replied_to`) is stored in a private GitHub Gist and survives across runs — local file fallback kicks in if the Gist is unreachable. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures (quota, unavailability) automatically advance to the next model. One Bluesky session per run — the preflight login is reused for posting.
 
 ---
 
@@ -57,6 +57,8 @@ Add these as GitHub repo secrets (`Settings > Secrets and variables > Actions`):
 | `BLUESKY_APP_PASSWORD` | Yes | App-specific password from Bluesky settings |
 | `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance |
 | `MASTODON_API_BASE_URL` | Optional | Your Mastodon instance URL |
+| `GIST_TOKEN` | Yes | GitHub PAT with `gist` scope — for persistent state storage |
+| `GIST_ID` | Yes | ID of the private Gist holding `seen_articles.json` and `replied_to.json` |
 
 ### Local run
 
@@ -138,7 +140,7 @@ The following can also be overridden via environment variables without touching 
 │   ├── logger.py              # SafeLogger — strips credentials from output
 │   ├── settings.py            # Environment variable loading and validation
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
-├── tests/                     # pytest suite (76 tests)
+├── tests/                     # pytest suite (75 tests)
 ├── .github/
 │   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
 │   ├── workflows/schedule-health.yml # Read-only daily monitor for missed external dispatches
