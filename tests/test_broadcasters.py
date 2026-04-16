@@ -1,6 +1,7 @@
 import asyncio
 import pytest
 
+from atproto import models
 from src.config import MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON
 from src import broadcasters
 
@@ -140,3 +141,60 @@ def test_sample_thread_pause_falls_back_to_default_profile_range():
     for _ in range(25):
         value = broadcasters._sample_thread_pause("nonexistent-profile")
         assert low <= value <= high
+
+
+@pytest.mark.asyncio
+async def test_post_to_bluesky_uses_image_embed_when_image_bytes_provided(monkeypatch):
+    """When image_bytes are supplied, an AppBskyEmbedImages.Main embed is attached to the first post."""
+    send_post_calls = []
+
+    fake_blob = models.blob_ref.BlobRef(ref={"link": "bafkreiaa"}, mime_type="image/png", size=3)
+
+    class FakeUploadResult:
+        blob = fake_blob
+
+    class DummyAsyncClient:
+        upload_blob_call_count = 0
+
+        async def upload_blob(self, data):
+            self.upload_blob_call_count += 1
+            return FakeUploadResult()
+
+        async def send_post(self, text, embed=None, reply_to=None):
+            send_post_calls.append({"text": text, "embed": embed})
+
+            class FakePost:
+                cid = "cid-1"
+                uri = "at://post/1"
+            return FakePost()
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", lambda _: None)
+
+    dummy_client = DummyAsyncClient()
+    await broadcasters.post_to_bluesky(dummy_client, ["Post text"], image_bytes=b"img-data")
+
+    assert dummy_client.upload_blob_call_count == 1
+    assert isinstance(send_post_calls[0]["embed"], models.AppBskyEmbedImages.Main)
+
+
+@pytest.mark.asyncio
+async def test_post_to_bluesky_uses_link_card_when_no_image_bytes(monkeypatch):
+    """When only link_meta is supplied (no image_bytes), an AppBskyEmbedExternal.Main embed is attached."""
+    send_post_calls = []
+
+    class DummyAsyncClient:
+        async def send_post(self, text, embed=None, reply_to=None):
+            send_post_calls.append({"text": text, "embed": embed})
+
+            class FakePost:
+                cid = "cid-1"
+                uri = "at://post/1"
+            return FakePost()
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", lambda _: None)
+
+    link_meta = {"title": "Title", "description": "Desc", "url": "https://example.com"}
+    dummy_client = DummyAsyncClient()
+    await broadcasters.post_to_bluesky(dummy_client, ["Post text"], link_meta=link_meta)
+
+    assert isinstance(send_post_calls[0]["embed"], models.AppBskyEmbedExternal.Main)

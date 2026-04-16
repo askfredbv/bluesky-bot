@@ -59,6 +59,7 @@ async def post_to_bluesky(
     client: AsyncClient,
     content_list: List[str],
     link_meta: Optional[Dict[str, Any]] = None,
+    image_bytes: Optional[bytes] = None,
     thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
 ):
     """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds).
@@ -77,29 +78,55 @@ async def post_to_bluesky(
 
     for i, post_text in enumerate(constrained_content_list):
         embed = None
-        # Sage 4.5: Attach Rich Link Preview (External Embed) to the first post
-        if i == 0 and link_meta:
-            thumb_blob = None
-            if link_meta.get('image_data'):
-                try:
-                    upload = await client.upload_blob(link_meta['image_data'])
-                    thumb_blob = upload.blob
-                except Exception as e:
-                    SafeLogger.error(
-                        "thumbnail_upload_failed",
-                        "Failed to upload link preview thumbnail",
-                        exception=e,
-                        platform="bluesky"
+        if i == 0:
+            if image_bytes:
+                # Image embed (Mentor/Strategist) — Bluesky hard limit is 1 MB per image
+                _BLUESKY_IMAGE_MAX_BYTES = 976 * 1024  # 976 KB — safe margin under 1 MB
+                if len(image_bytes) > _BLUESKY_IMAGE_MAX_BYTES:
+                    SafeLogger.warn(
+                        "image_too_large",
+                        "Generated image exceeds Bluesky 1 MB limit; skipping image attach",
+                        platform="bluesky",
+                        size_bytes=len(image_bytes),
                     )
-            
-            embed = models.AppBskyEmbedExternal.Main(
-                external=models.AppBskyEmbedExternal.External(
-                    title=link_meta.get('title', 'Technical Insight'),
-                    description=link_meta.get('description', ''),
-                    uri=link_meta.get('url', ''),
-                    thumb=thumb_blob
+                else:
+                    try:
+                        upload = await client.upload_blob(image_bytes)
+                        embed = models.AppBskyEmbedImages.Main(
+                            images=[models.AppBskyEmbedImages.Image(
+                                image=upload.blob,
+                                alt=f"Illustration: {content_list[0][:100]}"
+                            )]
+                        )
+                    except Exception as e:
+                        SafeLogger.error(
+                            "image_upload_failed",
+                            "Failed to upload generated image to Bluesky",
+                            exception=e,
+                            platform="bluesky",
+                        )
+            elif link_meta:
+                # Link card (Curator)
+                thumb_blob = None
+                if link_meta.get('image_data'):
+                    try:
+                        upload = await client.upload_blob(link_meta['image_data'])
+                        thumb_blob = upload.blob
+                    except Exception as e:
+                        SafeLogger.error(
+                            "thumbnail_upload_failed",
+                            "Failed to upload link preview thumbnail",
+                            exception=e,
+                            platform="bluesky",
+                        )
+                embed = models.AppBskyEmbedExternal.Main(
+                    external=models.AppBskyEmbedExternal.External(
+                        title=link_meta.get('title', 'Technical Insight'),
+                        description=link_meta.get('description', ''),
+                        uri=link_meta.get('url', ''),
+                        thumb=thumb_blob
+                    )
                 )
-            )
         
         if not parent_ref:
             post = await client.send_post(text=post_text, embed=embed)

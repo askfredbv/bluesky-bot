@@ -1,6 +1,7 @@
 import pytest
 
-from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate
+from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate, generate_post_image
+from src import agents
 from src.config import REPLY_MAX_CHARS
 
 
@@ -313,3 +314,39 @@ async def test_model_used_event_logged_on_success(monkeypatch):
     model_event = next((fields for event, fields in log_events if event == "model_used"), None)
     assert model_event is not None
     assert "model" in model_event
+
+
+@pytest.mark.asyncio
+async def test_generate_content_injects_language_directive(monkeypatch):
+    """LANGUAGE directive is present in the prompt sent to Gemini."""
+    captured = {}
+
+    def fake_sync_generate(api_key, prompt, model):
+        captured["prompt"] = prompt
+        return '["Long enough post with #AI and enough detail to pass all validation checks here."]'
+
+    monkeypatch.setattr("src.agents._sync_generate", fake_sync_generate)
+
+    await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
+
+    assert "LANGUAGE:" in captured["prompt"]
+    assert any(lang in captured["prompt"] for lang in ["English", "Dutch"])
+
+
+@pytest.mark.asyncio
+async def test_generate_post_image_returns_bytes_on_success(monkeypatch):
+    """generate_post_image returns raw bytes when _sync_generate_image succeeds."""
+    monkeypatch.setattr(agents, "_sync_generate_image", lambda k, p: b"fake-image-bytes")
+    result = await generate_post_image("fake-key", "automation")
+    assert result == b"fake-image-bytes"
+
+
+@pytest.mark.asyncio
+async def test_generate_post_image_returns_none_on_failure(monkeypatch):
+    """generate_post_image returns None gracefully when image generation fails."""
+    def raise_error(k, p):
+        raise RuntimeError("quota exceeded")
+
+    monkeypatch.setattr(agents, "_sync_generate_image", raise_error)
+    result = await generate_post_image("fake-key", "automation")
+    assert result is None

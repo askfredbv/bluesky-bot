@@ -20,6 +20,7 @@ DEFAULT_THREAD_PAUSE_PROFILE: str = "normal"
 HASHTAG_OPTIONAL_MIN_CHARS: int = 110
 MIN_THREAD_POSTS: int = 1
 MAX_THREAD_POSTS: int = 5
+LANGUAGE_OPTIONS: List[str] = ["English", "Dutch"]
 MENTION_SANITIZE_MAX_CHARS: int = 500
 FEED_SUMMARY_MAX_CHARS: int = 500
 
@@ -77,6 +78,10 @@ GEMINI_MODEL_PRIORITY: List[str] = [
     "gemini-1.5-flash-latest",
     "gemma-3-27b-it",
 ]
+
+# Image generation
+IMAGE_GENERATION_PROBABILITY: float = 0.5
+IMAGEN_MODEL: str = "imagen-3.0-generate-002"
 
 TOPIC_MAP: Dict[str, List[str]] = {
     "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],

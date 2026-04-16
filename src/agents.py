@@ -14,6 +14,7 @@ from src.config import (
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     HASHTAG_OPTIONAL_MIN_CHARS, MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
+    LANGUAGE_OPTIONS, IMAGEN_MODEL,
 )
 from src.utils import update_replied_to
 from src.logger import SafeLogger
@@ -153,10 +154,52 @@ def _sync_generate(api_key: str, full_prompt: str, model: str) -> str:
     )
     return response.text
 
+def _sync_generate_image(api_key: str, prompt: str) -> Optional[bytes]:
+    """Synchronous Imagen 3 image generation via the cached genai client."""
+    cache_key = api_key.strip()
+    client = _CLIENT_CACHE.get(cache_key)
+    if client is None:
+        client = genai.Client(api_key=cache_key)
+        _CLIENT_CACHE[cache_key] = client
+    result = client.models.generate_images(
+        model=IMAGEN_MODEL,
+        prompt=prompt,
+        config={"number_of_images": 1, "aspect_ratio": "1:1"},
+    )
+    images = result.generated_images
+    if not images:
+        return None
+    return images[0].image.image_bytes
+
+
+async def generate_post_image(api_key: str, topic: str) -> Optional[bytes]:
+    """Generate a visual for a thread via Imagen 3.
+
+    Returns raw image bytes on success, None on failure (caller posts without image).
+    Only called for Mentor and Strategist modes — Curator uses a link card instead.
+    """
+    prompt = (
+        f"A clean, minimal editorial illustration representing the concept: '{topic}'. "
+        "No text, no people, flat design style, muted modern palette."
+    )
+    try:
+        return await asyncio.to_thread(_sync_generate_image, api_key, prompt)
+    except Exception as exc:
+        SafeLogger.warn(
+            "image_generation_failed",
+            "Imagen 3 image generation failed; posting without image",
+            error_type=type(exc).__name__,
+            topic=topic,
+        )
+        return None
+
+
 async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], str]:
     """Generates content asynchronously with Rescue logic and Temporal Context."""
     temporal = get_temporal_context()
     variant_name, variant_instruction = _select_persona_variant(mode)
+    language = random.choice(LANGUAGE_OPTIONS)
+    SafeLogger.info("language_selected", "Thread language selected", language=language, mode=mode)
     style_fingerprints = _extract_style_fingerprints(recent_posts)
     style_constraints = _build_avoidance_constraints(style_fingerprints)
     
@@ -168,7 +211,11 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
-        instr = f"{SYSTEM_INSTRUCTIONS_CURATOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
+        instr = (
+            f"{SYSTEM_INSTRUCTIONS_CURATOR}\n\n"
+            f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
+            f"LANGUAGE: Write this entire thread in {language}. Do not mix languages."
+        )
         task = (
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             "ITEMS TO WORK WITH:\n"
@@ -178,7 +225,11 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         )
     elif mode == "strategist":
         topic = random.choice(SECONDARY_TOPICS)
-        instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
+        instr = (
+            f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
+            f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
+            f"LANGUAGE: Write this entire thread in {language}. Do not mix languages."
+        )
         task = (
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             f"TOPIC: {topic}\n\n"
@@ -187,7 +238,11 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
         )
     else:
         topic = random.choice(["Career", "Automation", "Work-Life Balance", "Learning"])
-        instr = f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\nPERSONA VARIANT ({variant_name}): {variant_instruction}"
+        instr = (
+            f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
+            f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
+            f"LANGUAGE: Write this entire thread in {language}. Do not mix languages."
+        )
         task = (
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             f"TOPIC: {topic}\n\n"

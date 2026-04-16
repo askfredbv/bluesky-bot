@@ -11,12 +11,13 @@ from dotenv import load_dotenv
 # Internal Imports
 from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
+    IMAGE_GENERATION_PROBABILITY,
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
     get_link_metadata,
 )
-from src.agents import generate_content, handle_interactions
+from src.agents import generate_content, handle_interactions, generate_post_image
 from src.broadcasters import post_to_bluesky, post_to_mastodon
 from src.logger import SafeLogger
 from src.settings import Settings, SettingsValidationError
@@ -153,6 +154,12 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         mode=mode,
         news_items=news_items,
     )
+
+    # Generate image for non-Curator modes at configured probability
+    image_bytes = None
+    if mode != "curator" and random.random() < IMAGE_GENERATION_PROBABILITY:
+        image_bytes = await generate_post_image(creds.gemini_api_key, chosen_topic)
+
     thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
     await apply_humanized_post_delay(settings)
 
@@ -178,6 +185,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     if bsky_client is not None:
         broadcast_tasks.append(post_to_bluesky(
             bsky_client, content_list, link_meta,
+            image_bytes=image_bytes,
             thread_pause_profile=thread_pause_profile
         ))
     else:
@@ -244,7 +252,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.8.2 ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.9.0 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials
