@@ -94,7 +94,7 @@ async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(m
 
 @pytest.mark.asyncio
 async def test_post_run_automation_stage_runs_expected_tasks(monkeypatch):
-    calls = {"handle": 0, "bsky_bio": 0, "masto_bio": 0, "marked": []}
+    calls = {"handle": 0}
     creds = SimpleNamespace(
         bluesky_username="u",
         gemini_api_key="g",
@@ -105,17 +105,7 @@ async def test_post_run_automation_stage_runs_expected_tasks(monkeypatch):
     async def fake_handle(*args, **kwargs):
         calls["handle"] += 1
 
-    async def fake_bsky_bio(*args, **kwargs):
-        calls["bsky_bio"] += 1
-
-    async def fake_masto_bio(*args, **kwargs):
-        calls["masto_bio"] += 1
-
     monkeypatch.setattr(main, "handle_interactions", fake_handle)
-    monkeypatch.setattr(main, "update_profile_bio", fake_bsky_bio)
-    monkeypatch.setattr(main, "update_profile_bio_mastodon", fake_masto_bio)
-    monkeypatch.setattr(main, "should_update_profile_bio", lambda *args, **kwargs: True)
-    monkeypatch.setattr(main, "mark_profile_bio_updated", lambda platform, *_: calls["marked"].append(platform))
 
     broadcast = main.BroadcastPayload(
         mode="mentor",
@@ -130,9 +120,6 @@ async def test_post_run_automation_stage_runs_expected_tasks(monkeypatch):
     payload = await main.post_run_automation_stage(broadcast, creds)
 
     assert calls["handle"] == 1
-    assert calls["bsky_bio"] == 1
-    assert calls["masto_bio"] == 1
-    assert calls["marked"] == ["bluesky", "mastodon"]
     assert payload.mode == "mentor"
 
 

@@ -10,19 +10,14 @@ from dotenv import load_dotenv
 
 # Internal Imports
 from src.config import (
-    APPROVED_BIO_BSKY, APPROVED_BIO_MASTODON,
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
-    PROFILE_BIO_UPDATE_COOLDOWN_HOURS
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
-    get_link_metadata, should_update_profile_bio, mark_profile_bio_updated
+    get_link_metadata,
 )
 from src.agents import generate_content, handle_interactions
-from src.broadcasters import (
-    post_to_bluesky, post_to_mastodon,
-    update_profile_bio, update_profile_bio_mastodon
-)
+from src.broadcasters import post_to_bluesky, post_to_mastodon
 from src.logger import SafeLogger
 from src.settings import Settings, SettingsValidationError
 
@@ -161,10 +156,26 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
     await apply_humanized_post_delay(settings)
 
+    # Reuse the preflight client; only create a new session if preflight failed
+    bsky_client = content_prep.bsky_client
+    if bsky_client is None:
+        from atproto import AsyncClient
+        try:
+            bsky_client = AsyncClient()
+            await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
+        except Exception as exc:
+            SafeLogger.error(
+                "bluesky_broadcast_login_failed",
+                "Bluesky login for broadcast failed",
+                exception=exc,
+                platform="bluesky",
+            )
+            bsky_client = None
+
     SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
     broadcast_tasks = [
         post_to_bluesky(
-            creds.bluesky_username, creds.bluesky_password, content_list, link_meta,
+            bsky_client, content_list, link_meta,
             thread_pause_profile=thread_pause_profile
         ),
         post_to_mastodon(
@@ -191,27 +202,12 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
 
 
 async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
-    should_update_bsky_bio = should_update_profile_bio(
-        "bluesky", APPROVED_BIO_BSKY, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
-    )
-    should_update_masto_bio = should_update_profile_bio(
-        "mastodon", APPROVED_BIO_MASTODON, PROFILE_BIO_UPDATE_COOLDOWN_HOURS
-    )
-
     automation_tasks = []
     if broadcast.bsky_broadcast_client is not None:
         automation_tasks.append(
             handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
         )
-    if should_update_bsky_bio and broadcast.bsky_broadcast_client is not None:
-        automation_tasks.append(update_profile_bio(broadcast.bsky_broadcast_client, APPROVED_BIO_BSKY))
-    if should_update_masto_bio:
-        automation_tasks.append(update_profile_bio_mastodon(creds.mastodon_access_token, creds.mastodon_api_base_url, APPROVED_BIO_MASTODON))
     await asyncio.gather(*automation_tasks, return_exceptions=True)
-    if should_update_bsky_bio:
-        mark_profile_bio_updated("bluesky", APPROVED_BIO_BSKY)
-    if should_update_masto_bio:
-        mark_profile_bio_updated("mastodon", APPROVED_BIO_MASTODON)
 
     return AutomationPayload(
         mode=broadcast.mode,

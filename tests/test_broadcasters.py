@@ -16,9 +16,6 @@ async def test_post_to_bluesky_splits_overlong_content(monkeypatch):
             self.uri = f"at://post/{idx}"
 
     class DummyAsyncClient:
-        async def login(self, username, password):
-            return None
-
         async def send_post(self, text, embed=None, reply_to=None):
             sent_payloads.append(
                 {"text": text, "embed": embed, "reply_to": reply_to}
@@ -31,12 +28,12 @@ async def test_post_to_bluesky_splits_overlong_content(monkeypatch):
     def capture_warn(event, message="", **fields):
         warnings.append((event, message, fields))
 
-    monkeypatch.setattr(broadcasters, "AsyncClient", DummyAsyncClient)
     monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
     monkeypatch.setattr(broadcasters.SafeLogger, "warn", capture_warn)
 
     overlong = "x" * (MAX_POST_LENGTH_BSKY + 25)
-    await broadcasters.post_to_bluesky("user", "pass", [overlong])
+    dummy_client = DummyAsyncClient()
+    await broadcasters.post_to_bluesky(dummy_client, [overlong])
 
     assert len(sent_payloads) == 2
     assert all(len(payload["text"]) <= MAX_POST_LENGTH_BSKY for payload in sent_payloads)

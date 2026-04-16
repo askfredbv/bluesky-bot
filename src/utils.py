@@ -105,6 +105,52 @@ def _save_state_to_store(key: str, data: Any) -> bool:
         SafeLogger.warn("state_store_post_failed", "Remote state POST failed", error_type=type(e).__name__, state_key=key)
         return False
 
+def _load_gist_state(filename: str) -> Optional[Any]:
+    """Load a JSON state file from a private GitHub Gist."""
+    gist_id = os.environ.get("GIST_ID", "").strip()
+    if not gist_id:
+        return None
+    token = os.environ.get("GIST_TOKEN", "").strip()
+    headers: Dict[str, str] = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = httpx.get(
+            f"https://api.github.com/gists/{gist_id}",
+            headers=headers,
+            timeout=STATE_STORE_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        content = resp.json()["files"][filename]["content"]
+        return json.loads(content)
+    except Exception as e:
+        SafeLogger.warn("gist_state_read_failed", "Gist state read failed", error_type=type(e).__name__, filename=filename)
+        return None
+
+
+def _save_gist_state(filename: str, data: Any) -> bool:
+    """Save a JSON state file to a private GitHub Gist."""
+    gist_id = os.environ.get("GIST_ID", "").strip()
+    if not gist_id:
+        return False
+    token = os.environ.get("GIST_TOKEN", "").strip()
+    headers: Dict[str, str] = {"Accept": "application/vnd.github+json", "Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = httpx.patch(
+            f"https://api.github.com/gists/{gist_id}",
+            headers=headers,
+            json={"files": {filename: {"content": json.dumps(data, indent=2)}}},
+            timeout=STATE_STORE_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        SafeLogger.warn("gist_state_save_failed", "Gist state save failed", error_type=type(e).__name__, filename=filename)
+        return False
+
+
 def retry_with_backoff(func):
     """Decorator to retry an async function with exponential backoff and jitter."""
     @functools.wraps(func)
@@ -215,6 +261,11 @@ def _file_lock(lock_path: Path):
 def load_seen_articles() -> Dict[str, Any]:
     """Load seen state including links and recent topics."""
     default = {"links": [], "recent_topics": []}
+    # 1. Try Gist
+    gist_data = _load_gist_state("seen_articles.json")
+    if isinstance(gist_data, dict) and "links" in gist_data and "recent_topics" in gist_data:
+        return gist_data
+    # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("seen_articles")
     if isinstance(remote_data, dict) and "links" in remote_data and "recent_topics" in remote_data:
         return remote_data
@@ -222,7 +273,7 @@ def load_seen_articles() -> Dict[str, Any]:
         migrated = {"links": remote_data, "recent_topics": []}
         _save_state_to_store("seen_articles", migrated)
         return migrated
-
+    # 3. Local file fallback
     data = _load_json_with_repair(
         SEEN_FILE,
         lambda: default,
@@ -235,6 +286,8 @@ def load_seen_articles() -> Dict[str, Any]:
     return default
 
 def save_seen_articles(seen_data: Dict[str, Any]) -> None:
+    if _save_gist_state("seen_articles.json", seen_data):
+        return
     if _save_state_to_store("seen_articles", seen_data):
         return
     try:
@@ -244,10 +297,15 @@ def save_seen_articles(seen_data: Dict[str, Any]) -> None:
         SafeLogger.error("seen_articles_save_failed", "Failed to save seen articles", exception=e)
 
 def load_replied_to() -> List[str]:
+    # 1. Try Gist
+    gist_data = _load_gist_state("replied_to.json")
+    if isinstance(gist_data, list):
+        return gist_data
+    # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("replied_to")
     if isinstance(remote_data, list):
         return remote_data
-
+    # 3. Local file fallback
     data = _load_json_with_repair(REPLIED_FILE, lambda: [])
     if isinstance(data, list):
         return data
@@ -256,6 +314,8 @@ def load_replied_to() -> List[str]:
     return []
 
 def save_replied_to(replied_ids: List[str]) -> None:
+    if _save_gist_state("replied_to.json", replied_ids):
+        return
     if _save_state_to_store("replied_to", replied_ids):
         return
     try:

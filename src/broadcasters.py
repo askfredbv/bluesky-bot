@@ -56,16 +56,17 @@ def _sample_thread_pause(profile_name: str) -> float:
 
 @retry_with_backoff
 async def post_to_bluesky(
-    username,
-    password,
+    client: AsyncClient,
     content_list: List[str],
     link_meta: Optional[Dict[str, Any]] = None,
     thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
 ):
-    """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds)."""
+    """Async broadcaster for Bluesky supporting Rich Link Previews (External Embeds).
+
+    The client must already be authenticated before calling this function.
+    Login is performed once upstream (content_prep_stage) and reused here.
+    """
     SafeLogger.info("broadcast_started", "Broadcasting to Bluesky", platform="bluesky")
-    client = AsyncClient()
-    await client.login(username, password)
 
     constrained_content_list = _split_and_constrain_posts(
         content_list, MAX_POST_LENGTH_BSKY, "Bluesky"
