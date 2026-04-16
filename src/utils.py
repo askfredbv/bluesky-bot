@@ -33,6 +33,8 @@ from src.config import (
     METADATA_FETCH_BLOCKED_DOMAINS,
     FEED_SUMMARY_MAX_CHARS,
     CONSENSUS_SYNERGY_BONUS,
+    RATE_LIMIT_BASE_WAIT_SECONDS,
+    RATE_LIMIT_MAX_RETRIES,
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -152,35 +154,78 @@ def _save_gist_state(filename: str, data: Any) -> bool:
 
 
 def retry_with_backoff(func):
-    """Decorator to retry an async function with exponential backoff and jitter."""
+    """Decorator to retry an async function with exponential backoff and jitter.
+
+    Distinguishes Bluesky 429 rate-limit errors from other failures:
+    - 429: waits RATE_LIMIT_BASE_WAIT_SECONDS * attempt (or Retry-After header value)
+           with a separate retry budget (RATE_LIMIT_MAX_RETRIES)
+    - Other errors: exponential backoff (BACKOFF_FACTOR^n + jitter) with MAX_API_RETRIES budget
+    """
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         retries = 0
-        while retries < MAX_API_RETRIES:
+        rate_limit_retries = 0
+        while True:
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
-                retries += 1
-                if retries == MAX_API_RETRIES:
-                    SafeLogger.error(
-                        "retry_exhausted",
-                        "Ultimate failure after retry attempts",
-                        exception=e,
+                # Duck-typed 429 detection — works for atproto RequestException
+                # without importing atproto directly into utils.py
+                response = getattr(e, 'response', None)
+                status = getattr(response, 'status_code', None)
+
+                if status == 429:
+                    rate_limit_retries += 1
+                    if rate_limit_retries > RATE_LIMIT_MAX_RETRIES:
+                        SafeLogger.error(
+                            "rate_limit_exhausted",
+                            "Bluesky rate limit retries exhausted",
+                            exception=e,
+                            attempt=rate_limit_retries,
+                            max_attempts=RATE_LIMIT_MAX_RETRIES,
+                            function=func.__name__,
+                        )
+                        raise
+                    # Honour Retry-After or ratelimit-reset header when present
+                    headers = getattr(response, 'headers', {}) or {}
+                    raw = headers.get('retry-after') or headers.get('ratelimit-reset')
+                    try:
+                        wait_time = float(raw) if raw else float(RATE_LIMIT_BASE_WAIT_SECONDS * rate_limit_retries)
+                    except (ValueError, TypeError):
+                        wait_time = float(RATE_LIMIT_BASE_WAIT_SECONDS * rate_limit_retries)
+                    SafeLogger.warn(
+                        "rate_limit_hit",
+                        "Bluesky rate limit (429); backing off",
+                        attempt=rate_limit_retries,
+                        max_attempts=RATE_LIMIT_MAX_RETRIES,
+                        wait_seconds=round(wait_time),
+                        function=func.__name__,
+                        header_used=bool(raw),
+                    )
+                    await asyncio.sleep(wait_time)
+
+                else:
+                    retries += 1
+                    if retries >= MAX_API_RETRIES:
+                        SafeLogger.error(
+                            "retry_exhausted",
+                            "Ultimate failure after retry attempts",
+                            exception=e,
+                            attempt=retries,
+                            max_attempts=MAX_API_RETRIES,
+                            function=func.__name__,
+                        )
+                        raise
+                    wait_time = (BACKOFF_FACTOR ** retries) + random.uniform(0, JITTER_RANGE)
+                    SafeLogger.warn(
+                        "retry_scheduled",
+                        "Retry scheduled with backoff",
                         attempt=retries,
                         max_attempts=MAX_API_RETRIES,
-                        function=func.__name__
+                        function=func.__name__,
+                        wait_seconds=round(wait_time, 2),
                     )
-                    raise e
-                wait_time = (BACKOFF_FACTOR ** retries) + random.uniform(0, JITTER_RANGE)
-                SafeLogger.warn(
-                    "retry_scheduled",
-                    "Retry scheduled with backoff",
-                    attempt=retries,
-                    max_attempts=MAX_API_RETRIES,
-                    function=func.__name__,
-                    wait_seconds=round(wait_time, 2)
-                )
-                await asyncio.sleep(wait_time)
+                    await asyncio.sleep(wait_time)
     return wrapper
 
 def _atomic_write_json(file_path: Path, data: Any) -> None:
