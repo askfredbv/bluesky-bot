@@ -73,6 +73,18 @@ Create a `.env` file from `.env.example` for local credentials.
 pytest
 ```
 
+### Coverage policy
+
+CI keeps a **70% global coverage floor** so broad refactors and non-critical integrations can evolve without making the suite brittle.
+
+For high-risk paths that directly control ranking/generation and post/reply orchestration, CI also enforces **stricter module-level coverage gates (80%)** for:
+
+- `src/utils.py`
+- `src/agents.py`
+- `main.py` (posting/reply pipeline stages)
+
+On pull requests, if any of those critical modules are changed, at least one focused test file must also be updated (for example `tests/test_utils*`, `tests/test_agents*`, or `tests/test_main*`). This keeps critical behavior protected as implementation details change.
+
 ### Dependency management
 
 Dependencies are pinned via `pip-tools`. Edit intent in `requirements.in`, then regenerate:

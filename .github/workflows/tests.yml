@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -25,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest-cov
 
-      - name: Run tests with coverage gate
+      - name: Run tests with global coverage gate
         run: |
           pytest \
             --cov=main \
@@ -33,6 +35,16 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-fail-under=70
+
+      - name: Run stricter coverage gates for critical modules
+        run: python scripts/check_critical_coverage.py
+
+      - name: Enforce focused tests for critical-module changes
+        if: github.event_name == 'pull_request'
+        run: |
+          python scripts/check_critical_test_changes.py \
+            "${{ github.base_ref }}" \
+            "${{ github.sha }}"
 
       - name: Upload coverage artifacts
         if: always()
