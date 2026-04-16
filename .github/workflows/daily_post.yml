@@ -1,7 +1,7 @@
 name: Daily Bluesky Post
 
 on:
-  # Triggered externally by cron-job.org at 08:00 and 14:30 UTC via workflow_dispatch.
+  # Triggered externally by cron-job.org at 09:00 and 15:30 UTC via workflow_dispatch.
   # GitHub's built-in schedule is intentionally removed to avoid duplicate posts and timing delays.
   workflow_dispatch:
 

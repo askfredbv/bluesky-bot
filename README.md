@@ -120,7 +120,8 @@ The following can also be overridden via environment variables without touching 
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
 ├── tests/                     # pytest suite (76 tests)
 ├── .github/
-│   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
+│   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 09:00 and 15:30 UTC
+│   │                                   # cron-job.org schedule intentionally mirrors Curator/Mentor content mode timestamps to prevent drift.
 │   ├── workflows/lockfile-check.yml  # Fails if requirements.txt is stale
 │   └── dependabot.yml                # Dependency vulnerability scanning
 ├── pytest.ini
