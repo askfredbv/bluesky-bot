@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -33,6 +35,40 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-fail-under=70
+
+      - name: Enforce critical-path module coverage
+        run: |
+          python scripts/check_critical_coverage.py coverage.xml
+
+      - name: Require focused tests when critical modules change
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin "$BASE_REF" --depth=1
+          changed_files=$(git diff --name-only "origin/$BASE_REF...HEAD")
+
+          critical_changed=$(printf "%s\n" "$changed_files" | rg "^(src/utils\.py|src/agents\.py|main\.py)$" || true)
+          if [ -z "$critical_changed" ]; then
+            echo "No critical modules changed; focused test-file check skipped."
+            exit 0
+          fi
+
+          printf "Critical modules changed:\n%s\n" "$critical_changed"
+
+          focused_tests_changed=$(printf "%s\n" "$changed_files" | rg "^tests/(test_agents\.py|test_main_.*\.py|test_utils_.*\.py)$" || true)
+          if [ -z "$focused_tests_changed" ]; then
+            echo "ERROR: Critical module changes require focused test updates."
+            echo "Please include or adjust at least one targeted test file:"
+            echo "  - tests/test_agents.py"
+            echo "  - tests/test_main_*.py"
+            echo "  - tests/test_utils_*.py"
+            exit 1
+          fi
+
+          printf "Focused test files updated:\n%s\n" "$focused_tests_changed"
 
       - name: Upload coverage artifacts
         if: always()
