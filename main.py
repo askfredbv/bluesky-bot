@@ -174,9 +174,6 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
 
     SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
 
-    # Only include Bluesky in the task list if we have an authenticated client.
-    # If both the preflight login and the fallback login above failed, bsky_client
-    # is None — passing None to post_to_bluesky would crash on every retry.
     broadcast_tasks = []
     if bsky_client is not None:
         broadcast_tasks.append(post_to_bluesky(
@@ -202,7 +199,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     if bsky_client is not None:
         bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else content_prep.bsky_client
     else:
-        bsky_broadcast_client = content_prep.bsky_client  # None — downstream stage guards on this
+        bsky_broadcast_client = content_prep.bsky_client
     return BroadcastPayload(
         mode=mode,
         seen_data=content_prep.seen_data,
