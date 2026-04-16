@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.9.0)
+# Bluesky & Mastodon Daily Poster (v4.9.1)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
