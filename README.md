@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.8.1)
+# Bluesky & Mastodon Daily Poster (v4.8.2)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -40,7 +40,7 @@ To improve observability of the external trigger path, `.github/workflows/schedu
 
 **Post formatting**: each post in a thread is generated within the 300-character Bluesky limit. If a post still overflows (rare), it is split at a word boundary — never mid-word.
 
-**Reliability**: concurrent platform delivery with `asyncio.gather`; if Mastodon fails, Bluesky still posts. Exponential backoff on API calls. State (`seen_articles`, `replied_to`) is stored in a private GitHub Gist and survives across runs — local file fallback kicks in if the Gist is unreachable. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures (quota, unavailability) automatically advance to the next model. One Bluesky session per run — the preflight login is reused for posting.
+**Reliability**: concurrent platform delivery with `asyncio.gather`; if one platform fails the other still posts. Exponential backoff on API calls. State (`seen_articles`, `replied_to`) is stored in a private GitHub Gist and survives across runs — local file fallback kicks in if the Gist is unreachable. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures advance to the next model automatically. One Bluesky session per run — the preflight login is reused for posting; if both the preflight and fallback logins fail (e.g. a transient timeout), Bluesky is skipped for that run rather than crashing.
 
 ---
 
