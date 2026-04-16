@@ -1,0 +1,63 @@
+name: Schedule Health Monitor
+
+on:
+  schedule:
+    # Daily check after the second expected external dispatch window.
+    - cron: '45 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  verify-daily-dispatches:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      EXPECTED_RUNS: '2'
+      WINDOW_HOURS: '24'
+      TARGET_WORKFLOW_FILE: '.github/workflows/daily_post.yml'
+
+    steps:
+      - name: Count recent daily_post dispatch runs
+        id: count-runs
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const expectedRuns = Number(process.env.EXPECTED_RUNS || '2');
+            const windowHours = Number(process.env.WINDOW_HOURS || '24');
+            const workflowFile = process.env.TARGET_WORKFLOW_FILE;
+
+            const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: workflowFile,
+              event: 'workflow_dispatch',
+              per_page: 100,
+            });
+
+            const recentRuns = runs.filter((run) => new Date(run.created_at) >= windowStart);
+            const runCount = recentRuns.length;
+
+            core.info(`Workflow: ${workflowFile}`);
+            core.info(`Window start (UTC): ${windowStart.toISOString()}`);
+            core.info(`Recent workflow_dispatch runs: ${runCount}`);
+
+            core.setOutput('expected', String(expectedRuns));
+            core.setOutput('window_start', windowStart.toISOString());
+            core.setOutput('count', String(runCount));
+
+      - name: Report schedule health
+        run: |
+          echo "daily_post workflow_dispatch runs in the last ${WINDOW_HOURS}h: ${{ steps.count-runs.outputs.count }}"
+          echo "expected minimum: ${{ steps.count-runs.outputs.expected }}"
+          echo "window start (UTC): ${{ steps.count-runs.outputs.window_start }}"
+
+      - name: Fail when dispatch count is below expectation
+        if: ${{ fromJSON(steps.count-runs.outputs.count) < fromJSON(steps.count-runs.outputs.expected) }}
+        run: |
+          echo "Expected at least ${{ steps.count-runs.outputs.expected }} workflow_dispatch runs in the last ${WINDOW_HOURS}h, but found ${{ steps.count-runs.outputs.count }}."
+          exit 1

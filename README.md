@@ -26,6 +26,14 @@ cron-job.org → GitHub Actions (workflow_dispatch)
   → check and reply to mentions            (src/agents.py)
 ```
 
+### Schedule reliability monitor
+
+To improve observability of the external trigger path, `.github/workflows/schedule-health.yml` runs daily (and can also be run manually) and checks whether `.github/workflows/daily_post.yml` received the expected number of `workflow_dispatch` runs in the previous 24 hours.
+
+- Expected dispatches: **2 per 24h window** (matching the two cron-job.org triggers)
+- Scope: **read-only operational check** (no posting, no content generation)
+- Failure mode: the monitor workflow fails if dispatch count is below expectation so maintainers can quickly spot missed trigger windows in Actions history.
+
 **Content scoring** uses six factors: source tier, product-launch signals, technical depth keywords, time decay (0.5 pts/hour), a topic diversity penalty to avoid repetition, and a Consensus Synergy bonus (+1.5 per additional feed) for stories covered by multiple independent sources. arXiv papers get priority injection if they don't survive the scoring on their own.
 
 **Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones. The system prompts in `src/config.py` include verbatim examples from his writing as style anchors for the model.
@@ -64,6 +72,18 @@ Create a `.env` file from `.env.example` for local credentials.
 ```bash
 pytest
 ```
+
+### Coverage policy
+
+CI keeps a **70% global coverage floor** so broad refactors and non-critical integrations can evolve without making the suite brittle.
+
+For high-risk paths that directly control ranking/generation and post/reply orchestration, CI also enforces **stricter module-level coverage gates (80%)** for:
+
+- `src/utils.py`
+- `src/agents.py`
+- `main.py` (posting/reply pipeline stages)
+
+On pull requests, if any of those critical modules are changed, at least one focused test file must also be updated (for example `tests/test_utils*`, `tests/test_agents*`, or `tests/test_main*`). This keeps critical behavior protected as implementation details change.
 
 ### Dependency management
 
@@ -120,8 +140,8 @@ The following can also be overridden via environment variables without touching 
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
 ├── tests/                     # pytest suite (76 tests)
 ├── .github/
-│   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 09:00 and 15:30 UTC
-│   │                                   # cron-job.org schedule intentionally mirrors Curator/Mentor content mode timestamps to prevent drift.
+│   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
+│   ├── workflows/schedule-health.yml # Read-only daily monitor for missed external dispatches
 │   ├── workflows/lockfile-check.yml  # Fails if requirements.txt is stale
 │   └── dependabot.yml                # Dependency vulnerability scanning
 ├── pytest.ini
