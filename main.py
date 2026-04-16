@@ -173,23 +173,36 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             bsky_client = None
 
     SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
-    broadcast_tasks = [
-        post_to_bluesky(
+
+    # Only include Bluesky in the task list if we have an authenticated client.
+    # If both the preflight login and the fallback login above failed, bsky_client
+    # is None — passing None to post_to_bluesky would crash on every retry.
+    broadcast_tasks = []
+    if bsky_client is not None:
+        broadcast_tasks.append(post_to_bluesky(
             bsky_client, content_list, link_meta,
             thread_pause_profile=thread_pause_profile
-        ),
-        post_to_mastodon(
-            creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
-            thread_pause_profile=thread_pause_profile
+        ))
+    else:
+        SafeLogger.error(
+            "bluesky_broadcast_skipped",
+            "Bluesky broadcast skipped — no authenticated client available",
+            platform="bluesky",
         )
-    ]
+    broadcast_tasks.append(post_to_mastodon(
+        creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
+        thread_pause_profile=thread_pause_profile
+    ))
 
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     for r in results:
         if isinstance(r, Exception):
             SafeLogger.error("broadcast_task_failed", "Broadcast task failed", exception=r, platform="multi")
 
-    bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else content_prep.bsky_client
+    if bsky_client is not None:
+        bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else content_prep.bsky_client
+    else:
+        bsky_broadcast_client = content_prep.bsky_client  # None — downstream stage guards on this
     return BroadcastPayload(
         mode=mode,
         seen_data=content_prep.seen_data,

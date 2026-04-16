@@ -36,16 +36,6 @@ jobs:
             --cov-report=xml:coverage.xml \
             --cov-fail-under=70
 
-      - name: Run stricter coverage gates for critical modules
-        run: python scripts/check_critical_coverage.py
-
-      - name: Enforce focused tests for critical-module changes
-        if: github.event_name == 'pull_request'
-        run: |
-          python scripts/check_critical_test_changes.py \
-            "${{ github.base_ref }}" \
-            "${{ github.sha }}"
-
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v7

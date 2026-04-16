@@ -33,7 +33,7 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
 
     async def fake_post_to_bluesky(*args, **kwargs):
         calls["bluesky"] += 1
-        raise RuntimeError("bsky broadcast fails")
+        return "bsky-client"
 
     async def fake_post_to_mastodon(*args, **kwargs):
         calls["mastodon"] += 1
@@ -65,7 +65,8 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
     await main.main()
 
     assert calls["recent_posts"] == []
-    assert calls["bluesky"] == 1
+    # Both logins fail (FailingAsyncClient) → Bluesky is skipped, not attempted
+    assert calls["bluesky"] == 0
     assert calls["mastodon"] == 1
 
 
