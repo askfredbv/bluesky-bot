@@ -15,9 +15,12 @@ from src.config import (
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
-    get_link_metadata,
+    get_link_metadata, prune_pioneer_recent,
 )
-from src.agents import generate_content, handle_interactions, generate_post_image, filter_available_models
+from src.agents import (
+    generate_content, handle_interactions, generate_post_image,
+    filter_available_models, select_pioneer_topic,
+)
 from src.broadcasters import post_to_bluesky, post_to_mastodon
 from src.logger import SafeLogger
 from src.settings import Settings, SettingsValidationError
@@ -40,6 +43,7 @@ class ContentPrepPayload:
     link_meta: Optional[Dict[str, Any]]
     bsky_client: Any
     recent_posts: List[str]
+    pioneer_entry: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,7 @@ class BroadcastPayload:
     chosen_topic: str
     thread_pause_profile: str
     bsky_broadcast_client: Any
+    pioneer_entry: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,7 @@ class AutomationPayload:
     mode: str
     seen_data: Dict[str, List[str]]
     news_items: List[Dict[str, Any]]
+    pioneer_entry: Optional[Dict[str, Any]] = None
 
 
 async def get_recent_posts(client, handle: str) -> List[str]:
@@ -135,6 +141,11 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
             fallback_recent_posts_count=0,
         )
 
+    # Pioneer dimension only attaches to Mentor/Strategist (afternoon).
+    pioneer_entry = None
+    if mode != "curator":
+        pioneer_entry = select_pioneer_topic(seen_data)
+
     return ContentPrepPayload(
         mode=mode,
         seen_data=seen_data,
@@ -142,6 +153,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         link_meta=link_meta,
         bsky_client=bsky_client,
         recent_posts=recent_posts,
+        pioneer_entry=pioneer_entry,
     )
 
 
@@ -155,6 +167,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         mode=mode,
         news_items=news_items,
         model_priority=active_models,
+        pioneer_entry=content_prep.pioneer_entry,
     )
 
     # Generate image for non-Curator modes at configured probability.
@@ -222,6 +235,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         chosen_topic=chosen_topic,
         thread_pause_profile=thread_pause_profile,
         bsky_broadcast_client=bsky_broadcast_client,
+        pioneer_entry=content_prep.pioneer_entry,
     )
 
 
@@ -237,6 +251,7 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
         mode=broadcast.mode,
         seen_data=broadcast.seen_data,
         news_items=broadcast.news_items,
+        pioneer_entry=broadcast.pioneer_entry,
     )
 
 
@@ -244,6 +259,9 @@ async def persistence_stage(automation: AutomationPayload) -> None:
     mode = automation.mode
     news_items = automation.news_items
     seen_data = automation.seen_data
+    pioneer_entry = automation.pioneer_entry
+
+    dirty = False
     if mode == "curator" and news_items:
         seen_data["links"] = (seen_data["links"] + [i['link'] for i in news_items])[-200:]
 
@@ -251,14 +269,26 @@ async def persistence_stage(automation: AutomationPayload) -> None:
         topic_cat = news_items[0].get('detected_topic', 'General')
         if topic_cat != 'General':
             seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
+        dirty = True
 
+    # Pioneer cooldown bookkeeping — only when a pioneer post actually fired
+    if pioneer_entry:
+        existing = prune_pioneer_recent(seen_data.get("pioneer_recent", []) or [])
+        existing.append({
+            "id": pioneer_entry["entry"]["id"],
+            "posted_at": datetime.now(timezone.utc).isoformat(),
+        })
+        seen_data["pioneer_recent"] = existing
+        dirty = True
+
+    if dirty:
         update_seen_articles(lambda _: seen_data)
 
 
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.14.0 ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.15.0 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials

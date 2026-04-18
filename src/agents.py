@@ -16,7 +16,11 @@ from src.config import (
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
     LANGUAGE_OPTIONS, IMAGEN_MODEL,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS,
+    PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
+    PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
+    PIONEER_PROMPT_DATED, PIONEER_PROMPT_UNDATED,
 )
+from src.utils import prune_pioneer_recent
 
 # v4.14 voice rules
 MAX_HASHTAGS_PER_POST: int = 2
@@ -176,6 +180,72 @@ def _apply_voice_trim(content_list: List[str]) -> List[str]:
             )
         trimmed.append(post)
     return trimmed
+
+# ── Pioneer dimension (v4.15) ────────────────────────────────────────────────
+
+def select_pioneer_topic(
+    seen_data: Optional[Dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+    rng: Optional[random.Random] = None,
+) -> Optional[Dict[str, Any]]:
+    """Pick a pioneer entry per the dimension's selection logic.
+
+    Returns:
+        ``{"entry": <pioneer dict>, "pool": "dated" | "undated"}`` or ``None``
+        if no pioneer post should fire this run.
+
+    Selection order (Mentor/Strategist only — Curator never reaches here):
+    1. **Date match**: today's (month, day) matches a dated entry not in cooldown
+    2. **Undated fallback**: probability roll succeeds AND an undated entry
+       outside cooldown exists
+    3. Otherwise None — caller falls back to the normal SECONDARY_TOPICS path
+    """
+    if not PIONEER_DIMENSION_ENABLED:
+        return None
+    now = now or datetime.now(timezone.utc)
+    rng = rng or random
+
+    # Build the cooldown set from prune_pioneer_recent (drops stale entries)
+    raw_recent = (seen_data or {}).get("pioneer_recent", []) or []
+    fresh_recent = prune_pioneer_recent(raw_recent)
+    cooldown_ids = {e["id"] for e in fresh_recent}
+
+    # 1. Date match
+    for entry in PIONEER_EVENTS_DATED:
+        if entry.get("month") == now.month and entry.get("day") == now.day:
+            if entry["id"] not in cooldown_ids:
+                return {"entry": entry, "pool": "dated"}
+
+    # 2. Probability gate for undated
+    if rng.random() >= PIONEER_FALLBACK_PROBABILITY:
+        return None
+
+    available = [e for e in PIONEER_FACTS_UNDATED if e["id"] not in cooldown_ids]
+    if not available:
+        return None
+    return {"entry": rng.choice(available), "pool": "undated"}
+
+
+def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
+    """Render the pioneer prompt template using the chosen entry."""
+    entry = pioneer["entry"]
+    pool = pioneer["pool"]
+    link = entry.get("link")
+    link_line = f"Link to include in the post: {link}\n" if link else ""
+    if pool == "dated":
+        return PIONEER_PROMPT_DATED.format(
+            title=entry["title"],
+            year=entry["year"],
+            detail=entry["detail"],
+            link_line=link_line,
+        )
+    return PIONEER_PROMPT_UNDATED.format(
+        title=entry["title"],
+        detail=entry["detail"],
+        link_line=link_line,
+    )
+
 
 def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
     """Validate model output is a thread-like list of strings within configured bounds."""
@@ -419,20 +489,51 @@ async def filter_available_models(api_key: str, priority: List[str]) -> List[str
         return priority
 
 
-async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None, model_priority: Optional[List[str]] = None) -> Tuple[List[str], str]:
-    """Generates content asynchronously with Rescue logic and Temporal Context."""
+async def generate_content(
+    api_key: str,
+    recent_posts: List[str],
+    mode: str = "mentor",
+    news_items: Optional[List[Dict[str, Any]]] = None,
+    model_priority: Optional[List[str]] = None,
+    pioneer_entry: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[str], str]:
+    """Generates content asynchronously with Rescue logic and Temporal Context.
+
+    ``pioneer_entry`` (if supplied) is the result of ``select_pioneer_topic``
+    and overrides the normal Mentor/Strategist topic pick with a pioneer
+    fact post. Curator mode never receives a pioneer entry.
+    """
     temporal = get_temporal_context()
     variant_name, variant_instruction = _select_persona_variant(mode)
     language = random.choice(LANGUAGE_OPTIONS)
     SafeLogger.info("language_selected", "Thread language selected", language=language, mode=mode)
     style_fingerprints = _extract_style_fingerprints(recent_posts)
     style_constraints = _build_avoidance_constraints(style_fingerprints)
-    
+
     if mode == "curator" and not news_items:
         SafeLogger.warn("curator_no_items", "Curator mode called with no news items; falling back to mentor", mode=mode)
         mode = "mentor"
 
-    if mode == "curator" and news_items:
+    # Pioneer dimension takes precedence for non-Curator modes when an entry
+    # was selected upstream. Uses the Mentor system instructions as the base
+    # voice anchor — the pioneer-specific shaping is in the user task.
+    if mode != "curator" and pioneer_entry:
+        entry = pioneer_entry["entry"]
+        topic = entry["title"]
+        instr = (
+            f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
+            f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
+            f"LANGUAGE: Write this post in {language}. Do not mix languages."
+        )
+        task = _build_pioneer_task(pioneer_entry)
+        SafeLogger.info(
+            "pioneer_post_selected",
+            "Pioneer dimension fired",
+            pool=pioneer_entry["pool"],
+            entry_id=entry["id"],
+            category=entry.get("category"),
+        )
+    elif mode == "curator" and news_items:
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']

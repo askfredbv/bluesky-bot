@@ -193,6 +193,183 @@ SECONDARY_TOPICS = [
     "curiosity and lifelong learning",
 ]
 
+# ── Pioneer / "On this day" dimension (v4.15) ────────────────────────────────
+# A curated path for obscure-but-true tech-history facts. Date-anchored entries
+# fire on their anniversary; the rest fire probabilistically. Mentor/Strategist
+# only — Curator (news mode) is unaffected.
+
+PIONEER_DIMENSION_ENABLED: bool = True
+PIONEER_FALLBACK_PROBABILITY: float = 0.20  # ~3 posts/week on the afternoon run
+PIONEER_COOLDOWN_DAYS: int = 30             # don't repeat the same fact within this window
+
+PIONEER_EVENTS_DATED: List[Dict[str, object]] = [
+    {"id": "utf8-placemat", "category": "pioneer",
+     "month": 9, "day": 2, "year": 1992,
+     "title": "UTF-8 designed on a New Jersey diner placemat",
+     "detail": "Ken Thompson and Rob Pike sketched the encoding over dinner. The whole world's text is now built on what they wrote on a napkin."},
+    {"id": "first-com-domain", "category": "artifact",
+     "month": 3, "day": 15, "year": 1985,
+     "title": "First .com domain ever registered",
+     "detail": "symbolics.com. A Lisp Machine company in Cambridge, Mass. The domain still resolves — bought by an investor who keeps it as a museum."},
+    {"id": "first-banner-ad", "category": "artifact",
+     "month": 10, "day": 27, "year": 1994,
+     "title": "First banner ad in history",
+     "detail": "AT&T on HotWired: 'Have you ever clicked your mouse right HERE?' Click-through rate: 44%. The web has been chasing that number ever since."},
+    {"id": "carmack-quake-source", "category": "project",
+     "month": 12, "day": 21, "year": 1999,
+     "title": "Carmack open-sourced the Quake engine",
+     "detail": "Three years after release, the full source went up on id's FTP. Spawned a generation of engines, mods, and the entire competitive shooter scene.",
+     "link": "https://github.com/id-Software/Quake"},
+]
+
+PIONEER_FACTS_UNDATED: List[Dict[str, object]] = [
+    # ── Pioneers (11) ────────────────────────────────────────────────────────
+    {"id": "sparck-jones-idf", "category": "pioneer",
+     "title": "Karen Spärck Jones invented IDF in 1972",
+     "detail": "Inverse Document Frequency. Every search engine on Earth still uses her formula. She was largely uncredited until the 2000s and resisted being called a pioneer."},
+    {"id": "grep-etymology", "category": "pioneer",
+     "title": "grep is named after an ed command",
+     "detail": "g/re/p — global, regex, print. Ken Thompson extracted that one ed command into a standalone tool overnight after Doug McIlroy asked for it."},
+    {"id": "perlman-spanning-tree", "category": "pioneer",
+     "title": "Radia Perlman wrote spanning tree as a poem",
+     "detail": "The original 1985 spec includes 'Algorhyme' — eight stanzas explaining the algorithm in verse. Every ethernet network on the planet still runs her protocol."},
+    {"id": "alan-kay-messaging", "category": "pioneer",
+     "title": "Alan Kay regretted the term 'object-oriented'",
+     "detail": "He coined it but later said he meant messaging, not classes. 'I'm sorry I long ago coined the term objects,' he wrote, 'because it gets people to focus on the lesser idea.'"},
+    {"id": "liskov-adt", "category": "pioneer",
+     "title": "Barbara Liskov invented abstract data types",
+     "detail": "Most devs know LSP — the substitution principle. Few know she also designed CLU in 1974, the language that introduced ADTs, iterators, and exception handling. Almost everything modern OO inherits from CLU."},
+    {"id": "computer-was-a-job", "category": "pioneer",
+     "title": "'Computer' used to be a job title",
+     "detail": "Mostly held by women. They computed ballistic tables, astronomical positions, census results — by hand. The machines took the name from the people they replaced."},
+    {"id": "eniac-six-women", "category": "pioneer",
+     "title": "ENIAC was programmed by six uncredited women",
+     "detail": "Kathleen Antonelli, Jean Bartik, Frances Spence, Marlyn Meltzer, Ruth Teitelbaum, Frances Holberton. They were called 'subnotables' in the 1946 press photos. Their names weren't restored until the 1980s."},
+    {"id": "agc-rope-memory", "category": "pioneer",
+     "title": "Apollo's memory was hand-woven by women",
+     "detail": "Core rope memory. Each bit was a wire physically threaded through (or around) a tiny ferrite core. Raytheon called the workers LOL ROM — Little Old Lady ROM. One mistake meant rewinding the entire program."},
+    {"id": "guido-monty-python", "category": "pioneer",
+     "title": "Python is named after Monty Python",
+     "detail": "Not the snake. Guido was reading Monty Python scripts the week he started. The community kept the in-jokes — 'spam', 'eggs', 'parrot', 'shrubbery' all show up in tutorials."},
+    {"id": "dijkstra-handwritten", "category": "pioneer",
+     "title": "Dijkstra wrote 1300+ papers by hand",
+     "detail": "Numbered EWD1 through EWD1318. He distributed them by photocopy, never used email or word processors. The full archive is online at UT Austin."},
+    {"id": "zimmermann-pgp-book", "category": "pioneer",
+     "title": "PGP source code was published as a book",
+     "detail": "Phil Zimmermann printed the full source in a hardback so it could be exported under First Amendment protection. US crypto export laws applied to software, not books. MIT Press published it."},
+
+    # ── Forgotten artifacts (7) ──────────────────────────────────────────────
+    {"id": "trojan-coffee-pot", "category": "artifact",
+     "title": "First webcam was a coffee pot",
+     "detail": "Cambridge Computer Lab, 1991. Pointed at the Trojan Room coffee pot so researchers wouldn't trek to an empty one. Ran for 10 years. The pot is in a German museum."},
+    {"id": "mother-of-all-demos", "category": "artifact",
+     "title": "1968 Mother of All Demos",
+     "detail": "Doug Engelbart, in 90 minutes, demoed the mouse, hypertext, video conferencing, real-time collaborative editing, and dynamic file linking. Every modern UI is downstream of this one demo."},
+    {"id": "first-online-purchase", "category": "artifact",
+     "title": "First online purchase was a Sting CD",
+     "detail": "August 1994. NetMarket. Sting's Ten Summoner's Tales. The transaction used PGP for the credit card. The buyer just wanted to test that it worked."},
+    {"id": "altavista-babelfish", "category": "artifact",
+     "title": "AltaVista's Babelfish",
+     "detail": "Launched 1997. Free machine translation between 13 languages, named after the Hitchhiker's Guide creature. Predated Google Translate by a decade. Yahoo killed it in 2012."},
+    {"id": "vt100-still-here", "category": "artifact",
+     "title": "Your terminal still speaks VT100",
+     "detail": "Released 1978 by DEC. The escape sequences for cursor movement, colour, clearing the screen — all still in use. Every modern terminal emulator is a VT100 emulator with extras."},
+    {"id": "yahoo-was-a-list", "category": "artifact",
+     "title": "Yahoo started as a hand-curated list",
+     "detail": "Two Stanford grad students, 1994, manually adding new sites to a hierarchy of folders. Originally called 'Jerry and David's Guide to the World Wide Web'. The directory survived until 2014."},
+    {"id": "plan9-from-bell", "category": "artifact",
+     "title": "Plan 9 from Bell Labs",
+     "detail": "Unix's intended successor. Everything is a file — even network connections, even the window system. Beautiful, never caught on. Named after the Ed Wood film, which the authors loved unironically."},
+
+    # ── Wonderful weird projects (5) ─────────────────────────────────────────
+    {"id": "paris-paper-plane", "category": "project",
+     "title": "The Register flew a paper plane to space",
+     "detail": "PARIS — Paper Aircraft Released Into Space. 2010, weather balloon, 27km altitude. Multi-part live build series. Plane recovered intact. Followed by LOHAN, a paper-plane-launched rocket.",
+     "link": "https://www.theregister.com/Tag/Paris/Paper%20Aircraft%20Released%20Into%20Space/"},
+    {"id": "story-of-mel", "category": "project",
+     "title": "The Story of Mel",
+     "detail": "1983 Usenet post by Ed Nather about a programmer who wrote self-modifying code on a drum-memory computer because timing the drum rotation was faster than using subroutines. The original real-programmer lore.",
+     "link": "https://www.catb.org/jargon/html/story-of-mel.html"},
+    {"id": "curl-one-person", "category": "project",
+     "title": "curl has had one maintainer for 25 years",
+     "detail": "Daniel Stenberg started it in 1996. It runs in cars, satellites, every operating system. He still does most reviews himself. He keeps a list of every device he knows curl ships in — last count: more than 20 billion installs."},
+    {"id": "stanford-bunny", "category": "project",
+     "title": "The Stanford Bunny",
+     "detail": "A scanned ceramic rabbit from 1994. Used as a benchmark for 3D rendering for 30+ years. If you've seen a teapot, a bunny, or a dragon in a graphics paper — they're the standard test models, dating back to actual physical objects on someone's desk."},
+    {"id": "internet-toaster", "category": "project",
+     "title": "First IoT device was a toaster",
+     "detail": "John Romkey, 1990. Connected to the internet via TCP/IP, controlled with SNMP. Bread had to be loaded by hand. Demoed at INTEROP. The next year they added a robotic arm to load the bread."},
+
+    # ── Forgotten heroes (12) ────────────────────────────────────────────────
+    {"id": "bechtolsheim-google-cheque", "category": "hero",
+     "title": "Bechtolsheim wrote a cheque to a company that didn't exist",
+     "detail": "September 1998. $100,000 to 'Google Inc.' before incorporation. Page and Brin had to register the company to deposit it. Bechtolsheim had co-founded Sun a decade earlier."},
+    {"id": "hejlsberg-four-languages", "category": "hero",
+     "title": "Anders Hejlsberg shaped four eras of programming",
+     "detail": "Wrote Turbo Pascal at 23. Then Delphi. Then C#. Then TypeScript. One person, four languages, four decades. Still ships code at Microsoft."},
+    {"id": "moolenaar-vim-uganda", "category": "hero",
+     "title": "Bram Moolenaar maintained vim alone for 30 years",
+     "detail": "From 1991 until his death in 2023. Vim is 'charityware' — donations went to ICCF Uganda, supporting children orphaned by HIV. Half the world's developers used his editor; almost none knew about the orphans."},
+    {"id": "bellard-output", "category": "hero",
+     "title": "Fabrice Bellard's output is implausible",
+     "detail": "Wrote QEMU. Wrote FFmpeg. Wrote TinyCC. Wrote a JavaScript engine. Computed pi to a then-record 2.7 trillion digits on a single desktop. Released LTE base station software. One person."},
+    {"id": "gosling-not-just-java", "category": "hero",
+     "title": "James Gosling wrote more than Java",
+     "detail": "Also: the original Unix Emacs (Gosling Emacs, 1981), NeWS (a window system that lost to X11 but was technically superior), and the satellite data system at NASA Ames. Java is the smallest interesting thing on his CV."},
+    {"id": "venema-postfix", "category": "hero",
+     "title": "Most of the world's email goes through Wietse Venema's code",
+     "detail": "Postfix. Written at IBM Research, released 1998. Designed because sendmail was a security nightmare. Quiet, secure, ubiquitous. Venema also wrote TCP Wrapper and SATAN, the first real network security scanner."},
+    {"id": "allman-sendmail-student", "category": "hero",
+     "title": "Eric Allman wrote sendmail as a student",
+     "detail": "Berkeley, late 1970s. He needed to bridge ARPANET, UUCP, and the campus network. Sendmail handled most of the world's email for 25 years. He wasn't paid for it; he had a thesis to finish."},
+    {"id": "wirth-law", "category": "hero",
+     "title": "Niklaus Wirth and Wirth's Law",
+     "detail": "Designed Pascal, Modula, Oberon — and the workstation that ran them. Wirth's Law: 'Software gets slower faster than hardware gets faster.' He observed it in 1995. It's only become more true."},
+    {"id": "lynn-conway-vlsi", "category": "hero",
+     "title": "Lynn Conway rewrote how chips are designed",
+     "detail": "Co-authored the 1980 textbook that made VLSI design teachable. Every modern chip uses her structured methodology. Earlier in her career IBM fired her for transitioning; she rebuilt from scratch at Xerox PARC."},
+    {"id": "vixie-bind", "category": "hero",
+     "title": "Paul Vixie ran most of the internet's DNS",
+     "detail": "Wrote BIND — the DNS server that ~70% of authoritative name servers still use. Founded the first commercial anti-spam blocklist. Most of the internet's plumbing has his fingerprints on it."},
+    {"id": "postel-rfcs", "category": "hero",
+     "title": "Jon Postel was the RFC editor for 30 years",
+     "detail": "Every internet protocol document from 1969 to 1998 went through him. He coined the robustness principle: 'Be conservative in what you do, be liberal in what you accept from others.' Quietly held the standards process together until his death at 55."},
+    {"id": "theo-openssh", "category": "hero",
+     "title": "You use Theo de Raadt's code every day",
+     "detail": "OpenSSH — every server login, every git push over SSH, every CI pipeline pulling from a private repo. He runs OpenBSD with the same uncompromising rigour. Funded by an annual donation drive that keeps barely making it."},
+]
+
+# Prompt templates filled in at runtime by agents.select_pioneer_topic + generate_content
+PIONEER_PROMPT_DATED: str = (
+    "You're sharing an 'on this day' tech-history note. Today is the anniversary of:\n"
+    "  {title} ({year})\n\n"
+    "DETAIL TO USE (this is the post — your job is to phrase it, not to add to it):\n"
+    "{detail}\n"
+    "{link_line}\n"
+    "WRITE THE POST:\n"
+    "- ONE single post. Open with 'On this day in {year},' or a quieter variant ('{year}.', 'In {year},').\n"
+    "- The detail IS the post. No moral, no 'and that's why we should…', no link to the present.\n"
+    "- All voice rules from the style guide apply: first-person where natural, no hype words, no reader-bait\n"
+    "  questions, default zero hashtags (max 1 if it's a clear topic anchor).\n"
+    "- Length: under 300 chars. The link, if any, eats characters — count them.\n"
+    "- Output: a JSON array with exactly ONE string."
+)
+
+PIONEER_PROMPT_UNDATED: str = (
+    "You're sharing a tech-history note that fits the 'huh, I didn't know that / I'd forgotten that' bar.\n\n"
+    "NOTE TO USE (this is the post — your job is to phrase it, not to add to it):\n"
+    "Title: {title}\n"
+    "Detail: {detail}\n"
+    "{link_line}\n"
+    "WRITE THE POST:\n"
+    "- ONE single post. Lead with the detail directly. NEVER use 'Did you know', 'Fun fact', 'TIL', or 'Today I learned' as openers.\n"
+    "- The detail IS the post. No moral, no link to the present, no 'this reminds us that…'.\n"
+    "- All voice rules from the style guide apply: first-person where natural, no hype words, no reader-bait\n"
+    "  questions, default zero hashtags (max 1 if it's a clear topic anchor).\n"
+    "- Length: under 300 chars. The link, if any, eats characters — count them.\n"
+    "- Output: a JSON array with exactly ONE string."
+)
+
 # v4.14 voice rules — banned patterns enforced via prompt + defensive trim in agents.py
 BANNED_HYPE_WORDS: List[str] = [
     "amazing", "fantastic", "incredible", "huge", "massive",

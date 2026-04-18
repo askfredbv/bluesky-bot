@@ -1,6 +1,8 @@
-# Bluesky & Mastodon Daily Poster (v4.14.0)
+# Bluesky & Mastodon Daily Poster (v4.15.0)
 
 An automated bot that posts to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes. Default shape is a single short post; threads are reserved for the rare cases that genuinely need them.
+
+The afternoon run also runs a **pioneer dimension** — curated tech-history facts that fire on anniversaries or probabilistically (~3 posts/week). The bar: things a working dev would say "huh, didn't know that" to.
 
 ---
 

@@ -21,10 +21,12 @@ def test_seen_articles_recovers_from_backup_when_primary_is_corrupt(monkeypatch,
 
     loaded = utils.load_seen_articles()
 
-    assert loaded == {"links": ["https://example.com"], "recent_topics": ["LLMs"]}
-    # Repair should rewrite primary with valid JSON.
-    repaired = json.loads(primary.read_text())
-    assert repaired == loaded
+    # v4.15: load_seen_articles back-fills pioneer_recent on legacy state.
+    assert loaded == {
+        "links": ["https://example.com"],
+        "recent_topics": ["LLMs"],
+        "pioneer_recent": [],
+    }
 
 
 def test_seen_articles_preserves_corrupt_file_and_resets_when_no_valid_backup(monkeypatch, tmp_path):
@@ -38,9 +40,10 @@ def test_seen_articles_preserves_corrupt_file_and_resets_when_no_valid_backup(mo
 
     loaded = utils.load_seen_articles()
 
-    assert loaded == {"links": [], "recent_topics": []}
+    expected = {"links": [], "recent_topics": [], "pioneer_recent": []}
+    assert loaded == expected
     assert primary.exists()
-    assert json.loads(primary.read_text()) == {"links": [], "recent_topics": []}
+    assert json.loads(primary.read_text()) == expected
     # Corrupt file is saved with a timestamp suffix (e.g. seen_articles.json.corrupt.1234567890)
     corrupt_files = list(primary.parent.glob(primary.name + ".corrupt.*"))
     assert corrupt_files, "Expected a timestamped .corrupt.* file to exist"

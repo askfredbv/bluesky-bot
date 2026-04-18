@@ -38,6 +38,7 @@ from src.config import (
     GENERIC_IMAGE_PATTERNS,
     MOMENTUM_PRODUCTS,
     MOMENTUM_PRODUCT_BONUS,
+    PIONEER_COOLDOWN_DAYS,
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -296,29 +297,58 @@ def _load_json_with_repair(
         return default_data
 
     if migrate_list_to_seen_shape and isinstance(data, list):
-        migrated = {"links": data, "recent_topics": []}
+        migrated = {"links": data, "recent_topics": [], "pioneer_recent": []}
         _atomic_write_json(file_path, migrated)
         return migrated  # type: ignore[return-value]
 
     return data
 
+
+def prune_pioneer_recent(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop pioneer_recent entries older than PIONEER_COOLDOWN_DAYS.
+
+    Tolerant of malformed entries (missing keys, unparseable dates) — they're
+    dropped silently. Idempotent.
+    """
+    if not entries:
+        return []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=PIONEER_COOLDOWN_DAYS)
+    kept = []
+    for entry in entries:
+        if not isinstance(entry, dict) or "id" not in entry or "posted_at" not in entry:
+            continue
+        try:
+            posted_at = datetime.fromisoformat(entry["posted_at"].replace("Z", "+00:00"))
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if posted_at >= cutoff:
+            kept.append(entry)
+    return kept
+
 def _file_lock(lock_path: Path):
     """Context manager for an advisory process lock."""
     return file_lock(lock_path)
 
+def _ensure_pioneer_field(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure pioneer_recent key exists. In-place add for old state shapes."""
+    if "pioneer_recent" not in data:
+        data["pioneer_recent"] = []
+    return data
+
+
 def load_seen_articles() -> Dict[str, Any]:
-    """Load seen state including links and recent topics."""
-    default = {"links": [], "recent_topics": []}
+    """Load seen state including links, recent topics, and pioneer cooldown."""
+    default = {"links": [], "recent_topics": [], "pioneer_recent": []}
     # 1. Try Gist
     gist_data = _load_gist_state("seen_articles.json")
     if isinstance(gist_data, dict) and "links" in gist_data and "recent_topics" in gist_data:
-        return gist_data
+        return _ensure_pioneer_field(gist_data)
     # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("seen_articles")
     if isinstance(remote_data, dict) and "links" in remote_data and "recent_topics" in remote_data:
-        return remote_data
+        return _ensure_pioneer_field(remote_data)
     if isinstance(remote_data, list):
-        migrated = {"links": remote_data, "recent_topics": []}
+        migrated = {"links": remote_data, "recent_topics": [], "pioneer_recent": []}
         _save_state_to_store("seen_articles", migrated)
         return migrated
     # 3. Local file fallback
@@ -328,7 +358,7 @@ def load_seen_articles() -> Dict[str, Any]:
         migrate_list_to_seen_shape=True
     )
     if isinstance(data, dict) and "links" in data and "recent_topics" in data:
-        return data
+        return _ensure_pioneer_field(data)
     SafeLogger.warn("seen_articles_format_repaired", "Unexpected seen_articles format detected; repairing to default shape")
     _atomic_write_json(SEEN_FILE, default)
     return default
