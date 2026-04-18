@@ -87,6 +87,33 @@ def test_consensus_synergy_three_feeds_adds_double_bonus():
     assert score_three == pytest.approx(score_one + 2 * CONSENSUS_SYNERGY_BONUS)
 
 
+def test_momentum_product_bonus():
+    """Items mentioning flagship 2026 products score MOMENTUM_PRODUCT_BONUS higher."""
+    from src.config import MOMENTUM_PRODUCT_BONUS
+    # Identical items from same source and age — only difference is product name in title
+    base = {'title': 'New AI Model Released', 'description': 'Details', 'link': 'https://techcrunch.com/1'}
+    flagship = {'title': 'claude 4 Released by Anthropic', 'description': 'Details', 'link': 'https://techcrunch.com/2'}
+    now = datetime.now(timezone.utc)
+
+    score_base = calculate_relevance_score(base, now, [])
+    score_flagship = calculate_relevance_score(flagship, now, [])
+
+    assert score_flagship == pytest.approx(score_base + MOMENTUM_PRODUCT_BONUS)
+
+
+def test_momentum_product_bonus_case_insensitive():
+    """Momentum matching is lowercase — title casing should not matter."""
+    from src.config import MOMENTUM_PRODUCT_BONUS
+    upper_case = {'title': 'GPT-5 Announced', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/1'}
+    no_match = {'title': 'New Model Announced', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/2'}
+    now = datetime.now(timezone.utc)
+
+    score_match = calculate_relevance_score(upper_case, now, [])
+    score_no_match = calculate_relevance_score(no_match, now, [])
+
+    assert score_match == pytest.approx(score_no_match + MOMENTUM_PRODUCT_BONUS)
+
+
 def test_fetch_news_merges_source_feeds_on_duplicate_link():
     """Items with the same link from different feeds should be merged into one item with both feeds listed."""
     from src import utils

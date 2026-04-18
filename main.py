@@ -155,10 +155,13 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         news_items=news_items,
     )
 
-    # Generate image for non-Curator modes at configured probability
+    # Generate image for non-Curator modes at configured probability.
+    # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
     image_bytes = None
     if mode != "curator" and random.random() < IMAGE_GENERATION_PROBABILITY:
-        image_bytes = await generate_post_image(creds.gemini_api_key, chosen_topic)
+        image_bytes = await generate_post_image(
+            creds.gemini_api_key, chosen_topic, thread_posts=content_list
+        )
 
     thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
     await apply_humanized_post_delay(settings)
@@ -253,7 +256,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.10.0 ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.11.0 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials

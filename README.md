@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.10.0)
+# Bluesky & Mastodon Daily Poster (v4.11.0)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -34,11 +34,11 @@ To improve observability of the external trigger path, `.github/workflows/schedu
 - Scope: **read-only operational check** (no posting, no content generation)
 - Failure mode: the monitor workflow fails if dispatch count is below expectation so maintainers can quickly spot missed trigger windows in Actions history.
 
-**Content scoring** uses six factors: source tier, product-launch signals, technical depth keywords, time decay (0.5 pts/hour), a topic diversity penalty to avoid repetition, and a Consensus Synergy bonus (+1.5 per additional feed) for stories covered by multiple independent sources. arXiv papers get priority injection if they don't survive the scoring on their own.
+**Content scoring** uses seven factors: source tier, product-launch signals, a **momentum product bonus** (+4.0) for flagship 2026 models (GPT-5, Claude 4, Llama 4, etc.), technical depth keywords, time decay (0.5 pts/hour), a topic diversity penalty to avoid repetition, and a Consensus Synergy bonus (+1.5 per additional feed) for stories covered by multiple independent sources. arXiv papers get priority injection if they don't survive the scoring on their own.
 
 **Language**: each thread is written entirely in English or Dutch, chosen at random (50/50) per run. The language directive is injected into the Gemini prompt and applies to all posts in the thread.
 
-**Images**: Mentor and Strategist threads have a 50% chance of attaching an AI-generated illustration via Imagen 3 (`imagen-3.0-generate-002`). Uses the same `GEMINI_API_KEY` — no extra secrets. Images are capped at 976 KB before upload (Bluesky's 1 MB hard limit). If generation fails, the post goes out without an image. Curator posts use a link card instead (RSS metadata) — image generation is never triggered for Curator mode.
+**Images**: Mentor and Strategist threads have a 50% chance of attaching an AI-generated illustration via Imagen 3 (`imagen-3.0-generate-002`). Uses the same `GEMINI_API_KEY` — no extra secrets. Images are capped at 976 KB before upload (Bluesky's 1 MB hard limit). Generation uses a two-step pipeline: Gemini first crafts a bespoke visual prompt from the finished thread content, then Imagen 3 generates the image from that prompt. Falls back to a static template if the prompt-crafting call fails. Curator posts use a link card instead (RSS metadata) — image generation is never triggered for Curator mode.
 
 **Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones. The system prompts in `src/config.py` include verbatim examples from his writing as style anchors for the model.
 
@@ -124,6 +124,8 @@ The main levers are all in `src/config.py`:
 - **`IMAGE_GENERATION_PROBABILITY`** — probability of generating an image for Mentor/Strategist runs (default `0.5`)
 - **`MENTION_SANITIZE_MAX_CHARS`** / **`FEED_SUMMARY_MAX_CHARS`** — character caps for mention input and RSS feed summaries (both default 500)
 - **`GENERIC_IMAGE_PATTERNS`** — substring list used to skip useless link-card thumbnails (org logos, default share images)
+- **`MOMENTUM_PRODUCTS`** / **`MOMENTUM_PRODUCT_BONUS`** — flagship 2026 model names that earn a +4.0 scoring bonus; edited quarterly
+- **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next. Gemma models automatically receive inlined prompts (Gemma rejects the `system_instruction` API parameter)
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed that covers the same story (default 1.5)
 - **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next
 
@@ -150,7 +152,7 @@ The following can also be overridden via environment variables without touching 
 │   ├── logger.py              # SafeLogger — strips credentials from output
 │   ├── settings.py            # Environment variable loading and validation
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
-├── tests/                     # pytest suite (102 tests)
+├── tests/                     # pytest suite (109 tests)
 ├── .github/
 │   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
 │   ├── workflows/schedule-health.yml # Read-only daily monitor for missed external dispatches

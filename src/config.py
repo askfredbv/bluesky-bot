@@ -73,6 +73,16 @@ GROUNDBREAKING_KEYWORDS: List[str] = ["sota", "benchmark", "breakthrough", "fron
 HIDDEN_GEM_SOURCES: List[str] = ["export.arxiv.org", "arxiv.org"]
 CONSENSUS_SYNERGY_BONUS: float = 1.5
 
+# Flagship 2026 AI products — these get a dedicated scoring bonus because
+# a post about gpt-5 or claude 4 is categorically more consequential than
+# a generic "new feature" story. Review and update quarterly.
+MOMENTUM_PRODUCTS: List[str] = [
+    "gpt-5", "gpt 5", "claude 4", "claude opus 4", "claude sonnet 4",
+    "llama 4", "gemini 3", "gemma 4", "o3", "o4",
+    "grok 3", "grok 4", "deepseek v4", "mistral large 3",
+]
+MOMENTUM_PRODUCT_BONUS: float = 4.0
+
 # Link-card thumbnails matching any of these substrings are skipped. Generic
 # org logos and default share images add visual clutter without conveying
 # information — better to let Bluesky render the link card without a thumb.

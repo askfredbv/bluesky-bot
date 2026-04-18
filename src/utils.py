@@ -36,6 +36,8 @@ from src.config import (
     RATE_LIMIT_BASE_WAIT_SECONDS,
     RATE_LIMIT_MAX_RETRIES,
     GENERIC_IMAGE_PATTERNS,
+    MOMENTUM_PRODUCTS,
+    MOMENTUM_PRODUCT_BONUS,
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -744,7 +746,10 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     
     # 2. Product Boost
     if any(kw in text for kw in PRODUCT_KEYWORDS): score += 5.0
-    
+
+    # 2b. Momentum Product Boost — flagship 2026 models score higher than generic product news
+    if any(p in text for p in MOMENTUM_PRODUCTS): score += MOMENTUM_PRODUCT_BONUS
+
     # 3. Groundbreaking Tech Boost
     if any(kw in text for kw in GROUNDBREAKING_KEYWORDS): score += 7.0
     

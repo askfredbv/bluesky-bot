@@ -1,6 +1,6 @@
 import pytest
 
-from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate, generate_post_image
+from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate, generate_post_image, _build_generate_kwargs
 from src import agents
 from src.config import REPLY_MAX_CHARS
 
@@ -31,8 +31,8 @@ async def test_generate_content_falls_back_when_model_always_fails(monkeypatch):
 async def test_generate_content_includes_style_memory_constraints(monkeypatch):
     captured = {"prompt": ""}
 
-    def _capture_prompt(_api_key, prompt, _model):
-        captured["prompt"] = prompt
+    def _capture_prompt(_api_key, system_instr, task, _model):
+        captured["prompt"] = f"{system_instr}\n\n{task}"
         return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
 
     monkeypatch.setattr("src.agents._sync_generate", _capture_prompt)
@@ -57,8 +57,8 @@ async def test_generate_content_includes_style_memory_constraints(monkeypatch):
 async def test_generate_content_includes_persona_variant(monkeypatch):
     captured = {"prompt": ""}
 
-    def _capture_prompt(_api_key, prompt, _model):
-        captured["prompt"] = prompt
+    def _capture_prompt(_api_key, system_instr, task, _model):
+        captured["prompt"] = f"{system_instr}\n\n{task}"
         return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
 
     monkeypatch.setattr("src.agents._sync_generate", _capture_prompt)
@@ -209,7 +209,7 @@ def test_sync_generate_reuses_cached_client(monkeypatch):
         text = "ok"
 
     class DummyModels:
-        def generate_content(self, model, contents):
+        def generate_content(self, model, contents=None, config=None):
             return DummyResponse()
 
     class DummyClient:
@@ -220,14 +220,14 @@ def test_sync_generate_reuses_cached_client(monkeypatch):
     monkeypatch.setattr("src.agents._CLIENT_CACHE", test_cache)
     monkeypatch.setattr("src.agents.genai.Client", DummyClient)
 
-    assert _sync_generate("fake-key", "prompt 1", "gemini-2.5-flash") == "ok"
-    assert _sync_generate("fake-key", "prompt 2", "gemini-2.5-flash") == "ok"
+    assert _sync_generate("fake-key", "system", "prompt 1", "gemini-2.5-flash") == "ok"
+    assert _sync_generate("fake-key", "system", "prompt 2", "gemini-2.5-flash") == "ok"
     assert call_count["count"] == 1
 
 
 def test_sync_generate_missing_key_raises_clear_error():
     with pytest.raises(ValueError, match="missing or empty"):
-        _sync_generate("", "prompt", "gemini-2.5-flash")
+        _sync_generate("", "system", "prompt", "gemini-2.5-flash")
 
 
 def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
@@ -239,7 +239,7 @@ def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
     monkeypatch.setattr("src.agents.genai.Client", _raise_client_error)
 
     with pytest.raises(ValueError, match="Failed to initialize Gemini client"):
-        _sync_generate("invalid-key", "prompt", "gemini-2.5-flash")
+        _sync_generate("invalid-key", "system", "prompt", "gemini-2.5-flash")
 
 
 @pytest.mark.asyncio
@@ -247,7 +247,7 @@ async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
     """An API-level exception on the first model should cause the next model to be tried."""
     models_tried = []
 
-    def _track_and_fail_first(api_key, prompt, model):
+    def _track_and_fail_first(api_key, system_instr, task, model):
         models_tried.append(model)
         if model == "gemini-2.5-flash":
             raise ConnectionError("quota exceeded")
@@ -274,7 +274,7 @@ async def test_model_failover_does_not_advance_on_json_error(monkeypatch):
     models_tried = []
     attempt_count = [0]
 
-    def _track_and_return_bad_json(api_key, prompt, model):
+    def _track_and_return_bad_json(api_key, system_instr, task, model):
         models_tried.append(model)
         attempt_count[0] += 1
         return "not valid json at all"
@@ -299,7 +299,7 @@ async def test_model_used_event_logged_on_success(monkeypatch):
     """A successful generation should log the model_used event."""
     log_events = []
 
-    def _ok_generate(api_key, prompt, model):
+    def _ok_generate(api_key, system_instr, task, model):
         return '["Long enough post with #AI and enough detail to pass all validation checks here."]'
 
     def _capture_info(event, message="", **fields):
@@ -321,8 +321,8 @@ async def test_generate_content_injects_language_directive(monkeypatch):
     """LANGUAGE directive is present in the prompt sent to Gemini."""
     captured = {}
 
-    def fake_sync_generate(api_key, prompt, model):
-        captured["prompt"] = prompt
+    def fake_sync_generate(api_key, system_instr, task, model):
+        captured["prompt"] = f"{system_instr}\n\n{task}"
         return '["Long enough post with #AI and enough detail to pass all validation checks here."]'
 
     monkeypatch.setattr("src.agents._sync_generate", fake_sync_generate)
@@ -337,6 +337,8 @@ async def test_generate_content_injects_language_directive(monkeypatch):
 async def test_generate_post_image_returns_bytes_on_success(monkeypatch):
     """generate_post_image returns raw bytes when _sync_generate_image succeeds."""
     monkeypatch.setattr(agents, "_sync_generate_image", lambda k, p: b"fake-image-bytes")
+    # _craft_visual_prompt calls _sync_generate_text — stub it so the test is isolated
+    monkeypatch.setattr(agents, "_sync_generate_text", lambda k, s, t: "a glowing sphere")
     result = await generate_post_image("fake-key", "automation")
     assert result == b"fake-image-bytes"
 
@@ -344,9 +346,77 @@ async def test_generate_post_image_returns_bytes_on_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_generate_post_image_returns_none_on_failure(monkeypatch):
     """generate_post_image returns None gracefully when image generation fails."""
+    monkeypatch.setattr(agents, "_sync_generate_text", lambda k, s, t: "a glowing sphere")
+
     def raise_error(k, p):
         raise RuntimeError("quota exceeded")
 
     monkeypatch.setattr(agents, "_sync_generate_image", raise_error)
     result = await generate_post_image("fake-key", "automation")
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_generate_post_image_uses_crafted_prompt(monkeypatch):
+    """When _craft_visual_prompt returns a prompt, that prompt is passed to Imagen."""
+    captured_prompt = {}
+
+    monkeypatch.setattr(agents, "_sync_generate_text", lambda k, s, t: "intersecting geometric rings")
+
+    def capture_image(api_key, prompt):
+        captured_prompt["value"] = prompt
+        return b"img"
+
+    monkeypatch.setattr(agents, "_sync_generate_image", capture_image)
+    await generate_post_image("fake-key", "teamwork", thread_posts=["Post one", "Post two"])
+
+    assert captured_prompt["value"] == "intersecting geometric rings"
+
+
+@pytest.mark.asyncio
+async def test_generate_post_image_falls_back_to_static_prompt_on_craft_failure(monkeypatch):
+    """When _craft_visual_prompt fails, generate_post_image falls back to the static template."""
+    captured_prompt = {}
+
+    def raise_text_error(k, s, t):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(agents, "_sync_generate_text", raise_text_error)
+
+    def capture_image(api_key, prompt):
+        captured_prompt["value"] = prompt
+        return b"img"
+
+    monkeypatch.setattr(agents, "_sync_generate_image", capture_image)
+    await generate_post_image("fake-key", "leadership", thread_posts=["Post one"])
+
+    # Fallback prompt includes the topic name
+    assert "leadership" in captured_prompt["value"]
+    assert "illustration" in captured_prompt["value"]
+
+
+# ---------------------------------------------------------------------------
+# B3: Gemma prompt adaptation
+# ---------------------------------------------------------------------------
+
+def test_build_generate_kwargs_non_gemma_uses_system_instruction():
+    """Non-Gemma models should use the config system_instruction parameter."""
+    kwargs = _build_generate_kwargs("gemini-2.5-flash", "SYS", "TASK")
+    assert kwargs["contents"] == "TASK"
+    assert kwargs["config"]["system_instruction"] == "SYS"
+
+
+def test_build_generate_kwargs_gemma_inlines_system_instruction():
+    """Gemma models must have the system prompt inlined — no config key."""
+    kwargs = _build_generate_kwargs("gemma-3-27b-it", "SYS", "TASK")
+    assert "SYS" in kwargs["contents"]
+    assert "TASK" in kwargs["contents"]
+    assert "config" not in kwargs
+
+
+def test_build_generate_kwargs_gemma_detection_is_case_insensitive():
+    """Model name casing shouldn't affect Gemma detection."""
+    kwargs_lower = _build_generate_kwargs("gemma-3-27b-it", "S", "T")
+    kwargs_upper = _build_generate_kwargs("GEMMA-3-27B-IT", "S", "T")
+    assert "config" not in kwargs_lower
+    assert "config" not in kwargs_upper
