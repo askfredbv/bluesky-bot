@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.11.0)
+# Bluesky & Mastodon Daily Poster (v4.12.0)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -46,7 +46,7 @@ To improve observability of the external trigger path, `.github/workflows/schedu
 
 **Images on both platforms**: Mentor and Strategist threads that generate an illustration attach it to both Bluesky (1 MB cap) and Mastodon (8 MB cap). Curator threads use a link card on Bluesky and plain text on Mastodon — generic thumbnails (org logos, default share images) are filtered from the link card rather than cluttering the preview.
 
-**Reliability**: concurrent platform delivery with `asyncio.gather`; if one platform fails the other still posts. Exponential backoff on API calls. State (`seen_articles`, `replied_to`) is stored in a private GitHub Gist and survives across runs — local file fallback kicks in if the Gist is unreachable. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures advance to the next model automatically. One Bluesky session per run — the preflight login is reused for posting; if both the preflight and fallback logins fail (e.g. a transient timeout), Bluesky is skipped for that run rather than crashing.
+**Reliability**: concurrent platform delivery with `asyncio.gather`; if one platform fails the other still posts. Exponential backoff on API calls. State (`seen_articles`, `replied_to`) is stored in a private GitHub Gist and survives across runs — local file fallback kicks in if the Gist is unreachable. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures advance to the next model automatically. At startup the list is pruned to models actually available via the Gemini API (non-fatal: if discovery fails, the configured list is used unchanged). One Bluesky session per run — the session string is cached in the Gist so subsequent runs skip the full credential login; any stale or expired session falls back to a fresh password login transparently. If both the preflight and fallback logins fail (e.g. a transient timeout), Bluesky is skipped for that run rather than crashing.
 
 ---
 
@@ -125,9 +125,8 @@ The main levers are all in `src/config.py`:
 - **`MENTION_SANITIZE_MAX_CHARS`** / **`FEED_SUMMARY_MAX_CHARS`** — character caps for mention input and RSS feed summaries (both default 500)
 - **`GENERIC_IMAGE_PATTERNS`** — substring list used to skip useless link-card thumbnails (org logos, default share images)
 - **`MOMENTUM_PRODUCTS`** / **`MOMENTUM_PRODUCT_BONUS`** — flagship 2026 model names that earn a +4.0 scoring bonus; edited quarterly
-- **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next. Gemma models automatically receive inlined prompts (Gemma rejects the `system_instruction` API parameter)
+- **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next. Gemma models automatically receive inlined prompts (Gemma rejects the `system_instruction` API parameter). At startup, the list is silently filtered to models the API actually reports as available — if discovery fails, the configured list is used unchanged
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed that covers the same story (default 1.5)
-- **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next
 
 The following can also be overridden via environment variables without touching code:
 
@@ -145,6 +144,7 @@ The following can also be overridden via environment variables without touching 
 ├── main.py                    # Async orchestrator & pipeline stages
 ├── src/
 │   ├── agents.py              # Content generation and mention handling
+│   ├── bluesky_session.py     # Session string caching via Gist (skip full login on warm runs)
 │   ├── broadcasters.py        # Bluesky and Mastodon posting
 │   ├── config.py              # Constants, personas, feeds, scoring config
 │   ├── facets.py              # Bluesky rich-text facets (clickable URLs + hashtags)
@@ -152,11 +152,12 @@ The following can also be overridden via environment variables without touching 
 │   ├── logger.py              # SafeLogger — strips credentials from output
 │   ├── settings.py            # Environment variable loading and validation
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
-├── tests/                     # pytest suite (109 tests)
+├── tests/                     # pytest suite (118 tests)
 ├── .github/
 │   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
 │   ├── workflows/schedule-health.yml # Read-only daily monitor for missed external dispatches
 │   ├── workflows/lockfile-check.yml  # Fails if requirements.txt is stale
+│   ├── workflows/codeql.yml          # Weekly CodeQL security + quality scan (Python)
 │   └── dependabot.yml                # Dependency vulnerability scanning
 ├── pytest.ini
 ├── requirements.in            # Human-edited dependency constraints

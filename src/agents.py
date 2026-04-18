@@ -277,7 +277,41 @@ async def generate_post_image(
         return None
 
 
-async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], str]:
+async def filter_available_models(api_key: str, priority: List[str]) -> List[str]:
+    """Query Gemini for currently available models and prune the priority list.
+
+    Only *removes* models that are absent — never adds new ones, so no
+    experimental preview models sneak into the chain. If discovery fails
+    for any reason the original list is returned unchanged.
+    """
+    try:
+        cache_key = api_key.strip()
+        client = _CLIENT_CACHE.get(cache_key)
+        if client is None:
+            client = genai.Client(api_key=cache_key)
+            _CLIENT_CACHE[cache_key] = client
+        models_list = await asyncio.to_thread(client.models.list)
+        available = {m.name.split("/")[-1] for m in models_list}
+        filtered = [m for m in priority if m in available]
+        if filtered != priority:
+            removed = [m for m in priority if m not in available]
+            SafeLogger.info(
+                "model_priority_adjusted",
+                "Removed unavailable models from priority list",
+                removed=removed,
+                adjusted=filtered,
+            )
+        return filtered if filtered else priority  # never return empty list
+    except Exception as e:
+        SafeLogger.warn(
+            "model_discovery_failed",
+            "Model discovery failed; using configured priority unchanged",
+            error_type=type(e).__name__,
+        )
+        return priority
+
+
+async def generate_content(api_key: str, recent_posts: List[str], mode: str = "mentor", news_items: Optional[List[Dict[str, Any]]] = None, model_priority: Optional[List[str]] = None) -> Tuple[List[str], str]:
     """Generates content asynchronously with Rescue logic and Temporal Context."""
     temporal = get_temporal_context()
     variant_name, variant_instruction = _select_persona_variant(mode)
@@ -346,8 +380,10 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 
     fallback_post = f"Sharing concise insights on {topic}. #AI #Tech"
 
-    # Rescue Pipeline: iterate models, retry content errors on same model
-    for model in GEMINI_MODEL_PRIORITY:
+    # Rescue Pipeline: iterate models, retry content errors on same model.
+    # model_priority is the pre-filtered list from filter_available_models;
+    # falls back to GEMINI_MODEL_PRIORITY if not provided.
+    for model in (model_priority or GEMINI_MODEL_PRIORITY):
         for attempt in range(2):
             try:
                 response_text = await asyncio.to_thread(_sync_generate, api_key, instr, user_task, model)

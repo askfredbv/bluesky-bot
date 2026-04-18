@@ -27,7 +27,7 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
         async def login(self, username, password):
             raise RuntimeError("login failed")
 
-    async def fake_generate_content(api_key, recent_posts, mode, news_items):
+    async def fake_generate_content(api_key, recent_posts, mode, news_items, **kwargs):
         calls["recent_posts"] = list(recent_posts)
         return ["thread post"], "topic"
 
@@ -90,7 +90,7 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_err
         async def login(self, username, password):
             raise ValueError("bad credentials")
 
-    async def fake_generate_content(api_key, recent_posts, mode, news_items):
+    async def fake_generate_content(api_key, recent_posts, mode, news_items, **kwargs):
         calls["recent_posts"] = list(recent_posts)
         return ["thread post"], "topic"
 

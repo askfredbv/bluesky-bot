@@ -11,16 +11,17 @@ from dotenv import load_dotenv
 # Internal Imports
 from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
-    IMAGE_GENERATION_PROBABILITY,
+    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY,
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
     get_link_metadata,
 )
-from src.agents import generate_content, handle_interactions, generate_post_image
+from src.agents import generate_content, handle_interactions, generate_post_image, filter_available_models
 from src.broadcasters import post_to_bluesky, post_to_mastodon
 from src.logger import SafeLogger
 from src.settings import Settings, SettingsValidationError
+from src.bluesky_session import load_or_login
 
 load_dotenv()
 
@@ -122,7 +123,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
     recent_posts = []
     try:
         bsky_client = AsyncClient()
-        await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
+        await load_or_login(bsky_client, creds.bluesky_username, creds.bluesky_password)
         recent_posts = await get_recent_posts(bsky_client, creds.bluesky_username)
     except Exception as exc:
         bsky_client = None
@@ -144,7 +145,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
     )
 
 
-async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Settings, creds: Any) -> BroadcastPayload:
+async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Settings, creds: Any, active_models: Optional[List[str]] = None) -> BroadcastPayload:
     mode = content_prep.mode
     news_items = content_prep.news_items
     link_meta = content_prep.link_meta
@@ -153,6 +154,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         content_prep.recent_posts,
         mode=mode,
         news_items=news_items,
+        model_priority=active_models,
     )
 
     # Generate image for non-Curator modes at configured probability.
@@ -172,7 +174,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         from atproto import AsyncClient
         try:
             bsky_client = AsyncClient()
-            await bsky_client.login(creds.bluesky_username, creds.bluesky_password)
+            await load_or_login(bsky_client, creds.bluesky_username, creds.bluesky_password)
         except Exception as exc:
             SafeLogger.error(
                 "bluesky_broadcast_login_failed",
@@ -256,14 +258,18 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.11.0 ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.12.0 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials
 
+    # Prune the model priority list to what the Gemini API actually offers.
+    # Non-fatal: if discovery fails the configured list is used unchanged.
+    active_models = await filter_available_models(creds.gemini_api_key, GEMINI_MODEL_PRIORITY)
+
     mode_payload = await mode_selection_stage()
     content_prep = await content_prep_stage(mode_payload, creds)
-    broadcast = await broadcasting_stage(content_prep, settings, creds)
+    broadcast = await broadcasting_stage(content_prep, settings, creds, active_models=active_models)
     automation = await post_run_automation_stage(broadcast, creds)
     await persistence_stage(automation)
 

@@ -148,7 +148,7 @@ async def test_persistence_stage_updates_seen_articles(monkeypatch):
 @pytest.mark.asyncio
 async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     calls = []
-    settings = SimpleNamespace(credentials=SimpleNamespace(), platform=SimpleNamespace())
+    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="test-key"), platform=SimpleNamespace())
 
     async def fake_mode():
         calls.append("mode")
@@ -165,7 +165,7 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
             recent_posts=[],
         )
 
-    async def fake_broadcast(content_prep, incoming_settings, creds):
+    async def fake_broadcast(content_prep, incoming_settings, creds, active_models=None):
         calls.append(("broadcast", content_prep.mode, incoming_settings is settings, creds is settings.credentials))
         return main.BroadcastPayload(
             mode="mentor",
@@ -184,7 +184,11 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     async def fake_persistence(automation_payload):
         calls.append(("persistence", automation_payload.mode))
 
+    async def fake_filter_models(api_key, priority):
+        return priority
+
     monkeypatch.setattr(main, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(main, "filter_available_models", fake_filter_models)
     monkeypatch.setattr(main, "mode_selection_stage", fake_mode)
     monkeypatch.setattr(main, "content_prep_stage", fake_content)
     monkeypatch.setattr(main, "broadcasting_stage", fake_broadcast)
