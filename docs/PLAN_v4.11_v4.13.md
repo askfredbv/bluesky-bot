@@ -317,6 +317,12 @@ for url in CANDIDATES:
 
 Only commit URLs that return `OK` with item count > 0. In the PR description, list the dropped candidates and why (e.g. "ai.meta.com/blog/rss/ → HTTP 404, skipped").
 
+**Pre-validated — The Register (confirmed OK, 50 items each, no further validation needed)**:
+
+Both Register feeds were tested on 2026-04-18 and confirmed live:
+- `https://www.theregister.com/software/headlines.atom` — software/AI-heavy, primary source. Includes Anthropic, Claude, and AI vendor coverage prominently.
+- `https://www.theregister.com/headlines.atom` — broader tech (includes some off-topic: space, security, humour). Added at a lower tier so scoring buries noise naturally. Decision: include both and let scoring do the filtering rather than maintaining a manual review cycle.
+
 **File**: `src/config.py` — for each OK feed, append to `RSS_FEEDS`, add a `SOURCE_TIERS` entry, and add academic/research ones to `HIDDEN_GEM_SOURCES`.
 
 Candidate tier values (tune to taste):
@@ -328,8 +334,12 @@ Candidate tier values (tune to taste):
 - `microsoft.com`: 7
 - `txt.cohere.com`: 7
 - `vkrakovna.wordpress.com`: 7
+- `theregister.com` (software feed): 7  ← pre-validated
+- `theregister.com` (main feed): 5     ← pre-validated, lower tier intentionally
 
 Academic/research-leaning → add to `HIDDEN_GEM_SOURCES`: `thegradient.pub`, `bair.berkeley.edu`, `ai.stanford.edu`, `vkrakovna.wordpress.com`.
+
+Note: The Register's main feed covers NASA/space/security alongside AI. These will score low (no `PRODUCT_KEYWORDS`, `GROUNDBREAKING_KEYWORDS`, or `HIDDEN_GEM_SOURCES` match) and stay buried behind AI-relevant items. Remove `headlines.atom` if post quality drifts after a week of runs.
 
 **Calibration**: more feeds = more multi-source stories. After the first 3 runs, check whether `CONSENSUS_SYNERGY_BONUS` should drop from 1.5 to 1.2 to prevent one viral story dominating every Curator run. Manual eyeball decision, no test automation.
 
