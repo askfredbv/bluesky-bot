@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.12.0)
+# Bluesky & Mastodon Daily Poster (v4.13.0)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -7,7 +7,7 @@ An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mas
 ## What it does
 
 **Morning run (09:00 UTC) — The Curator**
-Fetches from 17 AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then generates a 3–5 post thread on the most consequential developments. The goal is the "...which means" that follows the headline, not the headline itself.
+Fetches from 25 AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then generates a 3–5 post thread on the most consequential developments. The goal is the "...which means" that follows the headline, not the headline itself.
 
 **Afternoon run (15:30 UTC) — The Mentor**
 Picks a career or work-life topic and writes a short thread. The target is specific, observational advice — the kind that is obvious in hindsight but rarely articulated.

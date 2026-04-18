@@ -65,12 +65,24 @@ SOURCE_TIERS: Dict[str, int] = {
     "semianalysis.com": 8,
     "the-decoder.com": 7,
     "techcrunch.com": 6,
-    "export.arxiv.org": 8  # v4.6 Hidden Gem Upgrade: Guarantee research survival
+    "export.arxiv.org": 8,  # v4.6 Hidden Gem Upgrade: Guarantee research survival
+    # v4.13.0 feed expansion
+    "thegradient.pub": 8,
+    "magazine.sebastianraschka.com": 8,
+    "bair.berkeley.edu": 9,
+    "ai.stanford.edu": 9,
+    "microsoft.com": 7,
+    "vkrakovna.wordpress.com": 7,
+    "theregister.com": 7,  # software/headlines.atom gets 7; main headlines.atom scores lower naturally
 }
 
 PRODUCT_KEYWORDS: List[str] = ["launch", "integrated", "available", "feature", "release", "app", "tool", "partnership"]
 GROUNDBREAKING_KEYWORDS: List[str] = ["sota", "benchmark", "breakthrough", "frontier", "reasoning", "efficiency", "architecture", "scaling"]
-HIDDEN_GEM_SOURCES: List[str] = ["export.arxiv.org", "arxiv.org"]
+HIDDEN_GEM_SOURCES: List[str] = [
+    "export.arxiv.org", "arxiv.org",
+    # v4.13.0 — academic and independent research blogs
+    "thegradient.pub", "bair.berkeley.edu", "ai.stanford.edu", "vkrakovna.wordpress.com",
+]
 CONSENSUS_SYNERGY_BONUS: float = 1.5
 
 # Flagship 2026 AI products — these get a dedicated scoring bonus because
@@ -147,7 +159,16 @@ RSS_FEEDS = [
     "https://www.deeplearning.ai/the-batch/rss/",
     "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss",
     "https://stability.ai/blog?format=rss",
-    "https://siliconangle.com/category/ai/feed"
+    "https://siliconangle.com/category/ai/feed",
+    # v4.13.0 feed expansion — validated 2026-04-18
+    "https://thegradient.pub/rss/",
+    "https://magazine.sebastianraschka.com/feed",
+    "https://bair.berkeley.edu/blog/feed.xml",
+    "https://ai.stanford.edu/blog/feed.xml",
+    "https://www.microsoft.com/en-us/research/feed/",
+    "https://vkrakovna.wordpress.com/feed/",
+    "https://www.theregister.com/software/headlines.atom",
+    "https://www.theregister.com/headlines.atom",
 ]
 
 SECONDARY_TOPICS = [

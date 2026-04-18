@@ -283,7 +283,7 @@ Add CodeQL badge to README under the project title.
 
 ---
 
-## Slice D — Feed breadth → `v4.13.0`
+## Slice D — Feed breadth → `v4.13.0` ✅ SHIPPED
 
 ### D1. Hidden gem expansion
 
