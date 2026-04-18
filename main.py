@@ -196,6 +196,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         )
     broadcast_tasks.append(post_to_mastodon(
         creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
+        image_bytes=image_bytes,
         thread_pause_profile=thread_pause_profile
     ))
 
@@ -252,7 +253,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.9.0 ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.10.0 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials

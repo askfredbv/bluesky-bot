@@ -17,9 +17,9 @@ async def test_post_to_bluesky_splits_overlong_content(monkeypatch):
             self.uri = f"at://post/{idx}"
 
     class DummyAsyncClient:
-        async def send_post(self, text, embed=None, reply_to=None):
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
             sent_payloads.append(
-                {"text": text, "embed": embed, "reply_to": reply_to}
+                {"text": text, "embed": embed, "reply_to": reply_to, "facets": facets}
             )
             return DummyPost(len(sent_payloads))
 
@@ -160,7 +160,7 @@ async def test_post_to_bluesky_uses_image_embed_when_image_bytes_provided(monkey
             self.upload_blob_call_count += 1
             return FakeUploadResult()
 
-        async def send_post(self, text, embed=None, reply_to=None):
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
             send_post_calls.append({"text": text, "embed": embed})
 
             class FakePost:
@@ -183,7 +183,7 @@ async def test_post_to_bluesky_uses_link_card_when_no_image_bytes(monkeypatch):
     send_post_calls = []
 
     class DummyAsyncClient:
-        async def send_post(self, text, embed=None, reply_to=None):
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
             send_post_calls.append({"text": text, "embed": embed})
 
             class FakePost:
@@ -198,3 +198,101 @@ async def test_post_to_bluesky_uses_link_card_when_no_image_bytes(monkeypatch):
     await broadcasters.post_to_bluesky(dummy_client, ["Post text"], link_meta=link_meta)
 
     assert isinstance(send_post_calls[0]["embed"], models.AppBskyEmbedExternal.Main)
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_attaches_image_to_first_post_only(monkeypatch):
+    """When image_bytes is provided, media is uploaded and attached to the root post."""
+    posted = []
+    media_posted = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def media_post(self, data, mime_type=None, description=None):
+            media_posted.append({"data": data, "mime_type": mime_type, "description": description})
+            return {"id": "media-42"}
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+            posted.append({"status": status, "reply": in_reply_to_id, "media_ids": media_ids})
+            return {"id": len(posted)}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example",
+        ["root post", "reply post"],
+        image_bytes=b"\x89PNG\r\n\x1a\n" + b"x" * 100,  # minimal PNG-ish bytes
+    )
+
+    assert len(media_posted) == 1
+    assert media_posted[0]["description"].startswith("Illustration:")
+    assert posted[0]["media_ids"] == ["media-42"]  # first post only
+    assert posted[1]["media_ids"] is None           # reply gets no media
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_continues_without_image_on_upload_failure(monkeypatch):
+    """If media_post raises, posting continues without the image rather than crashing."""
+    posted = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def media_post(self, data, mime_type=None, description=None):
+            raise RuntimeError("mastodon rejected upload")
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+            posted.append({"status": status, "media_ids": media_ids})
+            return {"id": len(posted)}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example",
+        ["only post"],
+        image_bytes=b"bad-bytes",
+    )
+
+    assert len(posted) == 1
+    assert posted[0]["media_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_no_image_bytes_skips_media_upload(monkeypatch):
+    """When image_bytes is None (Curator mode), media_post is never called."""
+    media_calls = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def media_post(self, *a, **kw):
+            media_calls.append(True)
+            return {"id": "nope"}
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+            return {"id": 1}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example",
+        ["curator post"],
+    )
+
+    assert media_calls == []

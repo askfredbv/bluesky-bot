@@ -73,6 +73,15 @@ GROUNDBREAKING_KEYWORDS: List[str] = ["sota", "benchmark", "breakthrough", "fron
 HIDDEN_GEM_SOURCES: List[str] = ["export.arxiv.org", "arxiv.org"]
 CONSENSUS_SYNERGY_BONUS: float = 1.5
 
+# Link-card thumbnails matching any of these substrings are skipped. Generic
+# org logos and default share images add visual clutter without conveying
+# information — better to let Bluesky render the link card without a thumb.
+GENERIC_IMAGE_PATTERNS: List[str] = [
+    "logo", "default-card", "default-og", "twitter-card-default",
+    "og-default", "site-icon", "apple-touch-icon", "favicon",
+    "social-default", "share-image-default",
+]
+
 # AI Model Priority (failover order on quota/availability errors)
 GEMINI_MODEL_PRIORITY: List[str] = [
     "gemini-2.5-flash",

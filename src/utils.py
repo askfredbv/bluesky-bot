@@ -35,6 +35,7 @@ from src.config import (
     CONSENSUS_SYNERGY_BONUS,
     RATE_LIMIT_BASE_WAIT_SECONDS,
     RATE_LIMIT_MAX_RETRIES,
+    GENERIC_IMAGE_PATTERNS,
 )
 from src.logger import SafeLogger
 from src.file_lock import file_lock
@@ -708,6 +709,8 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
                         SafeLogger.warn("unsafe_og_image_url_blocked", "Blocked unsafe og:image URL", url=img_url)
                     elif not is_allowed_metadata_fetch_url(img_url):
                         SafeLogger.warn("domain_policy_blocked", "Blocked og:image by metadata domain policy", url=img_url)
+                    elif any(p in img_url.lower() for p in GENERIC_IMAGE_PATTERNS):
+                        SafeLogger.info("generic_logo_skipped", "Skipping generic logo thumbnail", url=img_url)
                     else:
                         img_res = await get_with_safe_redirects(client, img_url, timeout=5.0)
                         if img_res and img_res.status_code == 200:

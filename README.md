@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.9.1)
+# Bluesky & Mastodon Daily Poster (v4.10.0)
 
 An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
 
@@ -42,7 +42,9 @@ To improve observability of the external trigger path, `.github/workflows/schedu
 
 **Voice** is anchored to Frederik Van Hecke's writing style — direct, pragmatic, dry. No hype language. No corporate throat-clearing. Short punchy sentences mixed with longer ones. The system prompts in `src/config.py` include verbatim examples from his writing as style anchors for the model.
 
-**Post formatting**: each post in a thread is generated within the 300-character Bluesky limit. If a post still overflows (rare), it is split at a word boundary — never mid-word.
+**Post formatting**: each post in a thread is generated within the 300-character Bluesky limit. If a post still overflows (rare), it is split at a word boundary — never mid-word. URLs and `#hashtags` are wrapped in Bluesky rich-text facets so they render as clickable links and tags (byte-offset computed against UTF-8 so Dutch accented characters don't break the offsets).
+
+**Images on both platforms**: Mentor and Strategist threads that generate an illustration attach it to both Bluesky (1 MB cap) and Mastodon (8 MB cap). Curator threads use a link card on Bluesky and plain text on Mastodon — generic thumbnails (org logos, default share images) are filtered from the link card rather than cluttering the preview.
 
 **Reliability**: concurrent platform delivery with `asyncio.gather`; if one platform fails the other still posts. Exponential backoff on API calls. State (`seen_articles`, `replied_to`) is stored in a private GitHub Gist and survives across runs — local file fallback kicks in if the Gist is unreachable. Hard cap of 10 mention replies per run. Content generation uses a model priority list (`gemini-2.5-flash` → `gemini-2.0-flash` → `gemini-1.5-flash-latest` → `gemma-3-27b-it`); API-level failures advance to the next model automatically. One Bluesky session per run — the preflight login is reused for posting; if both the preflight and fallback logins fail (e.g. a transient timeout), Bluesky is skipped for that run rather than crashing.
 
@@ -121,6 +123,7 @@ The main levers are all in `src/config.py`:
 - **`IMAGEN_MODEL`** — Imagen model for post images (default `imagen-3.0-generate-002`)
 - **`IMAGE_GENERATION_PROBABILITY`** — probability of generating an image for Mentor/Strategist runs (default `0.5`)
 - **`MENTION_SANITIZE_MAX_CHARS`** / **`FEED_SUMMARY_MAX_CHARS`** — character caps for mention input and RSS feed summaries (both default 500)
+- **`GENERIC_IMAGE_PATTERNS`** — substring list used to skip useless link-card thumbnails (org logos, default share images)
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed that covers the same story (default 1.5)
 - **`GEMINI_MODEL_PRIORITY`** — ordered list of models to try; first API-level failure advances to the next
 
@@ -142,11 +145,12 @@ The following can also be overridden via environment variables without touching 
 │   ├── agents.py              # Content generation and mention handling
 │   ├── broadcasters.py        # Bluesky and Mastodon posting
 │   ├── config.py              # Constants, personas, feeds, scoring config
+│   ├── facets.py              # Bluesky rich-text facets (clickable URLs + hashtags)
 │   ├── file_lock.py           # Cross-platform file locking
 │   ├── logger.py              # SafeLogger — strips credentials from output
 │   ├── settings.py            # Environment variable loading and validation
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
-├── tests/                     # pytest suite (75 tests)
+├── tests/                     # pytest suite (102 tests)
 ├── .github/
 │   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
 │   ├── workflows/schedule-health.yml # Read-only daily monitor for missed external dispatches

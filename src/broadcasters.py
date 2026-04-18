@@ -1,4 +1,5 @@
 import asyncio
+import io
 import random
 import httpx
 import re
@@ -11,9 +12,22 @@ from src.config import (
 )
 from src.utils import retry_with_backoff
 from src.logger import SafeLogger
+from src.facets import build_facets
 
 MASTODON_POST_TIMEOUT_SECONDS = 20.0
 MASTODON_POST_MAX_ATTEMPTS = 3
+_MASTODON_IMAGE_MAX_BYTES = 8 * 1024 * 1024  # Mastodon default cap — 8 MB
+
+
+def _detect_image_mime(data: bytes) -> str:
+    """Detect MIME type from image bytes via Pillow; default to PNG."""
+    try:
+        from PIL import Image
+        fmt = (Image.open(io.BytesIO(data)).format or "PNG").lower()
+        return {"jpeg": "image/jpeg", "jpg": "image/jpeg", "png": "image/png",
+                "gif": "image/gif", "webp": "image/webp"}.get(fmt, "image/png")
+    except Exception:
+        return "image/png"
 
 def _split_and_constrain_posts(content_list: List[str], max_length: int, platform_name: str) -> List[str]:
     """
@@ -128,13 +142,15 @@ async def post_to_bluesky(
                     )
                 )
         
+        facets = build_facets(post_text) or None
+
         if not parent_ref:
-            post = await client.send_post(text=post_text, embed=embed)
+            post = await client.send_post(text=post_text, embed=embed, facets=facets)
             root_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
         else:
             reply_ref = models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
-            post = await client.send_post(text=post_text, reply_to=reply_ref)
+            post = await client.send_post(text=post_text, reply_to=reply_ref, facets=facets)
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
         
         # Intra-thread jitter
@@ -148,9 +164,14 @@ async def post_to_mastodon(
     access_token: str,
     api_base_url: str,
     content_list: List[str],
+    image_bytes: Optional[bytes] = None,
     thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
 ):
-    """Async-wrapped broadcaster for Mastodon."""
+    """Async-wrapped broadcaster for Mastodon.
+
+    When image_bytes is provided, attaches the image to the first post only
+    (Mastodon threads mirror Bluesky: media attaches to the root post).
+    """
     if not access_token: return
 
     constrained_content_list = _split_and_constrain_posts(
@@ -162,16 +183,47 @@ async def post_to_mastodon(
     posted_count = 0
     last_id = None
 
-    async def _status_post_with_timeout_and_retry(post_text: str, reply_to_id: Optional[str]):
+    # Upload image for first-post attachment (if provided and within size cap)
+    media_ids = None
+    if image_bytes:
+        if len(image_bytes) > _MASTODON_IMAGE_MAX_BYTES:
+            SafeLogger.warn(
+                "mastodon_image_too_large",
+                "Generated image exceeds Mastodon size cap; skipping image attach",
+                platform="mastodon",
+                size_bytes=len(image_bytes),
+            )
+        else:
+            try:
+                mime = _detect_image_mime(image_bytes)
+                alt = f"Illustration: {content_list[0][:100]}" if content_list else "Illustration"
+                media = await asyncio.to_thread(
+                    mastodon.media_post, image_bytes,
+                    mime_type=mime, description=alt
+                )
+                media_id = media.get('id') if isinstance(media, dict) else getattr(media, 'id', None)
+                if media_id:
+                    media_ids = [media_id]
+            except Exception as e:
+                SafeLogger.warn(
+                    "mastodon_media_upload_failed",
+                    "Failed to upload image to Mastodon; posting without image",
+                    platform="mastodon",
+                    error_type=type(e).__name__,
+                )
+
+    async def _status_post_with_timeout_and_retry(post_text: str, reply_to_id: Optional[str], media: Optional[List[str]] = None):
         for attempt in range(1, MASTODON_POST_MAX_ATTEMPTS + 1):
             try:
+                kwargs = {
+                    "status": post_text,
+                    "in_reply_to_id": reply_to_id,
+                    "visibility": 'public',
+                }
+                if media:
+                    kwargs["media_ids"] = media
                 return await asyncio.wait_for(
-                    asyncio.to_thread(
-                        mastodon.status_post,
-                        status=post_text,
-                        in_reply_to_id=reply_to_id,
-                        visibility='public'
-                    ),
+                    asyncio.to_thread(mastodon.status_post, **kwargs),
                     timeout=MASTODON_POST_TIMEOUT_SECONDS
                 )
             except asyncio.CancelledError:
@@ -191,7 +243,8 @@ async def post_to_mastodon(
 
     try:
         for i, post_text in enumerate(constrained_content_list):
-            status = await _status_post_with_timeout_and_retry(post_text, last_id)
+            attach = media_ids if i == 0 else None
+            status = await _status_post_with_timeout_and_retry(post_text, last_id, media=attach)
             last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
             posted_count += 1
 
