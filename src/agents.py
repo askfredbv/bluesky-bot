@@ -12,10 +12,16 @@ from src.config import (
     STYLE_MEMORY_POST_WINDOW, STYLE_MEMORY_MAX_OPENERS, STYLE_MEMORY_MAX_HASHTAGS,
     REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
-    HASHTAG_OPTIONAL_MIN_CHARS, MIN_THREAD_POSTS, MAX_THREAD_POSTS,
+    MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
     LANGUAGE_OPTIONS, IMAGEN_MODEL,
+    BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS,
 )
+
+# v4.14 voice rules
+MAX_HASHTAGS_PER_POST: int = 2
+MIN_POST_CHARS_FOR_VALIDATION: int = 40  # was 60; lowered for image-led short posts
+WORD_BOUNDARY_LOOKBACK: int = 40  # how far back to search for whitespace when truncating
 from src.utils import update_replied_to
 from src.logger import SafeLogger
 
@@ -61,13 +67,115 @@ def get_temporal_context() -> Dict[str, str]:
     return context
 
 def validate_summary(text: str) -> Tuple[bool, str]:
-    """Heuristic validation of AI output quality (Rescue v4.5)."""
+    """Heuristic validation of AI output quality (Rescue v4.5).
+
+    v4.14: dropped the hashtag requirement entirely — the new voice rules
+    default to zero hashtags. Lowered min length to 40 chars to allow
+    image-led short posts (e.g. "Your desk should always be 1 cat deep or long").
+    """
     if not text: return False, "Empty output"
-    if len(text) < 60: return False, "Too short for high-signal insight"
+    if len(text) < MIN_POST_CHARS_FOR_VALIDATION: return False, "Too short for a meaningful post"
     if re.search(r'(.)\1{4,}', text): return False, "Detected repetitive pattern/gibberish"
-    if "#" not in text and len(text) < HASHTAG_OPTIONAL_MIN_CHARS:
-        return False, "Missing thematic hashtags"
     return True, "Success"
+
+
+def _strip_excess_hashtags(text: str) -> str:
+    """Keep at most MAX_HASHTAGS_PER_POST hashtags, drop the rest.
+
+    Preserves original ordering (first hashtags win) and surrounding text.
+    Defensive trim — the prompt already tells the model to cap at 2, this
+    catches drift.
+    """
+    matches = list(re.finditer(r"#\w+", text))
+    if len(matches) <= MAX_HASHTAGS_PER_POST:
+        return text
+    # Drop matches beyond the cap, from right to left so offsets stay valid
+    for match in reversed(matches[MAX_HASHTAGS_PER_POST:]):
+        text = text[:match.start()] + text[match.end():]
+    # Collapse any double-spaces left behind by the deletion
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _ends_with_reader_bait_question(text: str) -> bool:
+    """Detect if a post ends with one of the banned reader-bait patterns.
+
+    Looks at the last sentence (after final ., !, or ? — picking the latest
+    boundary). Substring match against BANNED_QUESTION_PATTERNS, case-insensitive.
+    """
+    last_segment = re.split(r'[.!?]\s+', text.strip())[-1].lower()
+    return any(pattern in last_segment for pattern in BANNED_QUESTION_PATTERNS)
+
+
+def _strip_trailing_question_bait(text: str) -> str:
+    """If the post ends with a banned reader-bait question, drop that final sentence.
+
+    Conservative: only removes the trailing question. If it leaves the post
+    too short or empty, returns the original text unchanged (better to ship
+    a flawed post than nothing).
+    """
+    if not _ends_with_reader_bait_question(text):
+        return text
+    # Find the last sentence boundary and cut there
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    if len(sentences) < 2:
+        return text  # one-sentence post; can't safely trim
+    trimmed = " ".join(sentences[:-1]).strip()
+    if len(trimmed) < MIN_POST_CHARS_FOR_VALIDATION:
+        return text  # would leave us with nothing meaningful
+    return trimmed
+
+
+def _safe_truncate_post(text: str, limit: int = MAX_POST_LENGTH_BSKY) -> str:
+    """Truncate at a word boundary if possible, otherwise hard-cut with ellipsis.
+
+    Fixes the v4.13 bug where overflowing posts ended mid-word. Searches the
+    last WORD_BOUNDARY_LOOKBACK chars of the truncated text for whitespace;
+    if found, cuts there. Otherwise hard-cuts at limit-1 and appends '…'.
+    """
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    boundary = head.rfind(" ", limit - WORD_BOUNDARY_LOOKBACK, limit)
+    if boundary > 0:
+        return head[:boundary].rstrip()
+    # No whitespace within lookback — hard-cut and signal truncation
+    return text[:limit - 1].rstrip() + "…"
+
+
+def _apply_voice_trim(content_list: List[str]) -> List[str]:
+    """Apply all defensive trims to the model's output.
+
+    Order matters: strip questions FIRST (might shorten the post), then
+    hashtags (preserves trailing hashtags from accidental deletion), then
+    safe-truncate (last line of defense for length).
+    """
+    trimmed = []
+    for idx, post in enumerate(content_list):
+        before = post
+        post = _strip_trailing_question_bait(post)
+        post = _strip_excess_hashtags(post)
+        post = _safe_truncate_post(post)
+        if post != before:
+            SafeLogger.info(
+                "voice_trim_applied",
+                "Defensive voice trim modified a post",
+                post_index=idx,
+                length_before=len(before),
+                length_after=len(post),
+            )
+        # Hype-word detection is log-only — rewriting is the model's job.
+        # We surface it so we can spot drift in the logs.
+        lower = post.lower()
+        hype_hits = [w for w in BANNED_HYPE_WORDS if w in lower]
+        if hype_hits:
+            SafeLogger.warn(
+                "hype_words_detected",
+                "Banned hype words slipped past prompt",
+                post_index=idx,
+                hype_words=hype_hits,
+            )
+        trimmed.append(post)
+    return trimmed
 
 def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
     """Validate model output is a thread-like list of strings within configured bounds."""
@@ -369,8 +477,8 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 
     format_instruction = (
         "OUTPUT FORMAT:\n"
-        "Return ONLY a JSON array of strings, like: [\"post one\", \"post two\"]\n"
-        "- 3 to 5 strings\n"
+        "Return ONLY a JSON array of strings, like: [\"post one\"] or [\"post one\", \"post two\"]\n"
+        "- 1 to 3 strings. ONE is the default. Use 2 only if the story genuinely needs a follow-on beat. 3 is rare.\n"
         f"- Each string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
         "- Never cut off mid-word or mid-sentence\n"
         "- No thread numbers, labels, or markdown outside the JSON array"
@@ -378,7 +486,8 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
     # instr = system role; user_task = everything the model acts on
     user_task = f"{task}\n\n{style_constraints}\n\n{format_instruction}"
 
-    fallback_post = f"Sharing concise insights on {topic}. #AI #Tech"
+    # v4.14: fallback no longer hardcodes hashtags (banned generic mood tags)
+    fallback_post = f"Notes on {topic} — more soon."
 
     # Rescue Pipeline: iterate models, retry content errors on same model.
     # model_priority is the pre-filtered list from filter_available_models;
@@ -395,16 +504,12 @@ async def generate_content(api_key: str, recent_posts: List[str], mode: str = "m
 
                 post_validations = [validate_summary(post) for post in content_list]
                 if all(is_valid for is_valid, _ in post_validations):
+                    # v4.14: defensive voice trim — strip reader-bait questions,
+                    # excess hashtags, and word-boundary-back-up on overflow.
+                    content_list = _apply_voice_trim(content_list)
                     SafeLogger.info("model_used", "Content generated successfully", model=model)
                     return content_list, topic
                 reason = post_validations[0][1]
-
-                # Repair Attempt: Force hashtags if missing but length is good
-                if reason == "Missing thematic hashtags":
-                    SafeLogger.info("hashtag_repair_applied", "Repairing missing hashtags in generated thread", mode=mode)
-                    content_list[0] += f" #{topic.replace(' ', '')} #TechUpdate"
-                    SafeLogger.info("model_used", "Content generated successfully", model=model)
-                    return content_list, topic
                 raise ValueError(reason)
 
             except (json.JSONDecodeError, ValueError) as e:

@@ -7,3 +7,4 @@ env/
 .env/
 seen_articles.json
 replied_to.json
+.claude/

@@ -44,24 +44,25 @@ def test_validate_summary_success():
     assert valid is True
 
 def test_validate_summary_rejection_criteria():
-    """Verify that gibberish or low-signal text is rejected."""
+    """Verify that gibberish or low-signal text is rejected.
+
+    v4.14: hashtag-less posts are explicitly allowed (default voice is zero
+    hashtags), so the only rejection paths are length and gibberish.
+    """
     # Too short
     assert validate_summary("Too short")[0] is False
-    
-    # Missing hashtags
-    assert validate_summary("Good length but no hashtags in this sentence whatsoever.")[0] is False
-    
+
     # Repetitive patterns
     assert validate_summary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa #Tag")[0] is False
 
-def test_validate_summary_repair_scenario():
-    """Simulate a repairable scenario (Good text, missing hashtags)."""
-    text = "Groundbreaking research on reasoning models from Anthropic and Google. Very insightful for IT leaders."
-    valid, reason = validate_summary(text)
-    assert valid is False
-    assert reason == "Missing thematic hashtags"
-    
-    # The actual rescue logic happens in agents.py, but here we verify the 'reason' matches the expectation for repair.
+
+def test_validate_summary_accepts_no_hashtag_post():
+    """v4.14: a well-formed post with no hashtags is valid by default."""
+    valid, reason = validate_summary(
+        "Groundbreaking research on reasoning models from Anthropic and Google. Very insightful for IT leaders."
+    )
+    assert valid is True
+    assert reason == "Success"
 
 
 def test_validate_summary_allows_long_no_hashtag_posts():

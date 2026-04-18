@@ -1,16 +1,18 @@
-# Bluesky & Mastodon Daily Poster (v4.13.0)
+# Bluesky & Mastodon Daily Poster (v4.14.0)
 
-An automated bot that posts daily threads to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes.
+An automated bot that posts to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes. Default shape is a single short post; threads are reserved for the rare cases that genuinely need them.
 
 ---
 
 ## What it does
 
 **Morning run (09:00 UTC) — The Curator**
-Fetches from 25 AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then generates a 3–5 post thread on the most consequential developments. The goal is the "...which means" that follows the headline, not the headline itself.
+Fetches from 25 AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then writes about the most consequential development. Default is a single post; the model may extend to 2–3 if the story genuinely needs it. The goal is the "...which means" that follows the headline, not the headline itself.
 
 **Afternoon run (15:30 UTC) — The Mentor**
-Picks a career or work-life topic and writes a short thread. The target is specific, observational advice — the kind that is obvious in hindsight but rarely articulated.
+Picks a career or work-life observation and writes a short post. The target is specific and observational — the kind of thing that is obvious in hindsight but rarely articulated. Defaults to one post; threads only when the observation can't fit.
+
+**Voice (v4.14)** — first-person, dry, no day-of-week openers, no reader-bait questions, no hype words. Default zero hashtags, max two when they're a clear topic anchor.
 
 If the morning news volume is low (fewer than 3 high-signal items), the bot falls back to a longer-horizon "strategist" take on a secondary topic rather than posting nothing.
 
