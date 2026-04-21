@@ -1,4 +1,6 @@
-# Bluesky & Mastodon Daily Poster (v4.15.0)
+# Bluesky & Mastodon Daily Poster (v4.15.1)
+
+![Daily Post](https://github.com/askfredbv/bluesky-bot/actions/workflows/daily_post.yml/badge.svg)
 
 An automated bot that posts to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes. Default shape is a single short post; threads are reserved for the rare cases that genuinely need them.
 

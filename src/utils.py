@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, TypeVar
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 import io
 from PIL import Image
@@ -503,6 +503,43 @@ def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
 
     return out_io.getvalue()
 
+_ARXIV_CANONICAL_RE = re.compile(
+    r"arxiv\.org/(?:abs|pdf|html)/(\d{4}\.\d{4,5})(?:v\d+)?",
+    re.IGNORECASE,
+)
+
+
+def canonical_url(url: str) -> str:
+    """Canonicalise a URL for deduplication.
+
+    arXiv: abs/pdf/html forms with or without version suffix collapse to
+    'arxiv:<id>'. Everything else: https scheme, lowercased host, query and
+    fragment stripped, trailing slash removed. Path case preserved per RFC 3986.
+    Returns empty string for empty input; returns the stripped input unchanged
+    when parsing fails or no host is present.
+    """
+    if not url:
+        return ""
+    trimmed = url.strip()
+    match = _ARXIV_CANONICAL_RE.search(trimmed)
+    if match:
+        return f"arxiv:{match.group(1)}"
+    try:
+        parsed = urlparse(trimmed)
+    except Exception:
+        return trimmed
+    if not parsed.netloc:
+        return trimmed
+    return urlunparse((
+        "https",
+        parsed.netloc.lower(),
+        parsed.path.rstrip("/"),
+        "",
+        "",
+        "",
+    ))
+
+
 def normalise_url(url: str, base_url: str = "") -> Optional[str]:
     """
     Normalises a raw URL extracted from HTML into a fully qualified URL.
@@ -896,12 +933,13 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
     all_raw = [item for sublist in results for item in sublist]
     seen: dict = {}
     for item in all_raw:
-        link = item['link']
-        if link in seen:
-            seen[link]['source_feeds'] = list(set(seen[link]['source_feeds'] + item['source_feeds']))
+        key = canonical_url(item['link'])
+        if key in seen:
+            seen[key]['source_feeds'] = list(set(seen[key]['source_feeds'] + item['source_feeds']))
         else:
-            seen[link] = item
-    unique_unseen = [i for i in seen.values() if i['link'] not in seen_links]
+            seen[key] = item
+    seen_canonical = {canonical_url(link) for link in seen_links}
+    unique_unseen = [i for i in seen.values() if canonical_url(i['link']) not in seen_canonical]
     
     # Apply Sage Scoring
     for item in unique_unseen:

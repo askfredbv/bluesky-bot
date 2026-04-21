@@ -1,6 +1,6 @@
 # Backlog
 
-Living list of pending work and parked ideas. Nothing here is urgent — the bot is shipping fine at v4.15.0.
+Living list of pending work and parked ideas. Nothing here is urgent — the bot is shipping fine at v4.15.1.
 
 ---
 

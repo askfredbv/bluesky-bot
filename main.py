@@ -15,7 +15,7 @@ from src.config import (
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
-    get_link_metadata, prune_pioneer_recent,
+    get_link_metadata, prune_pioneer_recent, canonical_url,
 )
 from src.agents import (
     generate_content, handle_interactions, generate_post_image,
@@ -263,7 +263,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 
     dirty = False
     if mode == "curator" and news_items:
-        seen_data["links"] = (seen_data["links"] + [i['link'] for i in news_items])[-200:]
+        seen_data["links"] = (seen_data["links"] + [canonical_url(i['link']) for i in news_items])[-200:]
 
         # Sense topic to update memory
         topic_cat = news_items[0].get('detected_topic', 'General')
@@ -288,7 +288,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
-    SafeLogger.info("run_started", "--- AskFred Engine v4.15.0 ---")
+    SafeLogger.info("run_started", "--- AskFred Engine v4.15.1 ---")
 
     settings = load_settings_or_exit()
     creds = settings.credentials

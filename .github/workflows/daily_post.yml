@@ -45,3 +45,36 @@ jobs:
           POST_JITTER_MIN_SECONDS: 30
           POST_JITTER_MAX_SECONDS: 300
         run: python main.py
+
+      - name: Snapshot Gist state
+        if: success()
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: |
+          mkdir -p backup
+          python - <<'PY'
+          import json, os, urllib.request
+          gist_id = os.environ["GIST_ID"]
+          token = os.environ["GIST_TOKEN"]
+          req = urllib.request.Request(
+              f"https://api.github.com/gists/{gist_id}",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=15) as r:
+              data = json.load(r)
+          for name, f in data["files"].items():
+              with open(f"backup/{name}", "w", encoding="utf-8") as out:
+                  out.write(f["content"])
+          PY
+
+      - name: Upload state snapshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gist-state-${{ github.run_id }}
+          path: backup/
+          retention-days: 90
