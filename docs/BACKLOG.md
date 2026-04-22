@@ -6,12 +6,13 @@ Living list of pending work and parked ideas. Bot is shipping fine at v4.15.2. N
 
 ## Priority order
 
-1. **`PLAN_engagement.md` Phase 1** (capture metrics + feed health + per-post idempotency; see §1)
-2. **Open issues from the Apr 22 run** — fix when convenient (see §2)
-3. **Observational items** — wait for more runs, then decide (see §3)
-4. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
+1. **Post-length hard enforcement** (live quality/credibility bug; see §2 first item — promoted above Phase 1)
+2. **`PLAN_engagement.md` Phase 1** (capture metrics + feed health + per-post idempotency; see §1)
+3. **Remaining open issues** — fix when convenient (see §2)
+4. **Observational items** — wait for more runs, then decide (see §3)
+5. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
 
-The reason §1 is first: every item in §2–§4 currently decides on gut feel. Phase 1 of the engagement plan is ~5h that turns the whole rest of this list from "guess and hope" into "check the data, then decide." Nothing else unlocks as much.
+The post-length issue jumped the queue on 2026-04-22 after a Mastodon post landed ending mid-sentence ("De uitdaging blijft echter om"). A cut-off conclusion is a bot tell — halves the credibility of every well-ended post. Fix before collecting engagement data; otherwise Phase 1 just measures a credibility problem we already know about.
 
 ---
 
@@ -42,16 +43,25 @@ Fix order:
 
 Try #1; default to #3 if that fails.
 
-### Curator post 0 generated 476 chars vs 300-char cap — quality regression
+### Post length is a hard requirement — posts must not be truncated or split [**promoted 2026-04-22**]
 
-Defensive splitter caught it at a word boundary, so the post landed. But a 58% overshoot means the v4.14 single-post-default is being silently undone by the splitter path.
+Originally noted as "Curator post 0 generated 476 chars vs 300-char cap." A Mastodon post that morning ended *mid-sentence* with "De uitdaging blijft echter om" — conclusion missing. That's not a word-boundary split you can defend; it's a bot tell. A post that ends mid-thought halves the credibility of every post that ends well.
 
-**Measure before fixing.** Grep the last 2 weeks of Actions logs for `post_length_exceeded`. If it's happening ~once a week, not worth a fix. If it's most runs, prompt has drifted.
+**Root cause:**
+- No `max_output_tokens` set in `_build_generate_kwargs` — Gemini defaults apply
+- `_split_and_constrain_posts` in `broadcasters.py` silently threads overlong content at word boundaries, undoing the v4.14 single-post default by stealth
+- A model that stops mid-sentence (or generates >limit) reaches the splitter, which chops at a space and posts the stub
 
-Candidate fixes:
-1. Tighten `SYSTEM_INSTRUCTIONS_CURATOR` — explicit "your post body must be under 260 chars; URL/handle room comes out of that budget."
-2. Regenerate on overshoot — if post 0 > 300 chars, retry once with a "your last draft was N chars over the limit — rewrite shorter" follow-up. Keeps the single-post default when the model gets it wrong.
-3. Lower the prompt's target to 250 chars so natural overshoot lands under 300 (hackier).
+**Hard-enforcement fix (no splitter-as-overflow):**
+
+1. **Cap generation at composition time.** Add `max_output_tokens` in `_build_generate_kwargs` sized to the platform floor: Bluesky ~100 tokens (300 chars), Mastodon ~170 tokens (500). Forces the model to fit.
+2. **Invariant check + single regeneration.** After generation, if any intended post > platform limit, regenerate once with a corrective turn ("your draft was N chars over — rewrite shorter, preserve the conclusion"). Not split. Not truncate.
+3. **Second overshoot = skip.** If regeneration also overshoots, log `post_length_exceeded_after_regen` and **do not post**. Missing one run beats posting a bot tell.
+4. **Delete `_split_and_constrain_posts`.** If content arrives at broadcast time still over the limit, the invariant upstream failed — that's a bug to surface, not paper over.
+
+**Explicit non-goal:** auto-splitting into threads as length recovery. Threading is an editorial choice by the model; genuine 2-post content should arrive as two complete-sentence posts from Gemini, not one blob chopped by us.
+
+Effort: ~2h. Priority: **above §1** — this is a live quality/credibility issue, not a data-collection unlock. Fix first, then Phase 1.
 
 ---
 
