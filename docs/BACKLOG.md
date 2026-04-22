@@ -4,6 +4,34 @@ Living list of pending work and parked ideas. Nothing here is urgent — the bot
 
 ---
 
+## Open issues (found in April 22 run — fix when convenient)
+
+### Snapshot Gist state step 404s (cosmetic)
+
+Added in `7fe67ce` (April 21). The post-run step calls `GET /gists/{id}` via `urllib` with the same `GIST_TOKEN` the bot itself uses — the bot succeeds, the snapshot 404s. Bot is unaffected.
+
+Hypotheses to try (pick one):
+1. **Add a `User-Agent` header** to the urllib request. GitHub's API sometimes responds 404 instead of the true error when UA is absent. Lowest-effort try.
+2. **Swap urllib for `httpx`** to match the bot's code path exactly. Removes the comparison gap — if the bot works and the snapshot uses the same client, they should fail or succeed together.
+3. **Delete the snapshot step entirely.** The Gist already *is* the persistent store, and Gists have built-in version history via `GET /gists/{id}/{sha}`. A separate Actions artifact is belt-and-suspenders that's now noisy. Simplest answer if rollback-from-Actions-tab wasn't a hard requirement.
+
+Recommendation: try #1 first (one-line change); if still 404, default to #3.
+
+### Curator post 0 generated 476 chars vs 300-char cap (quality regression)
+
+The defensive splitter caught it at a word boundary, so the post still landed correctly — but the model is now overshooting by 58%. The auto-split produces a 2-post thread when the v4.14 voice overhaul wanted a single-post default. Net effect: voice overhaul partially undone by the splitter path.
+
+Before fixing, measure: scan the last 2 weeks of Actions logs for `post_length_exceeded` events. If it's happening ~once a week, not worth a fix. If it's most runs, the prompt has drifted.
+
+Candidate fixes (in order of preference):
+1. **Tighten the prompt** — explicit "your post body must be under 260 chars; URL/handle room comes out of that budget" in `SYSTEM_INSTRUCTIONS_CURATOR`. Zero latency cost, might just work.
+2. **Regenerate on overshoot** — if post 0 > 300 chars, retry once with an explicit "your last draft was N chars over the limit — rewrite shorter" follow-up. Costs one extra Gemini call on miss, keeps the single-post default intact when the model gets it wrong.
+3. **Lower the prompt's target** — set the prompt's target to 250 chars so the model's natural overshoot lands under 300. Hackier than #1, same idea.
+
+Note: check whether this regression started after v4.14 (voice overhaul) specifically. If pre-v4.14 logs show no `post_length_exceeded`, the voice prompt changes are probably the cause.
+
+---
+
 ## Pending (observational — revisit after more runs)
 
 - **Watch The Register main feed for off-topic drift.** `https://www.theregister.com/headlines.atom` was added in v4.13 alongside the software-specific feed. If Curator runs start surfacing space/security-humour content that isn't AI/tech dev-relevant, remove it from `RSS_FEEDS` in `src/config.py`. The software feed (`/software/headlines.atom`) stays either way.
