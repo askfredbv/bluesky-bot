@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.15.1)
+# Bluesky & Mastodon Daily Poster (v4.15.2)
 
 ![Daily Post](https://github.com/askfredbv/bluesky-bot/actions/workflows/daily_post.yml/badge.svg)
 
@@ -158,7 +158,7 @@ The following can also be overridden via environment variables without touching 
 │   ├── logger.py              # SafeLogger — strips credentials from output
 │   ├── settings.py            # Environment variable loading and validation
 │   └── utils.py               # RSS fetching, scoring, metadata scraping, state I/O
-├── tests/                     # pytest suite (118 tests)
+├── tests/                     # pytest suite (158 tests)
 ├── .github/
 │   ├── workflows/daily_post.yml      # workflow_dispatch target; triggered by cron-job.org at 08:00 and 14:30 UTC
 │   ├── workflows/schedule-health.yml # Read-only daily monitor for missed external dispatches
