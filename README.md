@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.15.2)
+# Bluesky & Mastodon Daily Poster (v4.15.3)
 
 ![Daily Post](https://github.com/askfredbv/bluesky-bot/actions/workflows/daily_post.yml/badge.svg)
 

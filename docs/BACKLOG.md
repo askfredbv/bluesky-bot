@@ -1,18 +1,17 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping fine at v4.15.2. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
+Living list of pending work and parked ideas. Bot is shipping fine at v4.15.3. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
 
 ---
 
 ## Priority order
 
-1. **Post-length hard enforcement** (live quality/credibility bug; see §2 first item — promoted above Phase 1)
-2. **`PLAN_engagement.md` Phase 1** (capture metrics + feed health + per-post idempotency; see §1)
-3. **Remaining open issues** — fix when convenient (see §2)
-4. **Observational items** — wait for more runs, then decide (see §3)
-5. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
+1. **`PLAN_engagement.md` Phase 1** (capture metrics + feed health + per-post idempotency; see §1)
+2. **Remaining open issues** — fix when convenient (see §2)
+3. **Observational items** — wait for more runs, then decide (see §3)
+4. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
 
-The post-length issue jumped the queue on 2026-04-22 after a Mastodon post landed ending mid-sentence ("De uitdaging blijft echter om"). A cut-off conclusion is a bot tell — halves the credibility of every well-ended post. Fix before collecting engagement data; otherwise Phase 1 just measures a credibility problem we already know about.
+Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for the retro. Phase 1 is now the clear next step.
 
 ---
 
@@ -43,25 +42,24 @@ Fix order:
 
 Try #1; default to #3 if that fails.
 
-### Post length is a hard requirement — posts must not be truncated or split [**promoted 2026-04-22**]
+### Post length is a hard requirement [**shipped v4.15.3, 2026-04-22**]
 
-Originally noted as "Curator post 0 generated 476 chars vs 300-char cap." A Mastodon post that morning ended *mid-sentence* with "De uitdaging blijft echter om" — conclusion missing. That's not a word-boundary split you can defend; it's a bot tell. A post that ends mid-thought halves the credibility of every post that ends well.
+Retro kept for reference — the anti-pattern is worth remembering.
+
+A Mastodon post ended *mid-sentence* with "De uitdaging blijft echter om" — conclusion missing. That's a bot tell. A post that ends mid-thought halves the credibility of every post that ends well.
 
 **Root cause:**
-- No `max_output_tokens` set in `_build_generate_kwargs` — Gemini defaults apply
-- `_split_and_constrain_posts` in `broadcasters.py` silently threads overlong content at word boundaries, undoing the v4.14 single-post default by stealth
-- A model that stops mid-sentence (or generates >limit) reaches the splitter, which chops at a space and posts the stub
+- No `max_output_tokens` in `_build_generate_kwargs` — Gemini defaults applied
+- `_safe_truncate_post` in `agents.py` word-boundary-trimmed before validation
+- `_split_and_constrain_posts` in `broadcasters.py` word-boundary-split anything still over-length
 
-**Hard-enforcement fix (no splitter-as-overflow):**
-
-1. **Cap generation at composition time.** Add `max_output_tokens` in `_build_generate_kwargs` sized to the platform floor: Bluesky ~100 tokens (300 chars), Mastodon ~170 tokens (500). Forces the model to fit.
-2. **Invariant check + single regeneration.** After generation, if any intended post > platform limit, regenerate once with a corrective turn ("your draft was N chars over — rewrite shorter, preserve the conclusion"). Not split. Not truncate.
-3. **Second overshoot = skip.** If regeneration also overshoots, log `post_length_exceeded_after_regen` and **do not post**. Missing one run beats posting a bot tell.
-4. **Delete `_split_and_constrain_posts`.** If content arrives at broadcast time still over the limit, the invariant upstream failed — that's a bug to surface, not paper over.
+**Fix (shipped):**
+1. Cap generation at `max_output_tokens=600` — the model physically cannot emit more than a 5-post × 300-char thread plus JSON overhead.
+2. `_validate_thread_shape` hard-rejects overshoot (was warn-only) → triggers retry/fallback.
+3. Broadcasters enforce the invariant at send time; over-length content → skip the platform, log `broadcast_invariant_violated`. Missing one run beats posting a bot tell.
+4. Deleted `_safe_truncate_post` and `_split_and_constrain_posts` — if content arrives over-length, surface the upstream bug, don't paper over it.
 
 **Explicit non-goal:** auto-splitting into threads as length recovery. Threading is an editorial choice by the model; genuine 2-post content should arrive as two complete-sentence posts from Gemini, not one blob chopped by us.
-
-Effort: ~2h. Priority: **above §1** — this is a live quality/credibility issue, not a data-collection unlock. Fix first, then Phase 1.
 
 ---
 
