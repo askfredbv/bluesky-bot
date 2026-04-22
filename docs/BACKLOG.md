@@ -6,26 +6,26 @@ Living list of pending work and parked ideas. Bot is shipping fine at v4.15.2. N
 
 ## Priority order
 
-1. **Engagement feedback — Slice A** (collect data; see §1)
+1. **`PLAN_engagement.md` Phase 1** (capture metrics + feed health + per-post idempotency; see §1)
 2. **Open issues from the Apr 22 run** — fix when convenient (see §2)
 3. **Observational items** — wait for more runs, then decide (see §3)
-4. **Bigger parked plans** — execute when there's a lull or a trigger (see §4)
-5. **Future ideas** — not yet plans; note them so they don't get lost (see §5)
+4. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
 
-The reason §1 is first: every item in §2–§5 currently decides on gut feel. Slice A of the engagement plan is ~3h of work that turns the whole rest of this list from "guess and hope" into "check the data, then decide." Nothing else unlocks as much.
+The reason §1 is first: every item in §2–§4 currently decides on gut feel. Phase 1 of the engagement plan is ~5h that turns the whole rest of this list from "guess and hope" into "check the data, then decide." Nothing else unlocks as much.
 
 ---
 
 ## §1 — Next up
 
-### Engagement feedback — Slice A (data collection only)
+### `PLAN_engagement.md` Phase 1 — Capture (data + observability + idempotency)
 
-See `docs/PLAN_engagement_feedback.md`. Slice A captures post IDs at broadcast time, fetches likes/reposts/replies for posts 24h–30d old on each run, and writes a new `post_metrics.json` to the Gist. Zero behaviour change — no scoring adjustments, no voice changes.
+See `docs/PLAN_engagement.md`. Phase 1 bundles three changes that share a broadcaster signature change (`BroadcastResult`):
 
-Effort: ~3h. Output: real data flowing. After two runs you can verify it works; after two weeks you have enough to inform every other decision on this list.
+- **Post metrics** — capture post IDs at broadcast, refresh likes/reposts/replies for posts 24h–30d old, write `post_metrics.json` to the Gist
+- **Feed health** — `fetch_single_feed` returns `FeedFetchResult`; aggregated into `feed_health.json` in the Gist
+- **Per-post idempotency** — drop `@retry_with_backoff` from broadcasters, add per-post retry, emit `*_partial_delivery` on exhaustion. Fixes the silent re-send bug on Mastodon
 
-**Slice B** (weekly digest workflow) follows naturally once A is running — another ~1h.
-**Slice C** (feeding signals back into scoring) only after 4+ weeks of data — ~3h.
+Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed. After two runs you can verify it works; after two weeks you have enough to run Phase 2 (digest) usefully.
 
 ---
 
@@ -59,26 +59,26 @@ Candidate fixes:
 
 - **The Register main feed drift.** `https://www.theregister.com/headlines.atom` added in v4.13 alongside the software-specific feed. If Curator runs start surfacing space/security-humour content that isn't AI/tech dev-relevant, remove it from `RSS_FEEDS`. The `/software/headlines.atom` feed stays either way.
 - **`CONSENSUS_SYNERGY_BONUS` retune.** Currently `1.5` per additional feed. With 25 feeds, a viral story covered by 5+ sources gets `+6.0` on top of its base score — could start dominating every Curator run. Drop to `1.2` if the Curator starts repeatedly picking the same wire-story everyone covers over genuinely distinctive items.
+- **v4.16 slim refactor.** When `src/utils.py` (923 lines) or `src/config.py` (525 lines) grows another ~100 lines, do the split-into-focused-modules refactor before the next feature. Target layout: `state_io.py`, `feeds.py`, `scoring.py`, `url_safety.py`, `retry.py`, `image_io.py`; `config.py` keeps tunable constants only, prompt text moves to `prompts.py`, curated data to `src/data/{pioneer,feeds,topics}.py`. Mechanical; ~3h with tests. No plan doc needed — when the trigger fires, the layout above is the plan.
 
-Both decisions get trivial once §1 (engagement feedback) is running — no more guessing at "is the Register feed hurting?"; look at the engagement data.
-
----
-
-## §4 — Parked plans (ready to execute on trigger)
-
-Everything here has a written plan. When the trigger fires, the work is 15 min of re-reading, not a fresh design session.
-
-- **`docs/PLAN_engagement_feedback.md` — feedback loop.** Slice A is §1 above. Slice B (weekly digest) and Slice C (scoring ingestion) follow. **Strategist-fallback frequency** falls out of Slice B's digest for free — no separate plan needed.
-- **`docs/PLAN_proactive_replies.md` — proactive replies.** Three phases: virtual-follow recon script (~1.5h) → 2–3 handles behind human-approval gate (~4h) → expansion once traction shows. Approval gate is the guardrail against tone-deaf-reply blast radius.
-- **`docs/PLAN_feed_health.md` — feed health observability.** ~1.5h. Capture `FeedFetchResult` per feed → `feed_health.json` in Gist → weekly digest flags silently-dead feeds. Trigger: after engagement Slice A ships (shares infrastructure).
-- **`docs/PLAN_per_post_idempotency.md` — thread-broadcast idempotency.** ~2h. Fix `retry_with_backoff` re-sending posts 1–2 when post 3 of a thread 429s. Trigger: a duplicate actually appears in production. Until then: premature — threads are mostly 1–2 posts now.
-- **`docs/PLAN_v4.16_slim.md` — three-slice refactor.** Split `src/utils.py` (923 lines), split `src/config.py` (525 lines), replace 3-stage frozen dataclass chain with `RunContext`. Pure hygiene. Execute when the next feature would benefit from the cleaner shape, not before.
+All three decisions get trivial once §1 (engagement metrics) is running — no more guessing at "is the Register feed hurting?"; look at the engagement data.
 
 ---
 
-## §5 — Future ideas (not yet plans)
+## §4 — The plan
 
-Empty for now. When a new idea shows up that's not yet concrete enough for a plan, park it here. Consolidation on 2026-04-22 promoted everything that was previously in §5 into real plans in §4.
+**`docs/PLAN_engagement.md`** is now the single plan covering everything that needs sequencing:
+
+| Phase | What | Effort | Trigger |
+|---|---|---|---|
+| 1 | Capture: metrics + feed health + per-post idempotency | ~5h | **Now** (this is §1 above) |
+| 2 | Surface: weekly digest (posts + feeds + strategist-fallback freq + partial-delivery counts) | ~1h | After Phase 1 has run 2+ weeks |
+| 3 | Act: scoring multiplier, Mentor topic weighting, pioneer pruning | ~3h | After 4+ weeks of Phase 1 data |
+| 4a | Recon: virtual-follow watchlist script | ~1.5h | Anytime after Phase 1 ships |
+| 4b | MVP replies: 2–3 handles, human approval gate | ~4h | After 4a produces ranked watchlist |
+| 4c | Expansion: 8–10 handles, gate maybe lifted on trusted handles | ongoing | After 2+ weeks of 4b approved-reply data |
+
+Total path-to-finish: ~14.5h spread over 2–3 months of calendar time, gated by data accumulation. Each phase has explicit success criteria that gate the next.
 
 ---
 
@@ -90,5 +90,6 @@ Empty for now. When a new idea shows up that's not yet concrete enough for a pla
 
 ## Changelog
 
-- 2026-04-22: Pioneer-dimension telemetry item removed from §5 — subsumed by `PLAN_engagement_feedback` Slice A/B (post metrics already capture `pioneer_id` context, so pioneer-category performance falls out of the digest for free).
-- 2026-04-22: Consolidated §5 future ideas into §4 plans. Promoted per-post idempotency and feed health into their own plan docs (`PLAN_per_post_idempotency.md`, `PLAN_feed_health.md`). Strategist-fallback frequency folded into `PLAN_engagement_feedback.md` Slice B (free rider of the digest, since `mode` is already in the post_metrics schema). §5 is now empty — when data-driven triggers fire, the plans are ready to execute.
+- 2026-04-22: Pioneer-dimension telemetry item removed from §5 — subsumed by engagement plan (post metrics already capture `pioneer_id` context, so pioneer-category performance falls out of the digest for free).
+- 2026-04-22: Consolidated §5 future ideas into §4 plans. Promoted per-post idempotency and feed health into their own plan docs. Strategist-fallback frequency folded into the engagement plan's digest (free rider — `mode` is in the post_metrics schema).
+- 2026-04-22: **Collapsed five plan files into one.** `PLAN_engagement.md` is now THE plan, with four phases covering metrics + feed health + per-post idempotency (Phase 1), weekly digest (Phase 2), scoring feedback (Phase 3), and proactive replies (Phase 4 a/b/c). Deleted: `PLAN_engagement_feedback.md`, `PLAN_per_post_idempotency.md`, `PLAN_feed_health.md`, `PLAN_proactive_replies.md`, `PLAN_v4.16_slim.md`. The v4.16 slim refactor moved to BACKLOG §3 as a one-liner with the layout inline (no plan doc needed for a mechanical file split). §5 removed entirely — the unified plan structure makes a "future ideas" bucket redundant; new ideas either fit into a phase or live in §3 until a trigger.
