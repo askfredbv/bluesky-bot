@@ -38,6 +38,8 @@ class BroadcastResult:
 
 Drop `@retry_with_backoff` from both broadcasters. Move retry decisions inside, at per-post granularity. Posts already on the wire stay there; failures stop the thread cleanly with `bluesky_partial_delivery` / `mastodon_partial_delivery` (event names symmetric, both already prefixed by platform). `BroadcastResult.sent_uris` is populated whether delivery completed or stopped early.
 
+**Retry budget is per-thread, not per-post** — the budget counters (rate-limit and transient) are initialised once when the broadcaster starts and shared across all posts in the thread. Otherwise a 5-post thread × 3 rate-limit retries = up to 45 min of sleeps on a sustained 429. Budget exhaustion stops the thread cleanly; the next run picks up where this one left off (seen-article state already handles idempotency at the article level).
+
 ### 1b. Retry helper split
 
 Today `retry_with_backoff` mixes 429 logic and transient-error logic in one decorator. Extract into focused helpers callable from per-post loops:
@@ -47,16 +49,21 @@ def classify_retry(e: Exception) -> Literal["rate_limit", "transient"]:
     """Duck-type inspect e.response.status_code."""
 
 async def sleep_for_rate_limit(attempt, exception):
-    """Honour Retry-After / ratelimit-reset; fall back to
-    RATE_LIMIT_BASE_WAIT_SECONDS * attempt. Raises if attempt > RATE_LIMIT_MAX_RETRIES."""
+    """Honour header hints from either platform; fall back to
+    RATE_LIMIT_BASE_WAIT_SECONDS * attempt. Raises if attempt > RATE_LIMIT_MAX_RETRIES.
+
+    Header normalisation (both shapes handled):
+    - Bluesky: `Retry-After` (seconds, integer)
+    - Mastodon: `X-RateLimit-Reset` (unix timestamp, ISO-8601) — convert to delay-from-now
+    """
 
 async def sleep_for_transient(attempt):
-    """BACKOFF_FACTOR ** attempt + jitter. Raises if attempt >= MAX_API_RETRIES."""
+    """BACKOFF_FACTOR ** attempt + jitter. Raises if attempt > MAX_API_RETRIES."""
 ```
 
 `retry_with_backoff` stays as a thin decorator using these helpers — existing call sites (`get_link_metadata`, `update_profile_bio`, `mastodon.media_post`) keep their semantics. Mastodon's existing `_status_post_with_timeout_and_retry` swaps its hand-rolled `min(2^n, 5)` sleep for `sleep_for_rate_limit` / `sleep_for_transient` — gains 429 awareness it doesn't have today.
 
-Also fix the existing strict/non-strict off-by-one between the two retry budgets (`> RATE_LIMIT_MAX_RETRIES` vs `>= MAX_API_RETRIES`). Pick strict-greater.
+Also fix the existing strict/non-strict off-by-one between the two retry budgets. Current code mixes `> RATE_LIMIT_MAX_RETRIES` (rate-limit path allows 4 attempts) and `>= MAX_API_RETRIES` (transient path allows 3). **Pick strict-greater everywhere** → both paths get 4 attempts (1 initial + `MAX_..._RETRIES` retries), matching the constant naming.
 
 ### 1c. Post metrics
 
@@ -87,7 +94,23 @@ New Gist file `post_metrics.json`. Capped at 100 entries × 2 platforms; pruned 
 }
 ```
 
-New `src/metrics.py`: `load_post_metrics()`, `save_post_metrics()`, `record_post_metric()`, `refresh_stale_metrics(bsky_client, mastodon_client)`, `prune_old_metrics()`. Same Gist-fallback pattern as `seen_articles`. New stage `capture_post_metrics_stage` in `main.py`, runs after `broadcasting_stage`, consumes `BroadcastResult.sent_uris`. `refresh_stale_metrics` runs once per run (clients warm) — only hits API for rows where `fetched_at > 24h` AND `posted_at < 30d`. Steady-state ~10–20 API calls per run.
+New `src/metrics.py`: `load_post_metrics()`, `save_post_metrics()`, `record_post_metric()`, `refresh_stale_metrics(bsky_client, mastodon_client)`, `prune_old_metrics()`. Same Gist-fallback pattern as `seen_articles`. New stage `capture_post_metrics_stage` in `main.py`, runs after `broadcasting_stage`, consumes `BroadcastResult.sent_uris`.
+
+**Refresh policy:** `refresh_stale_metrics` runs once per run (clients warm) — only hits API for rows where `posted_at > 2h AND fetched_at > 20h AND posted_at < 30d`. The 2h floor skips hour-old posts (nothing interesting to measure yet); the 20h stale threshold means every post is refreshed once per day even with 2 runs/day. Steady-state ~10–20 API calls per run. Intentional dead zone: 0–2h engagement data is never captured (acceptable — Phase 2 digest is a 7-day view).
+
+**BroadcastPayload gains `metrics_context: Dict[str, Any]`**, populated upstream (`content_prep_stage` + `broadcasting_stage`) with the keys the capture stage needs — none of which are currently plumbed end-to-end:
+
+| Key | Source |
+|---|---|
+| `mode` | already on `BroadcastPayload` |
+| `language` | `Settings.platform.language` (already available) |
+| `topic` | `chosen_topic` — already on `BroadcastPayload` |
+| `source_domain` | derived from `news_items[0]['link']` in `content_prep_stage` |
+| `pioneer_id` | `pioneer_entry['id']` — already on `BroadcastPayload` |
+| `had_image` | `image_bytes is not None` — **currently a local var in `broadcasting_stage`**; promote to `BroadcastPayload` or compute a bool upstream |
+| `had_link_card` | `link_meta is not None` — **currently dropped between `ContentPrepPayload` and `BroadcastPayload`**; plumb through |
+
+`content_preview`, `posted_at`, `thread_position`, `post_id` derive from the broadcast loop itself — no upstream plumbing needed.
 
 Platform APIs:
 - Bluesky: `client.app.bsky.feed.get_posts({"uris": [...]})` returns `likeCount` / `repostCount` / `replyCount` per post. Batch up to 25 URIs per call.
