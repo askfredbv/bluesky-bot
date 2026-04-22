@@ -31,16 +31,16 @@ Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed
 
 ## §2 — Open issues (found in the April 22 run)
 
-### Snapshot Gist state step 404s — cosmetic, bot unaffected
+### Snapshot Gist state step 404s — cosmetic, bot unaffected [**fix #1 shipped 2026-04-22, awaiting next run to validate**]
 
 Added in `7fe67ce` (April 21). Post-run step calls `GET /gists/{id}` via `urllib` and 404s, while the bot itself read and wrote the same Gist successfully in the same run.
 
 Fix order:
-1. **Add a `User-Agent` header** to the urllib request — GitHub sometimes 404s on missing UA. One-line change.
+1. **Add a `User-Agent` header** to the urllib request — GitHub sometimes 404s on missing UA. One-line change. **Shipped in `67bf81f`.**
 2. **Swap urllib for `httpx`** to match the bot's code path. Removes the comparison gap.
 3. **Delete the step entirely.** The Gist is already the persistent store and has built-in version history via `GET /gists/{id}/{sha}` — the Actions artifact is belt-and-suspenders that's now noisy.
 
-Try #1; default to #3 if that fails.
+If #1 doesn't stick after the next 2–3 runs, default to #3.
 
 ### Post length is a hard requirement [**shipped v4.15.3, 2026-04-22**]
 
