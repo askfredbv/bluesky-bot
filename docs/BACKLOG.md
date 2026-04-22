@@ -31,16 +31,15 @@ Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed
 
 ## §2 — Open issues (found in the April 22 run)
 
-### Snapshot Gist state step 404s — cosmetic, bot unaffected [**fix #1 shipped 2026-04-22, awaiting next run to validate**]
+### ~~Snapshot Gist state step 404s~~ [**resolved 2026-04-22**]
 
-Added in `7fe67ce` (April 21). Post-run step calls `GET /gists/{id}` via `urllib` and 404s, while the bot itself read and wrote the same Gist successfully in the same run.
+Root cause was *not* a urllib quirk: `GIST_TOKEN` and `GIST_ID` were simply missing from the repo secrets. The main bot silently degraded (`_save_gist_state` catches all exceptions with just a warn log); the snapshot step failed loudly because it called `raise_for_status()` — which was actually the better signal.
 
-Fix order:
-1. **Add a `User-Agent` header** to the urllib request — GitHub sometimes 404s on missing UA. One-line change. **Shipped in `67bf81f`.**
-2. **Swap urllib for `httpx`** to match the bot's code path. Removes the comparison gap.
-3. **Delete the step entirely.** The Gist is already the persistent store and has built-in version history via `GET /gists/{id}/{sha}` — the Actions artifact is belt-and-suspenders that's now noisy.
+Lessons:
+- **Silent state-persistence failures are a worse outcome than noisy ones.** The warn-only path in `_save_gist_state` meant the bot ran for a week+ writing to `/tmp` with no one noticing. Phase 1's metrics capture should avoid repeating this pattern — surface `gist_state_save_failed` count in the weekly digest.
+- Fine-grained PATs DO work for Gists — Account-scope permission, not Repository-scope.
 
-If #1 doesn't stick after the next 2–3 runs, default to #3.
+Fixes landed: `67bf81f` (UA header, cargo-culted but harmless), `8a9e07a` (urllib→httpx, keeps the codepath aligned with the bot's own Gist access).
 
 ### Post length is a hard requirement [**shipped v4.15.3, 2026-04-22**]
 
