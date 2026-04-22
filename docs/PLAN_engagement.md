@@ -161,6 +161,33 @@ class FeedFetchResult:
 | `tests/test_broadcasters_partial.py` — **new** | Mid-thread failure on both platforms; verify earlier posts not re-sent and `*_partial_delivery` is logged |
 | `tests/test_metrics.py` — **new** | post_metrics + feed_health: shape tests, refresh, prune |
 
+### 1f. Execution order — six shippable commits
+
+Each step is a single commit that leaves main green. Ordered by dependency and risk — 3b is the only step with real behavioural change, and it's deliberately isolated so the preceding work de-risks it.
+
+| # | Step | Scope | Time | Risk |
+|---|---|---|---|---|
+| 1 | **Retry helper split** (pure refactor) | `src/utils.py`, `tests/test_retry.py` | 45m | low |
+| 2 | **FeedFetchResult + feed_health.json** | `src/utils.py`, `src/metrics.py` (new), `main.py`, `tests/test_metrics.py` (new) | 1h | low |
+| 3a | **BroadcastResult return type** (keep `@retry_with_backoff`) | `src/broadcasters.py`, `main.py`, `tests/test_broadcasters.py` | 45m | low |
+| 3b | **Drop `@retry_with_backoff` + per-post retry** | `src/broadcasters.py`, tests extended | 1.5h | **HIGH** |
+| 4 | **metrics_context plumbing + record-on-broadcast** | `main.py`, `src/metrics.py` extended, `tests/test_metrics.py` | 1h | low |
+| 5 | **Refresh stale metrics + prune** | `src/metrics.py` extended, `main.py`, `tests/test_metrics.py` | 45m | low |
+
+**Checkpoint after 3b.** Stop and wait for at least one live production run before starting Step 4. 3b is the only step that changes what the bot actually does on the wire (retry semantics, partial-delivery handling) — every subsequent step builds on its return contract, so a regression caught after Step 5 is far more expensive to debug than one caught after 3b.
+
+**Step-level acceptance:**
+1. `pytest` green. No dispatch needed — existing callers get identical semantics (minus the off-by-one fix).
+2. `pytest` green. After next run, `feed_health.json` shows entries for all 25 feeds. No behaviour change to posts.
+3a. `pytest` green + one manual `workflow_dispatch` to confirm the unpack threads cleanly through `main.py`. `sent_uris` populated on success only at this step.
+3b. `pytest` green + one manual `workflow_dispatch`. Watch log for unexpected `*_partial_delivery`. **Pause here.**
+4. `pytest` green. After next run, `post_metrics.json` shows rows with zero `metrics` sub-objects (refresh hasn't run yet).
+5. `pytest` green. After 2 runs ~12h apart, previous day's rows show non-zero live like/repost counts.
+
+**Why 3a/3b split:** the `BroadcastResult` type change (3a) is mechanical — signature and unpack sites only. Dropping the decorator and writing per-thread retry state (3b) is where wire behaviour changes. Separating them means if a bug surfaces, git-bisect lands on the right commit immediately.
+
+**Cumulative time:** ~5h45m, natural split across two sessions with the 3b checkpoint as the boundary.
+
 ### Phase 1 success criteria (gate to Phase 2)
 
 After two runs:
