@@ -69,7 +69,7 @@ class AutomationPayload:
 async def get_recent_posts(client, handle: str) -> List[str]:
     """Fetched recent posts silently from a logged-in client."""
     try:
-        response = await client.app.bsky.feed.get_author_feed(actor=handle, limit=10)
+        response = await client.app.bsky.feed.get_author_feed({"actor": handle, "limit": 10})
         return [p.post.record.text for p in response.feed if hasattr(p.post.record, 'text')]
     except Exception as e:
         SafeLogger.error("recent_posts_fetch_failed", "Failed to fetch recent posts", exception=e, platform="bluesky")
