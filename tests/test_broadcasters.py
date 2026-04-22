@@ -7,9 +7,13 @@ from src import broadcasters
 
 
 @pytest.mark.asyncio
-async def test_post_to_bluesky_splits_overlong_content(monkeypatch):
+async def test_post_to_bluesky_skips_broadcast_on_overlong_content(monkeypatch):
+    """v4.15.3: overlong posts are an upstream invariant failure — skip the
+    platform's broadcast and log an error. Missing one run beats posting a
+    word-boundary-truncated bot tell.
+    """
     sent_payloads = []
-    warnings = []
+    errors = []
 
     class DummyPost:
         def __init__(self, idx):
@@ -18,71 +22,55 @@ async def test_post_to_bluesky_splits_overlong_content(monkeypatch):
 
     class DummyAsyncClient:
         async def send_post(self, text, embed=None, reply_to=None, facets=None):
-            sent_payloads.append(
-                {"text": text, "embed": embed, "reply_to": reply_to, "facets": facets}
-            )
+            sent_payloads.append({"text": text})
             return DummyPost(len(sent_payloads))
 
     async def no_sleep(_):
         return None
 
-    def capture_warn(event, message="", **fields):
-        warnings.append((event, message, fields))
+    def capture_error(event, message="", **fields):
+        errors.append((event, message, fields))
 
     monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(broadcasters.SafeLogger, "warn", capture_warn)
+    monkeypatch.setattr(broadcasters.SafeLogger, "error", capture_error)
 
     overlong = "x" * (MAX_POST_LENGTH_BSKY + 25)
     dummy_client = DummyAsyncClient()
     await broadcasters.post_to_bluesky(dummy_client, [overlong])
 
-    assert len(sent_payloads) == 2
-    assert all(len(payload["text"]) <= MAX_POST_LENGTH_BSKY for payload in sent_payloads)
-    assert warnings
+    assert sent_payloads == []  # nothing posted
+    assert any(event == "broadcast_invariant_violated" for event, _, _ in errors)
 
 
 @pytest.mark.asyncio
-async def test_post_to_mastodon_splits_overlong_content(monkeypatch):
+async def test_post_to_mastodon_skips_broadcast_on_overlong_content(monkeypatch):
+    """v4.15.3: overlong Mastodon posts also trigger the invariant skip."""
     posted_statuses = []
+    errors = []
 
     class DummyMastodon:
         def __init__(self, access_token, api_base_url):
             self.access_token = access_token
-            self.api_base_url = api_base_url
-
-        def instance(self):
-            return {
-                "configuration": {
-                    "statuses": {
-                        "max_characters": MAX_POST_LENGTH_MASTODON,
-                        "characters_reserved_per_url": 23,
-                    }
-                }
-            }
 
         def status_post(self, status, in_reply_to_id, visibility):
-            posted_statuses.append(
-                {
-                    "status": status,
-                    "in_reply_to_id": in_reply_to_id,
-                    "visibility": visibility,
-                }
-            )
+            posted_statuses.append({"status": status})
             return {"id": len(posted_statuses)}
 
     async def no_sleep(_):
         return None
 
+    def capture_error(event, message="", **fields):
+        errors.append((event, message, fields))
+
     monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
     monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(broadcasters.SafeLogger, "error", capture_error)
 
     overlong = "y" * (MAX_POST_LENGTH_MASTODON + 40)
     await broadcasters.post_to_mastodon("token", "https://mastodon.example", [overlong])
 
-    assert len(posted_statuses) == 2
-    assert all(
-        len(payload["status"]) <= MAX_POST_LENGTH_MASTODON for payload in posted_statuses
-    )
+    assert posted_statuses == []
+    assert any(event == "broadcast_invariant_violated" for event, _, _ in errors)
 
 
 @pytest.mark.asyncio

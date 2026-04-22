@@ -1,6 +1,6 @@
 import pytest
 
-from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate, generate_post_image, _build_generate_kwargs
+from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate, generate_post_image, _build_generate_kwargs, _validate_thread_shape
 from src import agents
 from src.config import REPLY_MAX_CHARS
 
@@ -407,16 +407,42 @@ def test_build_generate_kwargs_non_gemma_uses_system_instruction():
 
 
 def test_build_generate_kwargs_gemma_inlines_system_instruction():
-    """Gemma models must have the system prompt inlined — no config key."""
+    """Gemma models must have the system prompt inlined — no system_instruction key.
+
+    v4.15.3: config is now always present (carries max_output_tokens cap), but
+    Gemma still can't accept system_instruction — it goes in the user turn.
+    """
     kwargs = _build_generate_kwargs("gemma-3-27b-it", "SYS", "TASK")
     assert "SYS" in kwargs["contents"]
     assert "TASK" in kwargs["contents"]
-    assert "config" not in kwargs
+    assert "system_instruction" not in kwargs.get("config", {})
+    assert "max_output_tokens" in kwargs["config"]
 
 
 def test_build_generate_kwargs_gemma_detection_is_case_insensitive():
     """Model name casing shouldn't affect Gemma detection."""
     kwargs_lower = _build_generate_kwargs("gemma-3-27b-it", "S", "T")
     kwargs_upper = _build_generate_kwargs("GEMMA-3-27B-IT", "S", "T")
-    assert "config" not in kwargs_lower
-    assert "config" not in kwargs_upper
+    assert "system_instruction" not in kwargs_lower.get("config", {})
+    assert "system_instruction" not in kwargs_upper.get("config", {})
+
+
+def test_validate_thread_shape_rejects_overlong_post():
+    """v4.15.3: a post over MAX_POST_LENGTH_BSKY must hard-reject validation.
+
+    Silent truncation / word-boundary splitting was a bot tell — a
+    mid-sentence cut-off halves the credibility of every post that ends
+    well. Better to skip the run than ship the tell.
+    """
+    from src.config import MAX_POST_LENGTH_BSKY
+    overlong = "x" * (MAX_POST_LENGTH_BSKY + 1)
+    ok, reason = _validate_thread_shape([overlong])
+    assert ok is False
+    assert "exceeds" in reason
+
+
+def test_validate_thread_shape_accepts_post_at_limit():
+    from src.config import MAX_POST_LENGTH_BSKY
+    at_limit = "x" * MAX_POST_LENGTH_BSKY
+    ok, _ = _validate_thread_shape([at_limit])
+    assert ok is True

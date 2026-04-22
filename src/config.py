@@ -5,6 +5,12 @@ from typing import List, Dict
 MAX_POST_LENGTH_BSKY: int = 300
 MAX_POST_LENGTH_MASTODON: int = 500
 MAX_GENERATION_RETRIES: int = 3
+# Hard cap on Gemini output tokens — sized so the model physically cannot
+# emit more than a 5-post × 300-char thread plus JSON overhead. Primary
+# enforcement of post-length invariants (v4.15.3). 1 token ≈ 3.5 chars in
+# English, ~3 chars in Dutch; 5 posts × 300 chars ≈ 450 tokens; add slack
+# for JSON structure and variance → 600.
+MAX_OUTPUT_TOKENS: int = 600
 RECENT_POSTS_LIMIT: int = 20
 STYLE_MEMORY_POST_WINDOW: int = 10
 STYLE_MEMORY_MAX_OPENERS: int = 5

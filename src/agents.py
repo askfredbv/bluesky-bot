@@ -14,7 +14,7 @@ from src.config import (
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
-    LANGUAGE_OPTIONS, IMAGEN_MODEL,
+    LANGUAGE_OPTIONS, IMAGEN_MODEL, MAX_OUTPUT_TOKENS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
@@ -25,7 +25,6 @@ from src.utils import prune_pioneer_recent
 # v4.14 voice rules
 MAX_HASHTAGS_PER_POST: int = 2
 MIN_POST_CHARS_FOR_VALIDATION: int = 40  # was 60; lowered for image-led short posts
-WORD_BOUNDARY_LOOKBACK: int = 40  # how far back to search for whitespace when truncating
 from src.utils import update_replied_to
 from src.logger import SafeLogger
 
@@ -129,36 +128,21 @@ def _strip_trailing_question_bait(text: str) -> str:
     return trimmed
 
 
-def _safe_truncate_post(text: str, limit: int = MAX_POST_LENGTH_BSKY) -> str:
-    """Truncate at a word boundary if possible, otherwise hard-cut with ellipsis.
-
-    Fixes the v4.13 bug where overflowing posts ended mid-word. Searches the
-    last WORD_BOUNDARY_LOOKBACK chars of the truncated text for whitespace;
-    if found, cuts there. Otherwise hard-cuts at limit-1 and appends '…'.
-    """
-    if len(text) <= limit:
-        return text
-    head = text[:limit]
-    boundary = head.rfind(" ", limit - WORD_BOUNDARY_LOOKBACK, limit)
-    if boundary > 0:
-        return head[:boundary].rstrip()
-    # No whitespace within lookback — hard-cut and signal truncation
-    return text[:limit - 1].rstrip() + "…"
-
-
 def _apply_voice_trim(content_list: List[str]) -> List[str]:
-    """Apply all defensive trims to the model's output.
+    """Apply defensive voice trims to the model's output.
 
-    Order matters: strip questions FIRST (might shorten the post), then
-    hashtags (preserves trailing hashtags from accidental deletion), then
-    safe-truncate (last line of defense for length).
+    Strips reader-bait questions and excess hashtags. v4.15.3 removed the
+    word-boundary truncator that used to run here — silent truncation was
+    producing mid-sentence posts (a bot tell). Length is now enforced at
+    generation time via ``max_output_tokens`` and validated as a hard invariant
+    in ``_validate_thread_shape``. If content arrives here still over-length,
+    the upstream invariant failed and we want to know — don't paper over it.
     """
     trimmed = []
     for idx, post in enumerate(content_list):
         before = post
         post = _strip_trailing_question_bait(post)
         post = _strip_excess_hashtags(post)
-        post = _safe_truncate_post(post)
         if post != before:
             SafeLogger.info(
                 "voice_trim_applied",
@@ -248,7 +232,14 @@ def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
 
 
 def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
-    """Validate model output is a thread-like list of strings within configured bounds."""
+    """Validate model output is a thread-like list of strings within configured bounds.
+
+    v4.15.3: post-length overshoot is now a hard validation failure instead
+    of a warn-only log. A post that exceeds MAX_POST_LENGTH_BSKY triggers a
+    retry (same model) or fallback (next model). Silent truncation was a
+    bot tell — a mid-sentence cut-off ('…blijft echter om') halves the
+    credibility of every post that ends well, so we'd rather skip than ship.
+    """
     if not isinstance(content_list, list):
         return False, "Model output is not a list"
     if not all(isinstance(item, str) and item.strip() for item in content_list):
@@ -261,8 +252,9 @@ def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
                 "post_length_exceeded",
                 f"Post {idx} is {len(item)} chars, exceeds {MAX_POST_LENGTH_BSKY}",
                 post_index=idx,
-                length=len(item)
+                length=len(item),
             )
+            return False, f"Post {idx} is {len(item)} chars, exceeds {MAX_POST_LENGTH_BSKY}"
     return True, "Success"
 
 def _select_persona_variant(mode: str) -> Tuple[str, str]:
@@ -328,10 +320,25 @@ def _build_generate_kwargs(model_name: str, system_instr: str, task: str) -> dic
     (cleaner separation, better context window usage).
     Gemma models: inline system_instruction into the user turn — the only
     supported pattern for Gemma's API contract.
+
+    v4.15.3: both paths pass ``max_output_tokens`` via ``config`` as the
+    primary enforcement of post-length invariants. The model physically
+    cannot emit more than the cap — if it tries, it stops early and the
+    resulting JSON fails parsing, which triggers the retry/fallback path.
+    This is cheaper and more honest than post-hoc truncation.
     """
     if _is_gemma(model_name):
-        return {"contents": f"{system_instr}\n\n---\n\n{task}"}
-    return {"contents": task, "config": {"system_instruction": system_instr}}
+        return {
+            "contents": f"{system_instr}\n\n---\n\n{task}",
+            "config": {"max_output_tokens": MAX_OUTPUT_TOKENS},
+        }
+    return {
+        "contents": task,
+        "config": {
+            "system_instruction": system_instr,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+        },
+    }
 
 
 def _sync_generate(api_key: str, system_instr: str, task: str, model: str) -> str:

@@ -10,7 +10,6 @@ from src.agents import (
     MAX_HASHTAGS_PER_POST,
     _apply_voice_trim,
     _ends_with_reader_bait_question,
-    _safe_truncate_post,
     _strip_excess_hashtags,
     _strip_trailing_question_bait,
 )
@@ -80,36 +79,6 @@ def test_strip_trailing_question_bait_one_sentence_unchanged():
     """A single-sentence post that happens to be a question can't be safely trimmed."""
     text = "What do you think about distributed consensus protocols today?"
     assert _strip_trailing_question_bait(text) == text
-
-
-# ── _safe_truncate_post ──────────────────────────────────────────────────────
-
-def test_safe_truncate_post_under_limit_unchanged():
-    text = "Short post."
-    assert _safe_truncate_post(text) == text
-
-
-def test_safe_truncate_post_cuts_at_word_boundary():
-    text = "word " * 100  # 500 chars, plenty over 300
-    result = _safe_truncate_post(text)
-    assert len(result) <= MAX_POST_LENGTH_BSKY
-    # Should not end mid-word
-    assert not result.endswith("wor")
-    assert result.endswith("word") or result.endswith("…")
-
-
-def test_safe_truncate_post_hard_cuts_when_no_boundary():
-    """A single 400-char token has no whitespace — must hard-cut with ellipsis."""
-    text = "a" * 400
-    result = _safe_truncate_post(text)
-    assert len(result) <= MAX_POST_LENGTH_BSKY
-    assert result.endswith("…")
-
-
-def test_safe_truncate_post_respects_custom_limit():
-    text = "one two three four five six seven eight"
-    result = _safe_truncate_post(text, limit=15)
-    assert len(result) <= 15
 
 
 # ── _apply_voice_trim (integration) ──────────────────────────────────────────

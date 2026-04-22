@@ -29,37 +29,30 @@ def _detect_image_mime(data: bytes) -> str:
     except Exception:
         return "image/png"
 
-def _split_and_constrain_posts(content_list: List[str], max_length: int, platform_name: str) -> List[str]:
+def _enforce_post_length_invariant(content_list: List[str], max_length: int, platform_name: str) -> bool:
+    """Hard invariant check — all posts must fit the platform limit.
+
+    v4.15.3: replaces the old ``_split_and_constrain_posts`` word-boundary
+    splitter. Length is now enforced at generation time via the
+    ``max_output_tokens`` cap and the hard-reject in ``_validate_thread_shape``.
+    If any post still overshoots here, the upstream invariant failed — we
+    log ``broadcast_invariant_violated`` and skip this platform for the run.
+    Missing one run beats posting a mid-sentence bot tell.
+
+    Returns True when every post fits, False when the invariant was violated.
     """
-    Ensure all outbound post chunks are <= max_length.
-    Splits overlong entries into multiple posts and emits a warning when this happens.
-    """
-    constrained_posts: List[str] = []
-
-    for original_text in content_list:
-        if len(original_text) <= max_length:
-            constrained_posts.append(original_text)
-            continue
-
-        SafeLogger.warn(
-            "content_chunk_split",
-            f"{platform_name} content exceeded max length; splitting into safe chunks.",
-            platform=platform_name.lower(),
-            max_length=max_length
-        )
-        remaining = original_text.strip()
-        while remaining:
-            if len(remaining) <= max_length:
-                constrained_posts.append(remaining)
-                break
-            split_at = remaining.rfind(" ", 0, max_length)
-            if split_at == -1:
-                split_at = max_length  # hard fallback: no spaces in chunk
-            chunk = remaining[:split_at].rstrip()
-            constrained_posts.append(chunk)
-            remaining = remaining[split_at:].lstrip()
-
-    return constrained_posts
+    for idx, post in enumerate(content_list):
+        if len(post) > max_length:
+            SafeLogger.error(
+                "broadcast_invariant_violated",
+                f"Post {idx} exceeds {platform_name} limit; skipping this platform's broadcast",
+                platform=platform_name.lower(),
+                post_index=idx,
+                length=len(post),
+                max_length=max_length,
+            )
+            return False
+    return True
 
 def _sample_thread_pause(profile_name: str) -> float:
     """Sample a human-like pause between thread posts using named rhythm profiles."""
@@ -83,14 +76,13 @@ async def post_to_bluesky(
     """
     SafeLogger.info("broadcast_started", "Broadcasting to Bluesky", platform="bluesky")
 
-    constrained_content_list = _split_and_constrain_posts(
-        content_list, MAX_POST_LENGTH_BSKY, "Bluesky"
-    )
+    if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_BSKY, "Bluesky"):
+        return client  # invariant violated; skip broadcast, preserve client for downstream
 
     parent_ref = None
     root_ref = None
 
-    for i, post_text in enumerate(constrained_content_list):
+    for i, post_text in enumerate(content_list):
         embed = None
         if i == 0:
             if image_bytes:
@@ -154,9 +146,9 @@ async def post_to_bluesky(
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
         
         # Intra-thread jitter
-        if len(constrained_content_list) > 1 and i < len(constrained_content_list) - 1:
+        if len(content_list) > 1 and i < len(content_list) - 1:
             await asyncio.sleep(_sample_thread_pause(thread_pause_profile))
-    
+
     return client
 
 @retry_with_backoff
@@ -174,12 +166,11 @@ async def post_to_mastodon(
     """
     if not access_token: return
 
-    constrained_content_list = _split_and_constrain_posts(
-        content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"
-    )
+    if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"):
+        return  # invariant violated; skip broadcast
 
     mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
-    total_posts = len(constrained_content_list)
+    total_posts = len(content_list)
     posted_count = 0
     last_id = None
 
@@ -242,7 +233,7 @@ async def post_to_mastodon(
                 await asyncio.sleep(min(2 ** attempt, 5))
 
     try:
-        for i, post_text in enumerate(constrained_content_list):
+        for i, post_text in enumerate(content_list):
             attach = media_ids if i == 0 else None
             status = await _status_post_with_timeout_and_retry(post_text, last_id, media=attach)
             last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
