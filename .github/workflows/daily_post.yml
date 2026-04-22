@@ -54,21 +54,20 @@ jobs:
         run: |
           mkdir -p backup
           python - <<'PY'
-          import json, os, urllib.request
+          import os, httpx
           gist_id = os.environ["GIST_ID"]
           token = os.environ["GIST_TOKEN"]
-          req = urllib.request.Request(
+          resp = httpx.get(
               f"https://api.github.com/gists/{gist_id}",
               headers={
                   "Authorization": f"Bearer {token}",
                   "Accept": "application/vnd.github+json",
-                  "User-Agent": "bluesky-bot-snapshot",
                   "X-GitHub-Api-Version": "2022-11-28",
               },
+              timeout=15,
           )
-          with urllib.request.urlopen(req, timeout=15) as r:
-              data = json.load(r)
-          for name, f in data["files"].items():
+          resp.raise_for_status()
+          for name, f in resp.json()["files"].items():
               with open(f"backup/{name}", "w", encoding="utf-8") as out:
                   out.write(f["content"])
           PY
