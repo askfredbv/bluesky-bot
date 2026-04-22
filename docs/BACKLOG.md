@@ -66,17 +66,19 @@ Both decisions get trivial once §1 (engagement feedback) is running — no more
 
 ## §4 — Parked plans (ready to execute on trigger)
 
-- **`docs/PLAN_engagement_feedback.md` — feedback loop.** Slice A is §1 above. Slice B (weekly digest) and Slice C (scoring ingestion) follow.
+Everything here has a written plan. When the trigger fires, the work is 15 min of re-reading, not a fresh design session.
+
+- **`docs/PLAN_engagement_feedback.md` — feedback loop.** Slice A is §1 above. Slice B (weekly digest) and Slice C (scoring ingestion) follow. **Strategist-fallback frequency** falls out of Slice B's digest for free — no separate plan needed.
 - **`docs/PLAN_proactive_replies.md` — proactive replies.** Three phases: virtual-follow recon script (~1.5h) → 2–3 handles behind human-approval gate (~4h) → expansion once traction shows. Approval gate is the guardrail against tone-deaf-reply blast radius.
+- **`docs/PLAN_feed_health.md` — feed health observability.** ~1.5h. Capture `FeedFetchResult` per feed → `feed_health.json` in Gist → weekly digest flags silently-dead feeds. Trigger: after engagement Slice A ships (shares infrastructure).
+- **`docs/PLAN_per_post_idempotency.md` — thread-broadcast idempotency.** ~2h. Fix `retry_with_backoff` re-sending posts 1–2 when post 3 of a thread 429s. Trigger: a duplicate actually appears in production. Until then: premature — threads are mostly 1–2 posts now.
 - **`docs/PLAN_v4.16_slim.md` — three-slice refactor.** Split `src/utils.py` (923 lines), split `src/config.py` (525 lines), replace 3-stage frozen dataclass chain with `RunContext`. Pure hygiene. Execute when the next feature would benefit from the cleaner shape, not before.
 
 ---
 
 ## §5 — Future ideas (not yet plans)
 
-- **Per-post idempotency for thread broadcasts.** `retry_with_backoff` re-runs the whole `post_to_bluesky` call on failure, so a 429 mid-thread can duplicate posts 1–2 on retry. Fix requires tracking which posts in a thread were already sent (in-memory `thread_index → at://uri`). Only worth it if duplicates actually appear in production.
-- **Strategist-fallback frequency check.** Curator silently shifts to Strategist when news volume is <3 items. One-shot log grep: if firing <1/week the complexity is earning its keep; if multiple times/week the news pipeline needs tuning. ~10 min of work.
-- **Feed health dashboard.** Lightweight "feed last yielded an accepted item N days ago" signal in the Actions summary to catch silently-dead RSS feeds. Fits naturally alongside engagement feedback (same data-collection pattern).
+Empty for now. When a new idea shows up that's not yet concrete enough for a plan, park it here. Consolidation on 2026-04-22 promoted everything that was previously in §5 into real plans in §4.
 
 ---
 
@@ -89,3 +91,4 @@ Both decisions get trivial once §1 (engagement feedback) is running — no more
 ## Changelog
 
 - 2026-04-22: Pioneer-dimension telemetry item removed from §5 — subsumed by `PLAN_engagement_feedback` Slice A/B (post metrics already capture `pioneer_id` context, so pioneer-category performance falls out of the digest for free).
+- 2026-04-22: Consolidated §5 future ideas into §4 plans. Promoted per-post idempotency and feed health into their own plan docs (`PLAN_per_post_idempotency.md`, `PLAN_feed_health.md`). Strategist-fallback frequency folded into `PLAN_engagement_feedback.md` Slice B (free rider of the digest, since `mode` is already in the post_metrics schema). §5 is now empty — when data-driven triggers fire, the plans are ready to execute.

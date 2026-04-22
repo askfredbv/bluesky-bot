@@ -88,6 +88,8 @@ No scoring changes. The human reads the digest and edits `SOURCE_TIERS` / `SECON
 
 **Success criterion:** after two weeks, the digest shows "openai.com: 12 posts, avg 4.2 engagement; theregister.com: 8 posts, avg 0.8" — concrete numbers to act on.
 
+**Free rider: Strategist-fallback frequency.** Since `mode` is already in the post_metrics schema, a line like "strategist: 3 runs in 14 days" falls out of the digest for no extra code. If it's firing more than once a week, news pipeline needs tuning; if less, complexity is earning its keep. No separate plan needed.
+
 ---
 
 ## Slice C — Scoring feedback (3h, requires 4+ weeks of Slice A data)
