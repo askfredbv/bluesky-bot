@@ -5,3 +5,15 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Skip patch updates — the manual lockfile regen (Dependabot can't
+    # run pip-compile, so every PR fails the lockfile-check workflow)
+    # isn't worth it for x.y.Z bumps we usually don't touch directly.
+    # Security advisories bypass this filter and still come through.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
+    # Bundle minor/major bumps into a single weekly PR so we regenerate
+    # requirements.txt once per week, not once per dependency.
+    groups:
+      python-minor-and-major:
+        update-types: ["minor", "major"]
