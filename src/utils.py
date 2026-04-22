@@ -958,28 +958,39 @@ async def fetch_single_feed(
     url: str,
     *,
     timeout: Optional[httpx.Timeout] = None
-) -> List[Dict[str, Any]]:
+) -> "FeedFetchResult":
+    """Fetch and normalise one RSS feed; return a structured outcome.
+
+    The `ok` flag reflects whether the HTTP request succeeded (i.e. no
+    transport error). Parse failures flip `ok=False` via the bozo path;
+    a feed that responds but has zero entries is `ok=True` with both
+    `entries_total` and `entries_accepted` at zero.
+    """
+    # Local import to avoid circular dependency at module load time.
+    from src.metrics import FeedFetchResult
+
     try:
         response = await client.get(url, timeout=timeout)
         feed = feedparser.parse(response.text)
+        bozo_error_type: Optional[str] = None
         if feed.bozo:
             bozo_exception = getattr(feed, 'bozo_exception', None)
+            bozo_error_type = type(bozo_exception).__name__ if bozo_exception else "UnknownParseError"
             SafeLogger.warn(
                 "feed_parse_failure",
                 "Feed parse failure",
                 url=url,
-                error_type=type(bozo_exception).__name__ if bozo_exception else "UnknownParseError"
+                error_type=bozo_error_type,
             )
 
-        entries = getattr(feed, 'entries', []) or []
-        if not entries:
-            return []
+        raw_entries = getattr(feed, 'entries', []) or []
+        entries_total = len(raw_entries)
 
-        items = []
+        items: List[Dict[str, Any]] = []
         now = datetime.now(timezone.utc)
         lookback = now - timedelta(days=2)
-        
-        for entry in feed.entries:
+
+        for entry in raw_entries:
             time_struct = entry.get('published_parsed') or entry.get('updated_parsed')
             if not time_struct:
                 continue
@@ -1005,13 +1016,23 @@ async def fetch_single_feed(
                 "pub_date": pub_date,
                 "source_feeds": [url],
             })
-        return items
+        # Request succeeded; bozo-parse still counts as ok=True for feed
+        # health because the fetch itself worked — bozo is a soft signal
+        # and often transient (malformed <br> tags etc.).
+        return FeedFetchResult(
+            url=url,
+            ok=True,
+            entries_total=entries_total,
+            entries_accepted=len(items),
+            error_type=bozo_error_type,
+            entries=items,
+        )
     except httpx.TimeoutException as e:
         SafeLogger.warn("feed_timeout", "Feed request timed out", url=url, error_type=type(e).__name__)
-        return []
+        return FeedFetchResult(url=url, ok=False, entries_total=0, entries_accepted=0, error_type=type(e).__name__)
     except Exception as e:
         SafeLogger.warn("feed_fetch_failure", "Feed fetch failed", url=url, error_type=type(e).__name__)
-        return []
+        return FeedFetchResult(url=url, ok=False, entries_total=0, entries_accepted=0, error_type=type(e).__name__)
 
 async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int = 5) -> List[Dict[str, Any]]:
     """Weighted asynchronous fetch with Hidden Gem injection (v4.5 Sage)."""
@@ -1029,7 +1050,7 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
     )
     semaphore = asyncio.Semaphore(FEED_FETCH_CONCURRENCY)
 
-    async def _fetch_with_semaphore(url: str) -> List[Dict[str, Any]]:
+    async def _fetch_with_semaphore(url: str):
         async with semaphore:
             return await fetch_single_feed(client, url, timeout=timeout)
 
@@ -1040,8 +1061,24 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
     ) as client:
         tasks = [_fetch_with_semaphore(url) for url in RSS_FEEDS]
         results = await asyncio.gather(*tasks)
-    
-    all_raw = [item for sublist in results for item in sublist]
+
+    # Record per-feed outcomes for the weekly health view.
+    # Local import mirrors fetch_single_feed and keeps the circular-dep
+    # resolution consistent.
+    try:
+        from src.metrics import load_feed_health, record_feed_attempt, save_feed_health
+        feed_health = load_feed_health()
+        for result in results:
+            record_feed_attempt(feed_health, result)
+        save_feed_health(feed_health)
+    except Exception as e:
+        SafeLogger.warn(
+            "feed_health_record_failed",
+            "Feed health telemetry skipped",
+            error_type=type(e).__name__,
+        )
+
+    all_raw = [item for result in results for item in result.entries]
     seen: dict = {}
     for item in all_raw:
         key = canonical_url(item['link'])

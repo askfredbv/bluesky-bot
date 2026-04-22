@@ -42,11 +42,15 @@ def test_fetch_single_feed_keeps_entries_when_bozo(monkeypatch):
 
     monkeypatch.setattr(utils.feedparser, "parse", lambda _: feed)
 
-    items = asyncio.run(utils.fetch_single_feed(_DummyClient(), "https://example.com/rss"))
+    result = asyncio.run(utils.fetch_single_feed(_DummyClient(), "https://example.com/rss"))
 
-    assert len(items) == 1
-    assert items[0]["title"] == "Recoverable parse warning item"
-    assert items[0]["description"] == "Still valid."
+    assert result.ok is True
+    assert result.entries_total == 1
+    assert result.entries_accepted == 1
+    assert result.error_type == "ValueError"  # bozo reason surfaced
+    assert len(result.entries) == 1
+    assert result.entries[0]["title"] == "Recoverable parse warning item"
+    assert result.entries[0]["description"] == "Still valid."
 
 
 def test_fetch_single_feed_passes_explicit_timeout():

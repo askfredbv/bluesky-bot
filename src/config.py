@@ -34,6 +34,10 @@ FEED_SUMMARY_MAX_CHARS: int = 500
 SEEN_FILE = Path("seen_articles.json")
 REPLIED_FILE = Path("replied_to.json")
 RUNTIME_STATE_FILE = Path("runtime_state.json")
+FEED_HEALTH_FILE = Path("feed_health.json")
+
+# Feed health telemetry (Phase 1)
+FEED_HEALTH_RECENT_ATTEMPTS_LIMIT: int = 28  # ~2 weeks at 2 runs/day
 
 # Fortress Security (v4.4)
 REPLY_CAP_PER_RUN: int = 10
