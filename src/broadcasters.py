@@ -13,6 +13,7 @@ from src.config import (
 from src.utils import retry_with_backoff
 from src.logger import SafeLogger
 from src.facets import build_facets
+from src.metrics import BroadcastResult
 
 MASTODON_POST_TIMEOUT_SECONDS = 20.0
 MASTODON_POST_MAX_ATTEMPTS = 3
@@ -77,10 +78,12 @@ async def post_to_bluesky(
     SafeLogger.info("broadcast_started", "Broadcasting to Bluesky", platform="bluesky")
 
     if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_BSKY, "Bluesky"):
-        return client  # invariant violated; skip broadcast, preserve client for downstream
+        # Invariant violated; skip broadcast, preserve client for downstream
+        return BroadcastResult(client=client, sent_uris=[], error=None)
 
     parent_ref = None
     root_ref = None
+    sent_uris: List[str] = []
 
     for i, post_text in enumerate(content_list):
         embed = None
@@ -144,12 +147,14 @@ async def post_to_bluesky(
             reply_ref = models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
             post = await client.send_post(text=post_text, reply_to=reply_ref, facets=facets)
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
-        
+
+        sent_uris.append(post.uri)
+
         # Intra-thread jitter
         if len(content_list) > 1 and i < len(content_list) - 1:
             await asyncio.sleep(_sample_thread_pause(thread_pause_profile))
 
-    return client
+    return BroadcastResult(client=client, sent_uris=sent_uris, error=None)
 
 @retry_with_backoff
 async def post_to_mastodon(
@@ -164,15 +169,18 @@ async def post_to_mastodon(
     When image_bytes is provided, attaches the image to the first post only
     (Mastodon threads mirror Bluesky: media attaches to the root post).
     """
-    if not access_token: return
+    if not access_token:
+        return BroadcastResult(client=None, sent_uris=[], error=None)
 
     if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"):
-        return  # invariant violated; skip broadcast
+        # Invariant violated; skip broadcast.
+        return BroadcastResult(client=None, sent_uris=[], error=None)
 
     mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
     total_posts = len(content_list)
     posted_count = 0
     last_id = None
+    sent_ids: List[str] = []
 
     # Upload image for first-post attachment (if provided and within size cap)
     media_ids = None
@@ -237,6 +245,8 @@ async def post_to_mastodon(
             attach = media_ids if i == 0 else None
             status = await _status_post_with_timeout_and_retry(post_text, last_id, media=attach)
             last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
+            if last_id is not None:
+                sent_ids.append(str(last_id))
             posted_count += 1
 
             if total_posts > 1 and i < total_posts - 1:
@@ -264,6 +274,8 @@ async def post_to_mastodon(
                 error_type=type(e).__name__
             )
         raise
+
+    return BroadcastResult(client=None, sent_uris=sent_ids, error=None)
 
 
 async def update_profile_bio(client: AsyncClient, bio_text: str):

@@ -33,11 +33,13 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
 
     async def fake_post_to_bluesky(*args, **kwargs):
         calls["bluesky"] += 1
-        return "bsky-client"
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client="bsky-client", sent_uris=["at://fake"])
 
     async def fake_post_to_mastodon(*args, **kwargs):
         calls["mastodon"] += 1
-        return {"status": "ok"}
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["123"])
 
     async def fake_fetch_news(*args, **kwargs):
         return []
@@ -174,7 +176,8 @@ async def test_partial_broadcast_failure_keeps_successful_bluesky_client(monkeyp
         return ["thread post"], "topic"
 
     async def ok_bluesky(*args, **kwargs):
-        return "live-bluesky-client"
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client="live-bluesky-client", sent_uris=["at://post"])
 
     async def failing_mastodon(*args, **kwargs):
         raise RuntimeError("mastodon down")

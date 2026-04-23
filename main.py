@@ -4,7 +4,7 @@ import random
 import uuid
 import re
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
@@ -56,6 +56,8 @@ class BroadcastPayload:
     thread_pause_profile: str
     bsky_broadcast_client: Any
     pioneer_entry: Optional[Dict[str, Any]] = None
+    bsky_sent_uris: List[str] = field(default_factory=list)
+    mastodon_sent_ids: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -223,10 +225,27 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         if isinstance(r, Exception):
             SafeLogger.error("broadcast_task_failed", "Broadcast task failed", exception=r, platform="multi")
 
+    # Unpack BroadcastResult per platform. The results list order mirrors the
+    # order we appended tasks above: Bluesky first (if client available), then
+    # Mastodon. Missing Bluesky task shifts Mastodon to index 0.
+    bsky_result = None
+    mastodon_result = None
     if bsky_client is not None:
-        bsky_broadcast_client = results[0] if not isinstance(results[0], Exception) else content_prep.bsky_client
+        bsky_raw = results[0]
+        if not isinstance(bsky_raw, Exception):
+            bsky_result = bsky_raw
+        mastodon_raw = results[1] if len(results) > 1 else None
     else:
-        bsky_broadcast_client = content_prep.bsky_client
+        mastodon_raw = results[0] if results else None
+    if mastodon_raw is not None and not isinstance(mastodon_raw, Exception):
+        mastodon_result = mastodon_raw
+
+    bsky_broadcast_client = (
+        bsky_result.client if bsky_result is not None else content_prep.bsky_client
+    )
+    bsky_sent_uris = list(bsky_result.sent_uris) if bsky_result is not None else []
+    mastodon_sent_ids = list(mastodon_result.sent_uris) if mastodon_result is not None else []
+
     return BroadcastPayload(
         mode=mode,
         seen_data=content_prep.seen_data,
@@ -236,6 +255,8 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         thread_pause_profile=thread_pause_profile,
         bsky_broadcast_client=bsky_broadcast_client,
         pioneer_entry=content_prep.pioneer_entry,
+        bsky_sent_uris=bsky_sent_uris,
+        mastodon_sent_ids=mastodon_sent_ids,
     )
 
 

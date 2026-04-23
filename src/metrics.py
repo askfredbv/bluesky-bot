@@ -9,12 +9,27 @@ then to keep the Step 2 diff tight.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from src.config import FEED_HEALTH_FILE, FEED_HEALTH_RECENT_ATTEMPTS_LIMIT
 from src.logger import SafeLogger
+
+
+@dataclass
+class BroadcastResult:
+    """Structured outcome of a single platform broadcast.
+
+    `sent_uris` is populated whether delivery completed or stopped early —
+    Step 3b uses it to avoid re-sending posts that already made the wire.
+    For Bluesky this holds `at://…` URIs; for Mastodon, string status IDs.
+    `client` is the authenticated Bluesky AsyncClient (None for Mastodon) so
+    downstream stages (handle_interactions) can reuse the session.
+    """
+    client: Any = None
+    sent_uris: List[str] = field(default_factory=list)
+    error: Optional[Exception] = None
 
 
 @dataclass

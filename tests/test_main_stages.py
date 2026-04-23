@@ -66,7 +66,8 @@ async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(m
         raise RuntimeError("fail")
 
     async def ok_mastodon(*args, **kwargs):
-        return {"ok": True}
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["123"])
 
     async def no_delay(*args, **kwargs):
         return None

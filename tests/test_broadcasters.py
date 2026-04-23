@@ -284,3 +284,102 @@ async def test_post_to_mastodon_no_image_bytes_skips_media_upload(monkeypatch):
     )
 
     assert media_calls == []
+
+
+# ---------------------------------------------------------------------------
+# BroadcastResult return shape (Phase 1 Step 3a)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_post_to_bluesky_returns_broadcast_result_with_sent_uris(monkeypatch):
+    """Successful multi-post thread returns a BroadcastResult whose sent_uris
+    lists every post.uri in order, and whose client is the same instance passed in."""
+    from src.metrics import BroadcastResult
+
+    uri_counter = {"n": 0}
+
+    class DummyAsyncClient:
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
+            uri_counter["n"] += 1
+
+            class FakePost:
+                cid = f"cid-{uri_counter['n']}"
+                uri = f"at://post/{uri_counter['n']}"
+            return FakePost()
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    dummy_client = DummyAsyncClient()
+    result = await broadcasters.post_to_bluesky(dummy_client, ["first", "second", "third"])
+
+    assert isinstance(result, BroadcastResult)
+    assert result.client is dummy_client
+    assert result.sent_uris == ["at://post/1", "at://post/2", "at://post/3"]
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_returns_broadcast_result_with_sent_ids(monkeypatch):
+    """Successful Mastodon thread returns a BroadcastResult whose sent_uris
+    carries the status IDs as strings."""
+    from src.metrics import BroadcastResult
+
+    id_counter = {"n": 0}
+
+    class DummyMastodon:
+        def __init__(self, *a, **kw):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+            id_counter["n"] += 1
+            return {"id": id_counter["n"] * 1000}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    result = await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example",
+        ["a", "b"],
+    )
+
+    assert isinstance(result, BroadcastResult)
+    assert result.client is None
+    assert result.sent_uris == ["1000", "2000"]
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_post_to_bluesky_invariant_skip_returns_empty_broadcast_result(monkeypatch):
+    """Overlong content → BroadcastResult with empty sent_uris but client preserved."""
+    from src.metrics import BroadcastResult
+
+    class DummyAsyncClient:
+        async def send_post(self, *a, **kw):
+            raise AssertionError("send_post should not be called when invariant fails")
+
+    dummy_client = DummyAsyncClient()
+    too_long = "x" * (MAX_POST_LENGTH_BSKY + 1)
+    result = await broadcasters.post_to_bluesky(dummy_client, [too_long])
+
+    assert isinstance(result, BroadcastResult)
+    assert result.client is dummy_client
+    assert result.sent_uris == []
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_no_token_returns_empty_broadcast_result():
+    """Missing access token → empty BroadcastResult (caller treats the same as a skip)."""
+    from src.metrics import BroadcastResult
+
+    result = await broadcasters.post_to_mastodon("", "https://mastodon.example", ["hi"])
+
+    assert isinstance(result, BroadcastResult)
+    assert result.sent_uris == []
+    assert result.client is None
+
