@@ -27,6 +27,8 @@ See `docs/PLAN_engagement.md`. Phase 1 bundles three changes that share a broadc
 
 Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed. After two runs you can verify it works; after two weeks you have enough to run Phase 2 (digest) usefully.
 
+**Status 2026-04-23:** Steps 1–3b shipped (commits `6d581fe`, `7eb02e9`, `0afa0b4`, `185aad4`). Per-thread shared retry budget + `*_partial_delivery` events now live; two `workflow_dispatch` runs clean. Checkpoint-gated — waiting for ≥1 natural production run before Steps 4 (metrics_context plumbing) and 5 (refresh + prune). `feed_health.json` acceptance still pending: validation runs so far were Mentor mode; needs one Curator run for all 25 feeds. See `PLAN_engagement.md §1f` for the tracker.
+
 ---
 
 ## §2 — Open issues (found in the April 22 run)

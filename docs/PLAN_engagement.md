@@ -188,6 +188,20 @@ Each step is a single commit that leaves main green. Ordered by dependency and r
 
 **Cumulative time:** ~5h45m, natural split across two sessions with the 3b checkpoint as the boundary.
 
+### Progress — as of 2026-04-23
+
+| # | Status | Commit | Notes |
+|---|---|---|---|
+| 1 | ✅ | `6d581fe` | Retry helpers extracted (`classify_retry`, `sleep_for_rate_limit`, `sleep_for_transient`) |
+| 2 | ✅ | `7eb02e9` | `FeedFetchResult` + `feed_health.json`. **Acceptance pending**: validation runs so far were Mentor mode (no RSS fetch). Needs one Curator run to populate all 25 feeds |
+| 3a | ✅ | `0afa0b4` | `BroadcastResult` return type; decorator still in place |
+| 3b | ✅ | `185aad4` | Dropped `@retry_with_backoff`; per-thread shared retry budget; `*_partial_delivery` on exhaustion. Two `workflow_dispatch` runs clean (no partial_delivery, no rate_limit_hit) |
+| — | **CHECKPOINT** | — | Wait for ≥1 natural production run (09:00 UTC Curator or 15:30 UTC Mentor) before starting Step 4 |
+| 4 | ⏳ | — | metrics_context plumbing + record-on-broadcast (~1h) |
+| 5 | ⏳ | — | Refresh stale metrics + prune (~45m) |
+
+Tests: 191 passing across the repo after 3b.
+
 ### Phase 1 success criteria (gate to Phase 2)
 
 After two runs:
