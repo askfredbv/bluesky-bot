@@ -33,7 +33,43 @@ from src.config import (
     SECONDARY_TOPICS,
     TOPIC_MAP,
 )
-from src.settings import Settings, SettingsValidationError
+
+
+@dataclass(frozen=True)
+class _AuditCreds:
+    """Minimal credential bundle. Bypasses Settings.from_env() because that
+    validates GEMINI_API_KEY which the audit doesn't need."""
+    bluesky_username: str
+    bluesky_password: str
+    mastodon_access_token: Optional[str]
+    mastodon_api_base_url: str
+
+
+def _load_audit_creds() -> _AuditCreds:
+    """Read just the creds the audit needs. Raises ValueError on missing
+    Bluesky creds (the audit can't proceed without them); Mastodon creds
+    are optional — that platform is skipped cleanly if absent."""
+    bsky_user = (os.environ.get("BLUESKY_USERNAME") or "askfred.be").strip()
+    bsky_pass = (
+        os.environ.get("BLUESKY_APP_PASSWORD")
+        or os.environ.get("BLUESKY_PASSWORD")
+        or ""
+    ).strip()
+    if not bsky_pass:
+        raise ValueError(
+            "Missing BLUESKY_APP_PASSWORD (or BLUESKY_PASSWORD). "
+            "The audit cannot fetch Bluesky posts without it."
+        )
+    masto_token = (os.environ.get("MASTODON_ACCESS_TOKEN") or "").strip() or None
+    masto_url = (
+        os.environ.get("MASTODON_API_BASE_URL") or "https://mastodon.social"
+    ).strip()
+    return _AuditCreds(
+        bluesky_username=bsky_user,
+        bluesky_password=bsky_pass,
+        mastodon_access_token=masto_token,
+        mastodon_api_base_url=masto_url,
+    )
 
 # Posts per handle to inspect. Plan calls for ~10; a few more is cheap and
 # stabilises the percentage-based scores.
@@ -401,9 +437,9 @@ def render_markdown(audits: Iterable[HandleAudit], generated_at: datetime) -> st
 
 async def _run() -> int:
     try:
-        settings = Settings.from_env()
-    except SettingsValidationError as exc:
-        print(f"[error] settings: {exc}")
+        creds = _load_audit_creds()
+    except ValueError as exc:
+        print(f"[error] {exc}")
         return 2
 
     from scripts.watchlist_candidates import BLUESKY_CANDIDATES, MASTODON_CANDIDATES
@@ -421,8 +457,8 @@ async def _run() -> int:
     bsky = AsyncClient()
     try:
         await bsky.login(
-            settings.credentials.bluesky_username,
-            settings.credentials.bluesky_password,
+            creds.bluesky_username,
+            creds.bluesky_password,
         )
     except Exception as exc:
         print(f"[error] Bluesky login failed: {exc}")
@@ -446,7 +482,7 @@ async def _run() -> int:
                 ))
 
     # ---- Mastodon ----
-    if not settings.credentials.mastodon_access_token:
+    if not creds.mastodon_access_token:
         print("[warn] No MASTODON_ACCESS_TOKEN — skipping Mastodon audit")
         for handle in MASTODON_CANDIDATES:
             audits.append(HandleAudit(
@@ -461,8 +497,8 @@ async def _run() -> int:
             return 2
 
         masto = Mastodon(
-            access_token=settings.credentials.mastodon_access_token,
-            api_base_url=settings.credentials.mastodon_api_base_url,
+            access_token=creds.mastodon_access_token,
+            api_base_url=creds.mastodon_api_base_url,
         )
         for handle in MASTODON_CANDIDATES:
             print(f"[mastodon] fetching {handle} ...")
