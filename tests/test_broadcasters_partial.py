@@ -137,6 +137,10 @@ async def test_bluesky_rate_limit_exhausts_shared_budget(monkeypatch):
         sleep_seconds.append(seconds)
 
     monkeypatch.setattr(broadcasters.asyncio, "sleep", fake_sleep)
+    # Pin intra-thread jitter to 0 so only rate-limit sleeps land in the log;
+    # otherwise the random jitter occasionally lands at ~65s and collides
+    # with the Retry-After header we're asserting against.
+    monkeypatch.setattr(broadcasters, "_sample_thread_pause", lambda _profile: 0.0)
 
     call_log: List[str] = []
     uri_counter = {"n": 0}
@@ -162,11 +166,10 @@ async def test_bluesky_rate_limit_exhausts_shared_budget(monkeypatch):
     assert call_log.count("post-3") == 0
 
     # Rate-limit sleeps honour the Retry-After header (65s) for every retry
-    # slot. Intra-thread jitter between post-1 and post-2 also contributes
-    # one small sleep — filter it out by thresholding.
-    rate_limit_sleeps = [s for s in sleep_seconds if s >= 60]
-    assert len(rate_limit_sleeps) == RATE_LIMIT_MAX_RETRIES
-    assert all(s == 65.0 for s in rate_limit_sleeps)
+    # slot. Intra-thread jitter is pinned to 0 above; drop those zero-second
+    # entries so the rate-limit set can be asserted directly.
+    rate_limit_sleeps = [s for s in sleep_seconds if s > 0]
+    assert rate_limit_sleeps == [65.0] * RATE_LIMIT_MAX_RETRIES
 
     assert isinstance(result.error, _FakeRateLimitError)
     partials = [e for e in events if e["event"] == "bluesky_partial_delivery"]
