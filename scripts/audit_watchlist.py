@@ -81,6 +81,21 @@ CADENCE_WINDOW_DAYS: int = 14
 
 OUTPUT_PATH = Path("docs/WATCHLIST_AUDIT.md")
 
+# Cap on per-handle error message length. Some failure modes (e.g. a
+# Mastodon instance returning a full HTML landing page when the token
+# is invalid) bury the audit in noise — truncate hard.
+_ERROR_MAX_CHARS: int = 200
+
+
+def _format_error(exc: BaseException) -> str:
+    """Render an exception for the audit's `error` field. Newlines collapsed,
+    capped at _ERROR_MAX_CHARS so a 200KB HTML response body can't bloat the
+    output file."""
+    msg = " ".join(str(exc).split())
+    if len(msg) > _ERROR_MAX_CHARS:
+        msg = msg[: _ERROR_MAX_CHARS - 1] + "…"
+    return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers — kept side-effect-free for direct unit testing.
@@ -465,7 +480,7 @@ async def _run() -> int:
         for handle in BLUESKY_CANDIDATES:
             audits.append(HandleAudit(
                 platform="bluesky", handle=handle,
-                error=f"login failed: {type(exc).__name__}",
+                error=f"login failed: {_format_error(exc)}",
             ))
     else:
         for handle in BLUESKY_CANDIDATES:
@@ -478,7 +493,7 @@ async def _run() -> int:
             except Exception as exc:
                 audits.append(HandleAudit(
                     platform="bluesky", handle=handle,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=_format_error(exc),
                 ))
 
     # ---- Mastodon ----
@@ -510,7 +525,7 @@ async def _run() -> int:
             except Exception as exc:
                 audits.append(HandleAudit(
                     platform="mastodon", handle=handle,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=_format_error(exc),
                 ))
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)

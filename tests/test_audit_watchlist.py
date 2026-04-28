@@ -14,6 +14,8 @@ import pytest
 from scripts.audit_watchlist import (
     HandleAudit,
     NormalisedPost,
+    _ERROR_MAX_CHARS,
+    _format_error,
     cadence_score,
     engagement_substrate_score,
     render_markdown,
@@ -23,6 +25,35 @@ from scripts.audit_watchlist import (
     topic_fit_score,
     voice_compat_score,
 )
+
+
+# ---------------------------------------------------------------------------
+# _format_error
+# ---------------------------------------------------------------------------
+
+def test_format_error_truncates_huge_messages():
+    """A 200KB HTML body in an exception must not bloat the audit file."""
+    exc = RuntimeError("<!DOCTYPE html>" + "x" * 100_000)
+    formatted = _format_error(exc)
+    # Type prefix + truncated msg + ellipsis — must be capped at a sane size.
+    assert len(formatted) <= _ERROR_MAX_CHARS + 20
+    assert formatted.startswith("RuntimeError:")
+    assert formatted.endswith("…")
+
+
+def test_format_error_collapses_newlines():
+    exc = ValueError("line one\n\nline two")
+    assert "\n" not in _format_error(exc)
+
+
+def test_format_error_short_message_passes_through():
+    exc = KeyError("missing")
+    assert _format_error(exc) == "KeyError: 'missing'"
+
+
+def test_format_error_empty_message_returns_just_type():
+    exc = RuntimeError()
+    assert _format_error(exc) == "RuntimeError"
 
 
 # ---------------------------------------------------------------------------
