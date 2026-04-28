@@ -274,6 +274,8 @@ Compared to pre-Phase-3 baseline: Curator picks and Mentor topic distribution vi
 
 ### 4a. Recon — virtual follow (~1.5h, no reply code yet)
 
+**Status 2026-04-27:** ✅ shipped. `scripts/audit_watchlist.py` + `scripts/watchlist_candidates.py` + `tests/test_audit_watchlist.py` (25 tests, all green). Output destination: `docs/WATCHLIST_AUDIT.md` (gitignored — regenerate locally). Run: `python -m scripts.audit_watchlist` with the bot's env vars. Acceptance gate (top 5 defensible matches + 2–3 stake-a-reply candidates) is evaluated by reading the generated audit, not by the script itself.
+
 `scripts/audit_watchlist.py` — one-shot, not in the daily pipeline. Takes a candidate handle list (file), fetches last ~10 posts each from Bluesky and Mastodon, scores each handle on:
 
 | Field | Heuristic |

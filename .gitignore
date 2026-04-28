@@ -8,3 +8,4 @@ env/
 seen_articles.json
 replied_to.json
 .claude/
+docs/WATCHLIST_AUDIT.md
