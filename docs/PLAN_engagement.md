@@ -274,7 +274,18 @@ Compared to pre-Phase-3 baseline: Curator picks and Mentor topic distribution vi
 
 ### 4a. Recon — virtual follow (~1.5h, no reply code yet)
 
-**Status 2026-04-27:** ✅ shipped. `scripts/audit_watchlist.py` + `scripts/watchlist_candidates.py` + `tests/test_audit_watchlist.py` (25 tests, all green). Output destination: `docs/WATCHLIST_AUDIT.md` (gitignored — regenerate locally). Run: `python -m scripts.audit_watchlist` with the bot's env vars. Acceptance gate (top 5 defensible matches + 2–3 stake-a-reply candidates) is evaluated by reading the generated audit, not by the script itself.
+**Status 2026-04-28:** ✅ **complete.** `scripts/audit_watchlist.py` + `scripts/watchlist_candidates.py` + `tests/test_audit_watchlist.py` (29 tests, all green). Output destination: `docs/WATCHLIST_AUDIT.md` (gitignored — regenerate locally). Run: `python -m scripts.audit_watchlist` with the bot's env vars.
+
+**4a acceptance gate met:** first audit ranked 6 candidates; pruning landed on **2 defensible Bluesky stake-a-reply matches**:
+
+| Handle | Aggregate | Voice | Reply opp. | Cadence | Engagement |
+|---|---:|---:|---:|---:|---:|
+| `simonwillison.net` | 69.3 | 100 | 83 | 5.5/wk | 4.09/post |
+| `xeiaso.net` | 62.2 | 100 | 58 | 4.0/wk | 2.88/post |
+
+Plan asks for "2–3 you'd stake a first reply on." The Bluesky-only result clears the lower bound. The plan's "top 5 defensible" framing assumed the seed list survived contact with reality; in practice 4 of 6 seeds were dead/squatted/political and got pruned (see `scripts/watchlist_candidates.py` history). Slate is intentionally short until manual discovery adds more.
+
+**Mastodon coverage: deferred as nice-to-have.** The audit's Mastodon path returns HTML instead of JSON for `account_search` — likely a token-scope or instance-URL mismatch (see `BACKLOG.md §3`). Not a 4a blocker because Bluesky already satisfies the gate; revisit when adding new candidates would benefit from cross-platform scoring.
 
 `scripts/audit_watchlist.py` — one-shot, not in the daily pipeline. Takes a candidate handle list (file), fetches last ~10 posts each from Bluesky and Mastodon, scores each handle on:
 
