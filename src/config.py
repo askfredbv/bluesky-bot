@@ -135,21 +135,15 @@ TOPIC_MAP: Dict[str, List[str]] = {
 }
 
 # Branding & BIOS
-APPROVED_BIO_BSKY = """🤖 Daily Poster: Technical Broadcasting Engine
-Curated by askfred. Always curious.
+APPROVED_BIO_BSKY = """askfred's posting bot. Twice a day.
 
-📰 Curation: AI & Tech research insights @ 08:00 UTC.
-💡 Mentorship: IT leadership wisdom @ 14:30 UTC.
+07:00 UTC — AI and tech research links.
+14:30 UTC — IT leadership and consulting notes.
+Quiet news days: longer takes instead.
 
-🚀 High-signal, low-noise automation.
-🔗 askfred.be"""
+Same content on Bsky and Mastodon. askfred.be"""
 
-APPROVED_BIO_MASTODON = """💡 Your friendly IT Mentor in the trenches via the askfred engine. Supporting work-life balance and continuous learning.
-
-🌅 Morning research curation | ☕ Afternoon IT advice. 
-🚀 Helping you work smarter, not harder. 
-
-🔗 askfred.be"""
+APPROVED_BIO_MASTODON = APPROVED_BIO_BSKY
 
 # RSS Feeds (v4.1 Scholar Priority)
 RSS_FEEDS = [
