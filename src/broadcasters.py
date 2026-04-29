@@ -345,22 +345,3 @@ async def post_to_mastodon(
     return BroadcastResult(client=None, sent_uris=sent_ids, error=None)
 
 
-async def update_profile_bio(client: AsyncClient, bio_text: str):
-    """Update only the bio text asynchronously."""
-    try:
-        profile_record = (await client.com.atproto.repo.get_record({"collection": 'app.bsky.actor.profile', "repo": client.me.did, "rkey": 'self'})).value
-        profile_dict = profile_record.copy() if hasattr(profile_record, 'copy') else dict(profile_record)
-        profile_dict['description'] = bio_text
-        await client.com.atproto.repo.put_record({"collection": 'app.bsky.actor.profile', "repo": client.me.did, "rkey": 'self', "record": profile_dict})
-    except Exception as e:
-        SafeLogger.error("bluesky_bio_update_failed", "Failed to update Bluesky bio", exception=e, platform="bluesky")
-
-async def update_profile_bio_mastodon(token: str, api_url: str, bio_text: str):
-    if not token: return
-    try:
-        def _sync_bio():
-            mastodon = Mastodon(access_token=token, api_base_url=api_url)
-            mastodon.account_update_credentials(note=bio_text)
-        await asyncio.to_thread(_sync_bio)
-    except Exception as e:
-        SafeLogger.error("mastodon_bio_update_failed", "Failed to update Mastodon bio", exception=e, platform="mastodon")

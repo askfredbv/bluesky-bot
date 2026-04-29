@@ -33,13 +33,16 @@ Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed
 
 ## §2 — Open issues (fix when convenient)
 
-### Profile bios drift from what the bot actually does [observed 2026-04-29]
+### ~~Profile bios drift from what the bot actually does~~ [**resolved 2026-04-29**]
 
-**Status:** config updated to dry first-person Draft A in commit `2d30689` (210 chars, both platforms share one string). Push to live profiles via `python -m scripts.push_bio` (added 2026-04-29). **Live profile push not yet automated** — see follow-up below. Original issues:
+Both bios manually pasted into the platform UIs. Config holds the canonical text in `APPROVED_BIO_BSKY` / `APPROVED_BIO_MASTODON` as reference for the next change. Voice now matches the bot's own posts: dry, statement-led, "house rules" line earns the dryness with a position rather than just enacting brevity.
 
-- **Wrong time:** Bsky bio says `Curation @ 08:00 UTC`, actual schedule is 07:00 UTC.
-- **Strategist invisible:** both bios frame the bot as Curator + Mentor only. On low-news days the bot mostly produces Strategist content, which readers see but the bio doesn't acknowledge.
-- **Voice mismatch (resolved in config):** bios use promotional slogan voice ("Technical Broadcasting Engine", "🚀 High-signal, low-noise automation", "work smarter, not harder", emoji-heavy). The bot's own posts are dry, first-person, no hype words, no emojis (per the BANNED_HYPE_WORDS / BANNED_QUESTION_PATTERNS rules). A reader clicking through from a post lands on a profile that sounds like a different bot. Either the posts should look more like the bio, or the bio should sound more like the posts — and per the voice non-goals in `PLAN_engagement.md`, posts don't change. So bios get rewritten in the bot's actual voice. Related to §3 "posts read dull": before chasing emoji/hashtag changes in posts, the bio is the cheaper place to test whether warming up the brand surface makes the feed feel less flat.
+The half-implemented automation (broadcaster fns + cooldown helpers) was removed in the same commit — bios change ~quarterly, manual paste is the right shape for that frequency.
+
+Original issues:
+- Wrong time (08:00 → 07:00 UTC) — fixed
+- Strategist mode invisible — replaced with "house rules" framing that covers all three modes implicitly
+- Slogan voice clashing with dry posts — replaced with `askfred.be in feed form. … LLM-written, house rules: no hype, no reader-bait.`
 
 ### ~~Snapshot Gist state step 404s~~ [**resolved 2026-04-22**]
 

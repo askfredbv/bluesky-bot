@@ -33,7 +33,6 @@ FEED_SUMMARY_MAX_CHARS: int = 500
 # State Files
 SEEN_FILE = Path("seen_articles.json")
 REPLIED_FILE = Path("replied_to.json")
-RUNTIME_STATE_FILE = Path("runtime_state.json")
 FEED_HEALTH_FILE = Path("feed_health.json")
 
 # Feed health telemetry (Phase 1)
@@ -134,16 +133,16 @@ TOPIC_MAP: Dict[str, List[str]] = {
     "Science/Health": ["biotech", "drug", "physics", "folding", "climate", "discovery"]
 }
 
-# Branding & BIOS
-APPROVED_BIO_BSKY = """askfred's posting bot. Twice a day.
+# Branding & BIOS — reference text only. Bios are pasted manually into
+# each platform's profile UI when they change (rare). Lengths differ
+# because Bluesky's 256-char cap forces the trim; same intent both.
+APPROVED_BIO_BSKY = """askfred.be in feed form. AI/tech links @ 07:00 UTC, IT leadership @ 14:30 UTC. Quiet news days: a longer take.
 
-07:00 UTC — AI and tech research links.
-14:30 UTC — IT leadership and consulting notes.
-Quiet news days: longer takes instead.
+LLM-written, house rules: no hype, no reader-bait."""
 
-Same content on Bsky and Mastodon. askfred.be"""
+APPROVED_BIO_MASTODON = """askfred.be in feed form. AI and tech research links at 07:00 UTC, IT leadership notes at 14:30 UTC. Quiet news days: a longer take instead.
 
-APPROVED_BIO_MASTODON = APPROVED_BIO_BSKY
+Written by an LLM, edited by house rules — no hype, no reader-bait, statements only."""
 
 # RSS Feeds (v4.1 Scholar Priority)
 RSS_FEEDS = [
