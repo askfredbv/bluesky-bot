@@ -47,9 +47,6 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
     async def fake_recent_posts(*args, **kwargs):
         return []
 
-    async def fake_recent_posts(*args, **kwargs):
-        return []
-
     async def noop(*args, **kwargs):
         return None
 
