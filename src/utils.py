@@ -131,7 +131,13 @@ def _load_gist_state(filename: str) -> Optional[Any]:
         content = resp.json()["files"][filename]["content"]
         return json.loads(content)
     except Exception as e:
-        SafeLogger.warn("gist_state_read_failed", "Gist state read failed", error_type=type(e).__name__, filename=filename)
+        SafeLogger.warn(
+            "gist_state_read_failed",
+            "Gist state read failed",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+            filename=filename,
+        )
         return None
 
 
@@ -154,7 +160,13 @@ def _save_gist_state(filename: str, data: Any) -> bool:
         resp.raise_for_status()
         return True
     except Exception as e:
-        SafeLogger.warn("gist_state_save_failed", "Gist state save failed", error_type=type(e).__name__, filename=filename)
+        SafeLogger.warn(
+            "gist_state_save_failed",
+            "Gist state save failed",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+            filename=filename,
+        )
         return False
 
 
@@ -1076,6 +1088,7 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
             "feed_health_record_failed",
             "Feed health telemetry skipped",
             error_type=type(e).__name__,
+            error_msg=str(e)[:200],
         )
 
     all_raw = [item for result in results for item in result.entries]
