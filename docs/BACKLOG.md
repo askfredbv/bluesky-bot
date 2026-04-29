@@ -31,7 +31,17 @@ Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed
 
 ---
 
-## §2 — Open issues (found in the April 22 run)
+## §2 — Open issues (fix when convenient)
+
+### Profile bios drift from what the bot actually does [observed 2026-04-29]
+
+`APPROVED_BIO_BSKY` and `APPROVED_BIO_MASTODON` in `src/config.py` are stale on facts and tonally inconsistent with the bot's own voice:
+
+- **Wrong time:** Bsky bio says `Curation @ 08:00 UTC`, actual schedule is 07:00 UTC.
+- **Strategist invisible:** both bios frame the bot as Curator + Mentor only. On low-news days the bot mostly produces Strategist content, which readers see but the bio doesn't acknowledge.
+- **Voice mismatch:** bios use promotional slogan voice ("Technical Broadcasting Engine", "🚀 High-signal, low-noise automation", "work smarter, not harder", emoji-heavy). The bot's own posts are dry, first-person, no hype words, no emojis (per the BANNED_HYPE_WORDS / BANNED_QUESTION_PATTERNS rules). A reader clicking through from a post lands on a profile that sounds like a different bot. Either the posts should look more like the bio, or the bio should sound more like the posts — and per the voice non-goals in `PLAN_engagement.md`, posts don't change. So bios get rewritten in the bot's actual voice. Related to §3 "posts read dull": before chasing emoji/hashtag changes in posts, the bio is the cheaper place to test whether warming up the brand surface makes the feed feel less flat.
+
+Quick fix: rewrite both bios in dry first-person, fix the time, name all three modes. ~20 min including a manual check that `update_profile_bio` actually re-pushes them on the next run (it's idempotent — re-runs only push if the bio content changed).
 
 ### ~~Snapshot Gist state step 404s~~ [**resolved 2026-04-22**]
 
