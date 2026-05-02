@@ -136,6 +136,20 @@ class SafeLogger:
         if mode is not None:
             cls._context["mode"] = mode
 
+    # Names Python's logging.LogRecord reserves for itself. Passing any of
+    # these via `extra=` raises KeyError("Attempt to overwrite '...' in
+    # LogRecord"). We auto-prefix collisions with `x_` so a caller passing
+    # e.g. `filename=...` still gets the field through (as `x_filename`)
+    # instead of crashing the log call mid-flight — which historically
+    # short-circuited the surrounding except clause and surfaced as a
+    # bewildering KeyError far up the stack.
+    _LOGRECORD_RESERVED = frozenset({
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName",
+        "processName", "process", "message", "asctime",
+    })
+
     @classmethod
     def _emit(
         cls,
@@ -154,7 +168,11 @@ class SafeLogger:
                 message = f"{message}: {exception}"
             else:
                 message = str(exception)
-        cls._logger.log(level, message, extra=payload)
+        safe_payload = {
+            (f"x_{k}" if k in cls._LOGRECORD_RESERVED else k): v
+            for k, v in payload.items()
+        }
+        cls._logger.log(level, message, extra=safe_payload)
 
     @classmethod
     def info(cls, event: str, message: str = "", **fields: Any) -> None:

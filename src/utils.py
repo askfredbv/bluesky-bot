@@ -136,7 +136,7 @@ def _load_gist_state(filename: str) -> Optional[Any]:
             "Gist state read failed",
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
-            filename=filename,
+            state_file=filename,
         )
         return None
 
@@ -165,7 +165,7 @@ def _save_gist_state(filename: str, data: Any) -> bool:
             "Gist state save failed",
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
-            filename=filename,
+            state_file=filename,
         )
         return False
 

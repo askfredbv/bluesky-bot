@@ -124,3 +124,31 @@ def test_json_record_contains_expected_core_fields():
     assert record["mode"] == "mentor"
     assert record["attempt"] == 2
     assert record["extra_key"] == "value"
+
+
+def test_reserved_logrecord_keys_are_renamed_not_crashed():
+    """Passing kwargs that collide with LogRecord built-ins (filename,
+    module, name, etc.) used to raise KeyError("Attempt to overwrite '...'
+    in LogRecord") inside the log call itself — which silently bypassed
+    surrounding except clauses and surfaced as a bewildering KeyError far
+    up the stack. SafeLogger now auto-prefixes such keys with `x_`.
+    """
+    _reset_logger_state()
+    SafeLogger.configure()
+    stream = _capture_stream()
+
+    SafeLogger.warn(
+        "reserved_collision",
+        "Loading state file",
+        filename="feed_health.json",
+        module="utils",
+    )
+
+    record = _read_records(stream)[0]
+    assert record["event"] == "reserved_collision"
+    # Reserved keys survive under their `x_`-prefixed names.
+    assert record["x_filename"] == "feed_health.json"
+    assert record["x_module"] == "utils"
+    # And the original reserved keys are NOT in the record at the user
+    # field level (they are LogRecord internals).
+    assert record.get("filename") != "feed_health.json"
