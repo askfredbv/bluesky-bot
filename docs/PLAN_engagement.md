@@ -188,19 +188,19 @@ Each step is a single commit that leaves main green. Ordered by dependency and r
 
 **Cumulative time:** ~5h45m, natural split across two sessions with the 3b checkpoint as the boundary.
 
-### Progress — as of 2026-04-23
+### Progress — as of 2026-05-02
 
 | # | Status | Commit | Notes |
 |---|---|---|---|
 | 1 | ✅ | `6d581fe` | Retry helpers extracted (`classify_retry`, `sleep_for_rate_limit`, `sleep_for_transient`) |
-| 2 | ✅ | `7eb02e9` | `FeedFetchResult` + `feed_health.json`. **Acceptance pending**: validation runs so far were Mentor mode (no RSS fetch). Needs one Curator run to populate all 25 feeds |
+| 2 | ✅ | `7eb02e9` + `5f8e2e2` | `FeedFetchResult` + `feed_health.json`. Original `7eb02e9` shipped a latent KeyError: `_load_gist_state` passed `filename=` as a logging kwarg, which collides with Python's reserved `LogRecord.filename`. The except's own log call raised, propagating past load_feed_health → fetch_news → `feed_health_record_failed`. Identified via the 2026-04-29 diagnostic patch (`9b12bbe`); fixed `5f8e2e2` with both narrow rename (`state_file=`) and a wide guard in `SafeLogger._emit` that auto-prefixes any reserved-name kwargs with `x_`. Acceptance confirms tomorrow's Curator run. |
 | 3a | ✅ | `0afa0b4` | `BroadcastResult` return type; decorator still in place |
-| 3b | ✅ | `185aad4` | Dropped `@retry_with_backoff`; per-thread shared retry budget; `*_partial_delivery` on exhaustion. Two `workflow_dispatch` runs clean (no partial_delivery, no rate_limit_hit) |
-| — | **CHECKPOINT** | — | Wait for ≥1 natural production run (09:00 UTC Curator or 15:30 UTC Mentor) before starting Step 4 |
-| 4 | ⏳ | — | metrics_context plumbing + record-on-broadcast (~1h) |
-| 5 | ⏳ | — | Refresh stale metrics + prune (~45m) |
+| 3b | ✅ | `185aad4` | Dropped `@retry_with_backoff`; per-thread shared retry budget; `*_partial_delivery` on exhaustion. Two `workflow_dispatch` runs clean. Natural runs since: clean. |
+| — | **CHECKPOINT cleared** | — | The 2026-04-29 morning Curator run cleared the broadcast-path checkpoint (no `*_partial_delivery`, no `rate_limit_hit`). Step 2's separate KeyError bug surfaced on the same run and was fixed in `5f8e2e2`. |
+| 4 | ✅ | `ff00aa6` + `27cf504` | metrics_context plumbing + record-on-broadcast. `post_metrics.json` schema (post_id, platform, mode, posted_at, content_preview, topic, source_domain, pioneer_id, had_image, had_link_card, thread_position, zeroed metrics sub-object). New `capture_post_metrics_stage`. Test isolation fix (`27cf504`) gitignored state files and added a noop monkeypatch in the e2e tests so the new stage no longer leaks state to disk during pytest. |
+| 5 | ⏳ | — | Refresh stale metrics + prune (~45m). Unblocks once tomorrow's 07:00 UTC Curator run shows `feed_health.json` populated for all 25 feeds *and* `post_metrics.json` shows rows with zeroed `metrics` sub-objects. |
 
-Tests: 191 passing across the repo after 3b.
+Tests: 230 passing.
 
 ### Phase 1 success criteria (gate to Phase 2)
 
