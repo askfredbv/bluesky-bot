@@ -60,6 +60,7 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
     monkeypatch.setattr(main, "post_to_mastodon", fake_post_to_mastodon)
     monkeypatch.setattr(main, "handle_interactions", noop)
     monkeypatch.setattr(main, "update_seen_articles", lambda *_: None)
+    monkeypatch.setattr(main, "capture_post_metrics_stage", noop)
 
     await main.main()
 
@@ -112,6 +113,7 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_err
     monkeypatch.setattr(main, "post_to_mastodon", noop)
     monkeypatch.setattr(main, "handle_interactions", noop)
     monkeypatch.setattr(main, "update_seen_articles", lambda *_: None)
+    monkeypatch.setattr(main, "capture_post_metrics_stage", noop)
     monkeypatch.setattr(main.SafeLogger, "error", capture_error)
 
     await main.main()
