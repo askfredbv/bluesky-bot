@@ -13,7 +13,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from src.config import FEED_HEALTH_FILE, FEED_HEALTH_RECENT_ATTEMPTS_LIMIT
+from src.config import (
+    FEED_HEALTH_FILE,
+    FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
+    POST_METRICS_CONTENT_PREVIEW_MAX_CHARS,
+    POST_METRICS_FILE,
+)
 from src.logger import SafeLogger
 
 
@@ -136,3 +141,99 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
     # Trim from the left so the most recent survive.
     if len(attempts) > FEED_HEALTH_RECENT_ATTEMPTS_LIMIT:
         del attempts[:-FEED_HEALTH_RECENT_ATTEMPTS_LIMIT]
+
+
+# ---------------------------------------------------------------------------
+# Post metrics — Phase 1 Step 4 (record-on-broadcast). Step 5 will add the
+# refresh + prune passes; this module already has the schema slots they
+# need (metrics sub-object, posted_at) populated as zeros / None.
+# ---------------------------------------------------------------------------
+
+def load_post_metrics() -> Dict[str, Any]:
+    """Same Gist-first, local-fallback pattern as load_feed_health."""
+    from src.utils import _atomic_write_json, _load_gist_state, _load_json_with_repair
+
+    default: Dict[str, Any] = {"posts": []}
+
+    gist_data = _load_gist_state("post_metrics.json")
+    if isinstance(gist_data, dict) and "posts" in gist_data:
+        return gist_data
+
+    data = _load_json_with_repair(POST_METRICS_FILE, lambda: default)
+    if isinstance(data, dict) and "posts" in data:
+        return data
+
+    try:
+        _atomic_write_json(POST_METRICS_FILE, default)
+    except Exception as e:
+        SafeLogger.warn(
+            "post_metrics_repair_failed",
+            "Failed to rewrite post_metrics.json with default shape",
+            error_type=type(e).__name__,
+        )
+    return default
+
+
+def save_post_metrics(data: Dict[str, Any]) -> None:
+    """Persist post_metrics.json; Gist first, local file as fallback."""
+    from src.utils import _atomic_write_json, _save_gist_state
+
+    if _save_gist_state("post_metrics.json", data):
+        return
+    try:
+        _atomic_write_json(POST_METRICS_FILE, data)
+    except Exception as e:
+        SafeLogger.error(
+            "post_metrics_save_failed",
+            "Failed to save post metrics",
+            exception=e,
+        )
+
+
+def record_post_metric(
+    post_metrics: Dict[str, Any],
+    *,
+    post_id: str,
+    platform: str,
+    mode: str,
+    posted_at: str,
+    content_preview: str,
+    thread_position: int,
+    topic: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    pioneer_id: Optional[str] = None,
+    had_image: bool = False,
+    had_link_card: bool = False,
+    language: Optional[str] = None,
+) -> None:
+    """Append a post-broadcast row to ``post_metrics`` (mutated in place).
+
+    The ``metrics`` sub-object holds zeros until Step 5's refresh pass fills
+    in live like/repost/reply counts. ``language`` is a placeholder slot —
+    not currently captured at broadcast time; Phase 2 can backfill if the
+    digest design needs per-language breakdown.
+    """
+    posts = post_metrics.setdefault("posts", [])
+    preview = (content_preview or "").strip().replace("\n", " ")
+    if len(preview) > POST_METRICS_CONTENT_PREVIEW_MAX_CHARS:
+        preview = preview[: POST_METRICS_CONTENT_PREVIEW_MAX_CHARS - 1] + "…"
+    posts.append({
+        "post_id": post_id,
+        "platform": platform,
+        "mode": mode,
+        "language": language,
+        "posted_at": posted_at,
+        "content_preview": preview,
+        "topic": topic,
+        "source_domain": source_domain,
+        "pioneer_id": pioneer_id,
+        "had_image": bool(had_image),
+        "had_link_card": bool(had_link_card),
+        "thread_position": thread_position,
+        "metrics": {
+            "likes": 0,
+            "reposts": 0,
+            "replies": 0,
+            "fetched_at": None,
+        },
+    })

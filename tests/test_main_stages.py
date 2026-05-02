@@ -205,3 +205,66 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
         ("automation", "mentor", True),
         ("persistence", "mentor"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_capture_post_metrics_stage_writes_one_row_per_sent_uri(monkeypatch):
+    """One BroadcastPayload with 2 Bluesky URIs and 1 Mastodon ID should
+    record three rows total, each carrying the metrics_context fields."""
+    saved = {}
+    monkeypatch.setattr("src.metrics.load_post_metrics", lambda: {"posts": []})
+    monkeypatch.setattr("src.metrics.save_post_metrics", lambda d: saved.update(data=d))
+
+    broadcast = main.BroadcastPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        content_list=["post-1", "post-2"],
+        chosen_topic="LLMs",
+        thread_pause_profile="default",
+        bsky_broadcast_client=None,
+        bsky_sent_uris=["at://post/1", "at://post/2"],
+        mastodon_sent_ids=["1000"],
+        metrics_context={
+            "mode": "curator",
+            "topic": "LLMs",
+            "source_domain": "openai.com",
+            "pioneer_id": None,
+            "had_image": False,
+            "had_link_card": True,
+        },
+    )
+
+    await main.capture_post_metrics_stage(broadcast)
+
+    rows = saved["data"]["posts"]
+    assert len(rows) == 3
+    assert [r["platform"] for r in rows] == ["bluesky", "bluesky", "mastodon"]
+    assert [r["thread_position"] for r in rows] == [0, 1, 0]
+    assert all(r["topic"] == "LLMs" for r in rows)
+    assert all(r["source_domain"] == "openai.com" for r in rows)
+    assert all(r["had_link_card"] is True for r in rows)
+    assert rows[0]["content_preview"] == "post-1"
+    assert rows[1]["content_preview"] == "post-2"
+    assert rows[2]["content_preview"] == "post-1"
+
+
+@pytest.mark.asyncio
+async def test_capture_post_metrics_stage_is_noop_when_nothing_sent(monkeypatch):
+    """Empty sent_uris on both platforms should not call save."""
+    save_calls = []
+    monkeypatch.setattr("src.metrics.load_post_metrics", lambda: {"posts": []})
+    monkeypatch.setattr("src.metrics.save_post_metrics", lambda d: save_calls.append(d))
+
+    broadcast = main.BroadcastPayload(
+        mode="mentor",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        content_list=["unused"],
+        chosen_topic="topic",
+        thread_pause_profile="default",
+        bsky_broadcast_client=None,
+    )
+    await main.capture_post_metrics_stage(broadcast)
+
+    assert save_calls == []

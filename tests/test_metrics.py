@@ -148,3 +148,130 @@ def test_save_feed_health_falls_back_to_local_file(monkeypatch, tmp_path):
     assert target.exists()
     import json
     assert json.loads(target.read_text(encoding="utf-8")) == {"feeds": {"https://a": {}}}
+
+
+# ---------------------------------------------------------------------------
+# record_post_metric (Phase 1 Step 4)
+# ---------------------------------------------------------------------------
+
+def _record_kwargs(**overrides):
+    """Sensible default args for record_post_metric tests; override per test."""
+    base = dict(
+        post_id="at://did:plc:fake/app.bsky.feed.post/abc",
+        platform="bluesky",
+        mode="curator",
+        posted_at="2026-05-02T07:03:00+00:00",
+        content_preview="A short observation about caching.",
+        thread_position=0,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_record_post_metric_appends_row_with_zeroed_metrics():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(post_metrics, **_record_kwargs())
+
+    assert len(post_metrics["posts"]) == 1
+    row = post_metrics["posts"][0]
+    assert row["platform"] == "bluesky"
+    assert row["mode"] == "curator"
+    assert row["thread_position"] == 0
+    # Metrics sub-object starts at zero — Step 5's refresh fills it later.
+    assert row["metrics"] == {"likes": 0, "reposts": 0, "replies": 0, "fetched_at": None}
+
+
+def test_record_post_metric_truncates_long_content_preview():
+    post_metrics = {"posts": []}
+    long_content = "x" * 500
+    metrics.record_post_metric(
+        post_metrics, **_record_kwargs(content_preview=long_content)
+    )
+    preview = post_metrics["posts"][0]["content_preview"]
+    # Capped at POST_METRICS_CONTENT_PREVIEW_MAX_CHARS with ellipsis.
+    assert len(preview) <= 80
+    assert preview.endswith("…")
+
+
+def test_record_post_metric_collapses_newlines_in_preview():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(content_preview="line one\n\nline two"),
+    )
+    preview = post_metrics["posts"][0]["content_preview"]
+    assert "\n" not in preview
+    assert "line one" in preview and "line two" in preview
+
+
+def test_record_post_metric_handles_optional_fields_as_none():
+    """topic, source_domain, pioneer_id, language are optional —
+    rows should accept them as None rather than crashing."""
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(post_metrics, **_record_kwargs())
+
+    row = post_metrics["posts"][0]
+    assert row["topic"] is None
+    assert row["source_domain"] is None
+    assert row["pioneer_id"] is None
+    assert row["language"] is None
+    assert row["had_image"] is False
+    assert row["had_link_card"] is False
+
+
+def test_record_post_metric_carries_full_context_when_provided():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(
+            topic="LLMs",
+            source_domain="openai.com",
+            pioneer_id="sparck-jones-idf",
+            had_image=True,
+            had_link_card=True,
+            language="English",
+        ),
+    )
+    row = post_metrics["posts"][0]
+    assert row["topic"] == "LLMs"
+    assert row["source_domain"] == "openai.com"
+    assert row["pioneer_id"] == "sparck-jones-idf"
+    assert row["had_image"] is True
+    assert row["had_link_card"] is True
+    assert row["language"] == "English"
+
+
+def test_record_post_metric_appends_to_existing_rows():
+    post_metrics = {"posts": [{"post_id": "old"}]}
+    metrics.record_post_metric(post_metrics, **_record_kwargs(post_id="new"))
+    assert [p["post_id"] for p in post_metrics["posts"]] == ["old", "new"]
+
+
+# ---------------------------------------------------------------------------
+# load_post_metrics / save_post_metrics
+# ---------------------------------------------------------------------------
+
+def test_load_post_metrics_returns_default_shape_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.utils._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.metrics.POST_METRICS_FILE", tmp_path / "post_metrics.json")
+    assert metrics.load_post_metrics() == {"posts": []}
+
+
+def test_load_post_metrics_uses_gist_data_when_available(monkeypatch):
+    payload = {"posts": [{"post_id": "at://x"}]}
+    monkeypatch.setattr(
+        "src.utils._load_gist_state",
+        lambda name: payload if name == "post_metrics.json" else None,
+    )
+    assert metrics.load_post_metrics() == payload
+
+
+def test_save_post_metrics_falls_back_to_local_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.utils._save_gist_state", lambda *_: False)
+    target = tmp_path / "post_metrics.json"
+    monkeypatch.setattr("src.metrics.POST_METRICS_FILE", target)
+
+    metrics.save_post_metrics({"posts": [{"post_id": "x"}]})
+    assert target.exists()
+    import json
+    assert json.loads(target.read_text(encoding="utf-8")) == {"posts": [{"post_id": "x"}]}

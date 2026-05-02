@@ -1,0 +1,44 @@
+{
+  "posts": [
+    {
+      "post_id": "123",
+      "platform": "mastodon",
+      "mode": "mentor",
+      "language": null,
+      "posted_at": "2026-05-02T17:03:14.316512+00:00",
+      "content_preview": "thread post",
+      "topic": "topic",
+      "source_domain": null,
+      "pioneer_id": null,
+      "had_image": false,
+      "had_link_card": false,
+      "thread_position": 0,
+      "metrics": {
+        "likes": 0,
+        "reposts": 0,
+        "replies": 0,
+        "fetched_at": null
+      }
+    },
+    {
+      "post_id": "123",
+      "platform": "mastodon",
+      "mode": "mentor",
+      "language": null,
+      "posted_at": "2026-05-02T17:04:15.486993+00:00",
+      "content_preview": "thread post",
+      "topic": "topic",
+      "source_domain": null,
+      "pioneer_id": null,
+      "had_image": false,
+      "had_link_card": false,
+      "thread_position": 0,
+      "metrics": {
+        "likes": 0,
+        "reposts": 0,
+        "replies": 0,
+        "fetched_at": null
+      }
+    }
+  ]
+}

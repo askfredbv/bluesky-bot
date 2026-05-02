@@ -44,6 +44,7 @@ class ContentPrepPayload:
     bsky_client: Any
     recent_posts: List[str]
     pioneer_entry: Optional[Dict[str, Any]] = None
+    source_domain: Optional[str] = None  # derived from news_items[0]['link']
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class BroadcastPayload:
     pioneer_entry: Optional[Dict[str, Any]] = None
     bsky_sent_uris: List[str] = field(default_factory=list)
     mastodon_sent_ids: List[str] = field(default_factory=list)
+    metrics_context: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
 
     news_items = []
     link_meta = None
+    source_domain: Optional[str] = None
     if mode == "curator":
         news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
         if len(news_items) < 3:
@@ -125,6 +128,12 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
+            # Derive the publisher domain for post-metrics attribution.
+            try:
+                from urllib.parse import urlparse
+                source_domain = (urlparse(news_items[0]['link']).netloc or None)
+            except Exception:
+                source_domain = None
 
     from atproto import AsyncClient
     bsky_client = None
@@ -156,6 +165,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         bsky_client=bsky_client,
         recent_posts=recent_posts,
         pioneer_entry=pioneer_entry,
+        source_domain=source_domain,
     )
 
 
@@ -246,6 +256,21 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     bsky_sent_uris = list(bsky_result.sent_uris) if bsky_result is not None else []
     mastodon_sent_ids = list(mastodon_result.sent_uris) if mastodon_result is not None else []
 
+    # Step 4: assemble the per-post metadata that capture_post_metrics_stage
+    # writes alongside each sent URI. Built once here because the values are
+    # stable across all posts in the thread.
+    pioneer_id = None
+    if content_prep.pioneer_entry:
+        pioneer_id = content_prep.pioneer_entry.get("entry", {}).get("id")
+    metrics_context: Dict[str, Any] = {
+        "mode": mode,
+        "topic": chosen_topic,
+        "source_domain": content_prep.source_domain,
+        "pioneer_id": pioneer_id,
+        "had_image": image_bytes is not None,
+        "had_link_card": link_meta is not None,
+    }
+
     return BroadcastPayload(
         mode=mode,
         seen_data=content_prep.seen_data,
@@ -257,7 +282,59 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         pioneer_entry=content_prep.pioneer_entry,
         bsky_sent_uris=bsky_sent_uris,
         mastodon_sent_ids=mastodon_sent_ids,
+        metrics_context=metrics_context,
     )
+
+
+async def capture_post_metrics_stage(broadcast: BroadcastPayload) -> None:
+    """Phase 1 Step 4: write a row to post_metrics.json per delivered post.
+
+    Runs after broadcasting_stage. Iterates the per-platform sent URI lists
+    and records one row each. Errors are swallowed with a warning so a
+    metrics persistence hiccup cannot affect the next stage's posting work.
+    """
+    bsky_uris = broadcast.bsky_sent_uris or []
+    mastodon_ids = broadcast.mastodon_sent_ids or []
+    if not bsky_uris and not mastodon_ids:
+        return
+
+    try:
+        from src.metrics import load_post_metrics, record_post_metric, save_post_metrics
+        post_metrics = load_post_metrics()
+        ctx = broadcast.metrics_context or {}
+        posted_at = datetime.now(timezone.utc).isoformat()
+
+        def _record(post_id: str, platform: str, content: str, position: int) -> None:
+            record_post_metric(
+                post_metrics,
+                post_id=post_id,
+                platform=platform,
+                mode=ctx.get("mode", broadcast.mode),
+                posted_at=posted_at,
+                content_preview=content,
+                thread_position=position,
+                topic=ctx.get("topic"),
+                source_domain=ctx.get("source_domain"),
+                pioneer_id=ctx.get("pioneer_id"),
+                had_image=bool(ctx.get("had_image")),
+                had_link_card=bool(ctx.get("had_link_card")),
+            )
+
+        for idx, uri in enumerate(bsky_uris):
+            content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
+            _record(uri, "bluesky", content, idx)
+        for idx, status_id in enumerate(mastodon_ids):
+            content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
+            _record(status_id, "mastodon", content, idx)
+
+        save_post_metrics(post_metrics)
+    except Exception as e:
+        SafeLogger.warn(
+            "post_metrics_record_failed",
+            "Post metrics capture skipped",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
 
 
 async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
@@ -321,6 +398,7 @@ async def main():
     mode_payload = await mode_selection_stage()
     content_prep = await content_prep_stage(mode_payload, creds)
     broadcast = await broadcasting_stage(content_prep, settings, creds, active_models=active_models)
+    await capture_post_metrics_stage(broadcast)
     automation = await post_run_automation_stage(broadcast, creds)
     await persistence_stage(automation)
 
