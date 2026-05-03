@@ -68,6 +68,7 @@ class AutomationPayload:
     seen_data: Dict[str, List[str]]
     news_items: List[Dict[str, Any]]
     pioneer_entry: Optional[Dict[str, Any]] = None
+    chosen_topic: Optional[str] = None
 
 
 async def get_recent_posts(client, handle: str) -> List[str]:
@@ -180,6 +181,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         news_items=news_items,
         model_priority=active_models,
         pioneer_entry=content_prep.pioneer_entry,
+        recent_mode_topics=content_prep.seen_data.get("recent_mode_topics", []),
     )
 
     # Generate image for non-Curator modes at configured probability.
@@ -350,6 +352,7 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
         seen_data=broadcast.seen_data,
         news_items=broadcast.news_items,
         pioneer_entry=broadcast.pioneer_entry,
+        chosen_topic=broadcast.chosen_topic,
     )
 
 
@@ -358,6 +361,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
     news_items = automation.news_items
     seen_data = automation.seen_data
     pioneer_entry = automation.pioneer_entry
+    chosen_topic = automation.chosen_topic
 
     dirty = False
     if mode == "curator" and news_items:
@@ -367,6 +371,15 @@ async def persistence_stage(automation: AutomationPayload) -> None:
         topic_cat = news_items[0].get('detected_topic', 'General')
         if topic_cat != 'General':
             seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
+        dirty = True
+
+    # v4.16: track the LLM-chosen topic for Mentor/Strategist runs so the
+    # next run's topic picker can avoid repeating it. Curator already has
+    # its own categorical recent_topics; this is a separate field for the
+    # free-form Mentor/Strategist topic strings.
+    if mode in ("mentor", "strategist") and chosen_topic:
+        existing = seen_data.get("recent_mode_topics", []) or []
+        seen_data["recent_mode_topics"] = (existing + [chosen_topic])[-5:]
         dirty = True
 
     # Pioneer cooldown bookkeeping — only when a pioneer post actually fired

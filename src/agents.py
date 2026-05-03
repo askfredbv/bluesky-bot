@@ -279,13 +279,19 @@ def _extract_style_fingerprints(recent_posts: List[str]) -> Dict[str, List[str]]
             norm = tag.lower()
             hashtag_counts[norm] = hashtag_counts.get(norm, 0) + 1
 
+    # v4.16: count >= 1 (was > 1). Goal is to avoid patterns we've used at
+    # all — not patterns we've used twice. The previous threshold meant the
+    # avoidance constraint listed "None" almost every run, because the
+    # 10-post recent window rarely contained two posts with the same
+    # 4-word opener. Result: the LLM frequently regenerated near-verbatim
+    # copies of recent posts (work-life balance dupe observed 2026-05-02).
     repeated_openers = [
         opener for opener, count in sorted(opening_counts.items(), key=lambda x: x[1], reverse=True)
-        if count > 1
+        if count >= 1
     ][:STYLE_MEMORY_MAX_OPENERS]
     repeated_hashtags = [
         tag for tag, count in sorted(hashtag_counts.items(), key=lambda x: x[1], reverse=True)
-        if count > 1
+        if count >= 1
     ][:STYLE_MEMORY_MAX_HASHTAGS]
 
     return {
@@ -293,15 +299,52 @@ def _extract_style_fingerprints(recent_posts: List[str]) -> Dict[str, List[str]]
         "repeated_hashtags": repeated_hashtags
     }
 
-def _build_avoidance_constraints(style_fingerprints: Dict[str, List[str]]) -> str:
-    """Format style memory into prompt-safe constraints."""
+# v4.16: how much of each recent post to include verbatim in the avoidance
+# block. Long enough to convey rhetorical shape; short enough that 3
+# excerpts plus the rest of the prompt stay well under the context window.
+_RECENT_POST_EXCERPT_CHARS: int = 200
+_RECENT_POST_EXCERPT_COUNT: int = 3
+
+
+def _build_avoidance_constraints(
+    style_fingerprints: Dict[str, List[str]],
+    recent_posts: Optional[List[str]] = None,
+) -> str:
+    """Format style memory into prompt-safe constraints.
+
+    v4.16: the abstract "avoid these openings" signal alone was insufficient
+    — the LLM kept regenerating near-verbatim posts. Including 3 actual
+    recent post excerpts as concrete "do not produce structurally similar
+    text" examples gives the model the content-level signal it needs.
+    """
     openers = style_fingerprints.get("repeated_openers", [])
     hashtags = style_fingerprints.get("repeated_hashtags", [])
+
+    excerpts: List[str] = []
+    if recent_posts:
+        for post in recent_posts[:_RECENT_POST_EXCERPT_COUNT]:
+            text = " ".join(post.split())  # collapse whitespace for compact excerpt
+            if len(text) > _RECENT_POST_EXCERPT_CHARS:
+                text = text[: _RECENT_POST_EXCERPT_CHARS - 1] + "…"
+            if text:
+                excerpts.append(text)
+
+    excerpt_block = ""
+    if excerpts:
+        bullets = "\n".join(f"  {i + 1}. {ex}" for i, ex in enumerate(excerpts))
+        excerpt_block = (
+            "\n- Recent post excerpts (do NOT produce text that is structurally or "
+            "rhetorically similar to any of these — different opening, different "
+            "metaphor, different sentence rhythm):\n"
+            f"{bullets}"
+        )
+
     return (
         "RECENT STYLE SIGNALS (AVOID REPETITION):\n"
         f"- Reused opening patterns: {openers if openers else 'None'}\n"
         f"- Reused hashtags: {hashtags if hashtags else 'None'}\n"
         "- Vary sentence openings, rhetorical shape, and hashtag selection."
+        f"{excerpt_block}"
     )
 
 def _is_gemma(model_name: str) -> bool:
@@ -496,6 +539,20 @@ async def filter_available_models(api_key: str, priority: List[str]) -> List[str
         return priority
 
 
+def _pick_topic_avoiding_recent(candidates: List[str], recent: List[str]) -> str:
+    """Pick a topic from `candidates`, preferring one not in `recent`.
+
+    Falls back to unrestricted random.choice when the candidate set is
+    fully exhausted by the recent list (e.g. Mentor's 4-topic pool with 5
+    recent picks would otherwise be empty). The fallback path keeps
+    behaviour graceful rather than raising.
+    """
+    if not candidates:
+        raise ValueError("topic candidate list is empty")
+    fresh = [c for c in candidates if c not in (recent or [])]
+    return random.choice(fresh if fresh else candidates)
+
+
 async def generate_content(
     api_key: str,
     recent_posts: List[str],
@@ -503,19 +560,26 @@ async def generate_content(
     news_items: Optional[List[Dict[str, Any]]] = None,
     model_priority: Optional[List[str]] = None,
     pioneer_entry: Optional[Dict[str, Any]] = None,
+    recent_mode_topics: Optional[List[str]] = None,
 ) -> Tuple[List[str], str]:
     """Generates content asynchronously with Rescue logic and Temporal Context.
 
     ``pioneer_entry`` (if supplied) is the result of ``select_pioneer_topic``
     and overrides the normal Mentor/Strategist topic pick with a pioneer
     fact post. Curator mode never receives a pioneer entry.
+
+    ``recent_mode_topics`` is the rolling list of topics the bot picked
+    on its last few Mentor/Strategist runs — used to filter
+    ``random.choice`` so the same topic is not picked back-to-back.
+    Mentor's 4-topic pool especially benefits (P(repeat)=25% otherwise).
     """
     temporal = get_temporal_context()
     variant_name, variant_instruction = _select_persona_variant(mode)
     language = random.choice(LANGUAGE_OPTIONS)
     SafeLogger.info("language_selected", "Thread language selected", language=language, mode=mode)
     style_fingerprints = _extract_style_fingerprints(recent_posts)
-    style_constraints = _build_avoidance_constraints(style_fingerprints)
+    style_constraints = _build_avoidance_constraints(style_fingerprints, recent_posts)
+    recent_mode_topics = list(recent_mode_topics or [])
 
     if mode == "curator" and not news_items:
         SafeLogger.warn("curator_no_items", "Curator mode called with no news items; falling back to mentor", mode=mode)
@@ -557,7 +621,7 @@ async def generate_content(
             "not necessarily the most prominent headline. Connect where it makes sense, but don't force links."
         )
     elif mode == "strategist":
-        topic = random.choice(SECONDARY_TOPICS)
+        topic = _pick_topic_avoiding_recent(SECONDARY_TOPICS, recent_mode_topics)
         instr = (
             f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
             f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
@@ -570,7 +634,10 @@ async def generate_content(
             "'what does this look like in five years and what should someone be building toward now'."
         )
     else:
-        topic = random.choice(["Career", "Automation", "Work-Life Balance", "Learning"])
+        topic = _pick_topic_avoiding_recent(
+            ["Career", "Automation", "Work-Life Balance", "Learning"],
+            recent_mode_topics,
+        )
         instr = (
             f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
             f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"

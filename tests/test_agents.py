@@ -446,3 +446,101 @@ def test_validate_thread_shape_accepts_post_at_limit():
     at_limit = "x" * MAX_POST_LENGTH_BSKY
     ok, _ = _validate_thread_shape([at_limit])
     assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# v4.16 duplicate-content fixes
+# ---------------------------------------------------------------------------
+
+def test_extract_style_fingerprints_flags_singly_used_openers():
+    """v4.16: count >= 1 (was > 1). The previous threshold required two
+    occurrences of the same opener within the window before flagging it,
+    which silently skipped the case we actually care about — a pattern
+    used once that the LLM is about to reuse on the next run."""
+    from src.agents import _extract_style_fingerprints
+
+    posts = [
+        "Notes on caching invalidation across three layers.",
+        "Working with legacy code is mostly archaeology.",
+    ]
+    fp = _extract_style_fingerprints(posts)
+    # Both openers appear exactly once and must now be flagged.
+    assert any("notes on caching" in o for o in fp["repeated_openers"])
+    assert any("working with legacy" in o for o in fp["repeated_openers"])
+
+
+def test_build_avoidance_constraints_includes_recent_post_excerpts():
+    """v4.16: concrete excerpts are now included in the prompt as
+    'do NOT produce text that is structurally similar' examples — the
+    abstract opener-only signal was insufficient."""
+    from src.agents import _build_avoidance_constraints
+
+    constraints = _build_avoidance_constraints(
+        {"repeated_openers": [], "repeated_hashtags": []},
+        recent_posts=[
+            "Yesterday's observation about cache invalidation.",
+            "An earlier note on monitoring's blind spots.",
+        ],
+    )
+    assert "Recent post excerpts" in constraints
+    assert "do NOT produce" in constraints
+    assert "cache invalidation" in constraints
+    assert "monitoring's blind spots" in constraints
+
+
+def test_build_avoidance_constraints_truncates_long_excerpts():
+    from src.agents import _build_avoidance_constraints
+
+    long_post = "x" * 500
+    constraints = _build_avoidance_constraints(
+        {"repeated_openers": [], "repeated_hashtags": []},
+        recent_posts=[long_post],
+    )
+    # Each excerpt is capped; the constraint string should not contain
+    # the full 500-char post verbatim.
+    assert "x" * 500 not in constraints
+    assert "…" in constraints
+
+
+def test_pick_topic_avoiding_recent_skips_recent_picks():
+    from src.agents import _pick_topic_avoiding_recent
+
+    candidates = ["Career", "Automation", "Work-Life Balance", "Learning"]
+    recent = ["Work-Life Balance"]
+    # 100 trials — the recent one must never come up while a fresh option exists.
+    picks = {_pick_topic_avoiding_recent(candidates, recent) for _ in range(100)}
+    assert "Work-Life Balance" not in picks
+    assert picks.issubset(set(candidates))
+
+
+def test_pick_topic_avoiding_recent_falls_back_when_all_exhausted():
+    """When `recent` covers every candidate, fall back to unrestricted choice
+    so we never raise mid-run."""
+    from src.agents import _pick_topic_avoiding_recent
+
+    candidates = ["A", "B"]
+    recent = ["A", "B", "A"]
+    pick = _pick_topic_avoiding_recent(candidates, recent)
+    assert pick in candidates
+
+
+@pytest.mark.asyncio
+async def test_generate_content_avoids_recent_mode_topics_in_mentor(monkeypatch):
+    """End-to-end: passing recent_mode_topics covering 3 of 4 Mentor topics
+    must force the picker to land on the remaining one."""
+    captured = {"task": ""}
+
+    def _capture_prompt(_api_key, _system_instr, task, _model):
+        captured["task"] = task
+        return '["A real Mentor post that meets the validator length floor with no banned hype."]'
+
+    monkeypatch.setattr("src.agents._sync_generate", _capture_prompt)
+
+    # 3 of the 4 Mentor topics blocked → only "Learning" should be picked.
+    await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+        recent_mode_topics=["Career", "Automation", "Work-Life Balance"],
+    )
+    assert "TOPIC: Learning" in captured["task"]
