@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.15.3)
+# Bluesky & Mastodon Daily Poster (v4.16.0)
 
 ![Daily Post](https://github.com/askfredbv/bluesky-bot/actions/workflows/daily_post.yml/badge.svg)
 
@@ -10,10 +10,10 @@ The afternoon run also runs a **pioneer dimension** — curated tech-history fac
 
 ## What it does
 
-**Morning run (09:00 UTC) — The Curator**
+**Morning run (07:00 UTC) — The Curator**
 Fetches from 25 AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then writes about the most consequential development. Default is a single post; the model may extend to 2–3 if the story genuinely needs it. The goal is the "...which means" that follows the headline, not the headline itself.
 
-**Afternoon run (15:30 UTC) — The Mentor**
+**Afternoon run (14:30 UTC) — The Mentor**
 Picks a career or work-life observation and writes a short post. The target is specific and observational — the kind of thing that is obvious in hindsight but rarely articulated. Defaults to one post; threads only when the observation can't fit.
 
 **Voice (v4.14)** — first-person, dry, no day-of-week openers, no reader-bait questions, no hype words. Default zero hashtags, max two when they're a clear topic anchor.

@@ -1,7 +1,9 @@
 name: Daily Bluesky Post
 
 on:
-  # Triggered externally by cron-job.org at 09:00 and 15:30 UTC via workflow_dispatch.
+  # Triggered externally by cron-job.org twice daily via workflow_dispatch.
+  # Times are anchored to local Belgian time so UTC values shift with DST:
+  # 08:00/15:30 UTC in winter (CET), 07:00/14:30 UTC in summer (CEST).
   # GitHub's built-in schedule is intentionally removed to avoid duplicate posts and timing delays.
   workflow_dispatch:
 
