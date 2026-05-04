@@ -1,33 +1,30 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping fine at v4.15.3. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
+Living list of pending work and parked ideas. Bot is shipping fine at v4.16.0. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
 
 ---
 
 ## Priority order
 
-1. **`PLAN_engagement.md` Phase 1** (capture metrics + feed health + per-post idempotency; see §1)
+1. **Phase 1 acceptance gate** — passive, validates tomorrow morning (see §1)
 2. **Remaining open issues** — fix when convenient (see §2)
 3. **Observational items** — wait for more runs, then decide (see §3)
 4. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
 
-Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for the retro. Phase 1 is now the clear next step.
+Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for the retro.
 
 ---
 
-## §1 — Next up
+## §1 — Phase 1 acceptance gate (passive)
 
-### `PLAN_engagement.md` Phase 1 — Capture (data + observability + idempotency)
+Phase 1 capture pipeline is fully shipped (Steps 1–5; see `PLAN_engagement.md §1f`). Two acceptance signals remain, both validated by natural production runs without further code:
 
-See `docs/PLAN_engagement.md`. Phase 1 bundles three changes that share a broadcaster signature change (`BroadcastResult`):
+- **Step 5 acceptance:** after 2 runs ~12h apart, prior-day rows in `post_metrics.json` show non-zero like/repost/reply counts (i.e. the refresh pass is actually pulling live engagement data). Tomorrow's 07:00 UTC Curator run is the earliest validator, since today's 14:30 UTC Mentor will be the first run to actually invoke `refresh_stale_metrics`.
+- **Dedup fix acceptance:** the next afternoon Mentor run picks a topic ≠ "Work-Life Balance" and produces visibly different prose from the 2026-05-02 / 2026-05-03 duplicates. Tonight's 14:30 UTC Mentor is the validator.
 
-- **Post metrics** — capture post IDs at broadcast, refresh likes/reposts/replies for posts 24h–30d old, write `post_metrics.json` to the Gist
-- **Feed health** — `fetch_single_feed` returns `FeedFetchResult`; aggregated into `feed_health.json` in the Gist
-- **Per-post idempotency** — drop `@retry_with_backoff` from broadcasters, add per-post retry, emit `*_partial_delivery` on exhaustion. Fixes the silent re-send bug on Mastodon
+Once both confirm clean, **cut v4.17.0** with release notes covering Step 5, the dedup fix, the SafeLogger guard, and the bio rewrite. Until then, README + `run_started` stay on v4.16.0.
 
-Effort: ~5h. Output: real data flowing + Mastodon's silent re-send pattern fixed. After two runs you can verify it works; after two weeks you have enough to run Phase 2 (digest) usefully.
-
-**Status 2026-04-23:** Steps 1–3b shipped (commits `6d581fe`, `7eb02e9`, `0afa0b4`, `185aad4`). Per-thread shared retry budget + `*_partial_delivery` events now live; two `workflow_dispatch` runs clean. Checkpoint-gated — waiting for ≥1 natural production run before Steps 4 (metrics_context plumbing) and 5 (refresh + prune). `feed_health.json` acceptance still pending: validation runs so far were Mentor mode; needs one Curator run for all 25 feeds. See `PLAN_engagement.md §1f` for the tracker.
+After acceptance, **nothing else here is actionable for ~2 weeks** — Phase 2 (weekly digest) needs 2+ weeks of telemetry data to be useful; Phase 4b is gated on Phase 1 producing data to inform reply-prompt design. The right thing to do during the wait is read the data as it accumulates, not write more code.
 
 ---
 
