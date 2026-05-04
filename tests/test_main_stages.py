@@ -215,6 +215,12 @@ async def test_capture_post_metrics_stage_writes_one_row_per_sent_uri(monkeypatc
     monkeypatch.setattr("src.metrics.load_post_metrics", lambda: {"posts": []})
     monkeypatch.setattr("src.metrics.save_post_metrics", lambda d: saved.update(data=d))
 
+    async def fake_refresh(post_metrics, bsky_client, mastodon_client, now):
+        return {"bluesky": 0, "mastodon": 0, "skipped": 0, "errors": 0}
+
+    monkeypatch.setattr("src.metrics.refresh_stale_metrics", fake_refresh)
+    monkeypatch.setattr("src.metrics.prune_old_metrics", lambda data, now: 0)
+
     broadcast = main.BroadcastPayload(
         mode="curator",
         seen_data={"links": [], "recent_topics": []},
@@ -234,8 +240,9 @@ async def test_capture_post_metrics_stage_writes_one_row_per_sent_uri(monkeypatc
             "had_link_card": True,
         },
     )
+    creds = SimpleNamespace(mastodon_access_token=None, mastodon_api_base_url="https://x")
 
-    await main.capture_post_metrics_stage(broadcast)
+    await main.capture_post_metrics_stage(broadcast, creds)
 
     rows = saved["data"]["posts"]
     assert len(rows) == 3
@@ -250,11 +257,22 @@ async def test_capture_post_metrics_stage_writes_one_row_per_sent_uri(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_capture_post_metrics_stage_is_noop_when_nothing_sent(monkeypatch):
-    """Empty sent_uris on both platforms should not call save."""
+async def test_capture_post_metrics_stage_still_runs_refresh_when_nothing_sent(monkeypatch):
+    """Empty sent_uris should still trigger the refresh+prune pass —
+    Step 5 needs to keep refreshing prior rows even on a run where nothing
+    new was posted (e.g. invariant_violated)."""
     save_calls = []
     monkeypatch.setattr("src.metrics.load_post_metrics", lambda: {"posts": []})
     monkeypatch.setattr("src.metrics.save_post_metrics", lambda d: save_calls.append(d))
+
+    refresh_calls = []
+
+    async def fake_refresh(post_metrics, bsky_client, mastodon_client, now):
+        refresh_calls.append(True)
+        return {"bluesky": 0, "mastodon": 0, "skipped": 0, "errors": 0}
+
+    monkeypatch.setattr("src.metrics.refresh_stale_metrics", fake_refresh)
+    monkeypatch.setattr("src.metrics.prune_old_metrics", lambda data, now: 0)
 
     broadcast = main.BroadcastPayload(
         mode="mentor",
@@ -265,6 +283,8 @@ async def test_capture_post_metrics_stage_is_noop_when_nothing_sent(monkeypatch)
         thread_pause_profile="default",
         bsky_broadcast_client=None,
     )
-    await main.capture_post_metrics_stage(broadcast)
+    creds = SimpleNamespace(mastodon_access_token=None, mastodon_api_base_url="https://x")
+    await main.capture_post_metrics_stage(broadcast, creds)
 
-    assert save_calls == []
+    assert refresh_calls == [True]
+    assert len(save_calls) == 1

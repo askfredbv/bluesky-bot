@@ -197,10 +197,10 @@ Each step is a single commit that leaves main green. Ordered by dependency and r
 | 3a | ✅ | `0afa0b4` | `BroadcastResult` return type; decorator still in place |
 | 3b | ✅ | `185aad4` | Dropped `@retry_with_backoff`; per-thread shared retry budget; `*_partial_delivery` on exhaustion. Two `workflow_dispatch` runs clean. Natural runs since: clean. |
 | — | **CHECKPOINT cleared** | — | The 2026-04-29 morning Curator run cleared the broadcast-path checkpoint (no `*_partial_delivery`, no `rate_limit_hit`). Step 2's separate KeyError bug surfaced on the same run and was fixed in `5f8e2e2`. |
-| 4 | ✅ | `ff00aa6` + `27cf504` | metrics_context plumbing + record-on-broadcast. `post_metrics.json` schema (post_id, platform, mode, posted_at, content_preview, topic, source_domain, pioneer_id, had_image, had_link_card, thread_position, zeroed metrics sub-object). New `capture_post_metrics_stage`. Test isolation fix (`27cf504`) gitignored state files and added a noop monkeypatch in the e2e tests so the new stage no longer leaks state to disk during pytest. |
-| 5 | ⏳ | — | Refresh stale metrics + prune (~45m). Unblocks once tomorrow's 07:00 UTC Curator run shows `feed_health.json` populated for all 25 feeds *and* `post_metrics.json` shows rows with zeroed `metrics` sub-objects. |
+| 4 | ✅ | `ff00aa6` + `27cf504` | metrics_context plumbing + record-on-broadcast. `post_metrics.json` schema (post_id, platform, mode, posted_at, content_preview, topic, source_domain, pioneer_id, had_image, had_link_card, thread_position, zeroed metrics sub-object). New `capture_post_metrics_stage`. Test isolation fix (`27cf504`) gitignored state files and added a noop monkeypatch in the e2e tests so the new stage no longer leaks state to disk during pytest. **2026-05-04 Curator run:** acceptance gate clear, no `post_metrics_record_failed`. |
+| 5 | ✅ | (this commit) | Refresh stale metrics + prune. `should_refresh` (pure: 2h floor, 20h staleness, 30d cap), `prune_old_metrics`, `refresh_stale_metrics` (Bluesky `get_posts` batched ≤25, Mastodon `status` per-row in a thread). `capture_post_metrics_stage` extended to do load → record → refresh → prune → save in one I/O cycle. Per-platform errors don't block the other platform. **Acceptance:** after 2 runs ~12h apart, previous day's rows show non-zero like/repost counts. |
 
-Tests: 230 passing.
+Tests: 250 passing. **Phase 1 capture pipeline complete.**
 
 ### Phase 1 success criteria (gate to Phase 2)
 

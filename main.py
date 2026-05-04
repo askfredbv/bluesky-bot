@@ -288,23 +288,34 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     )
 
 
-async def capture_post_metrics_stage(broadcast: BroadcastPayload) -> None:
-    """Phase 1 Step 4: write a row to post_metrics.json per delivered post.
+async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) -> None:
+    """Phase 1 Step 4 + Step 5: record-on-broadcast, refresh stale rows, prune.
 
-    Runs after broadcasting_stage. Iterates the per-platform sent URI lists
-    and records one row each. Errors are swallowed with a warning so a
-    metrics persistence hiccup cannot affect the next stage's posting work.
+    Single I/O cycle: load → record new rows from this run → refresh stale
+    rows from prior runs → prune rows older than POST_METRICS_MAX_AGE_DAYS
+    → save. Each phase is independently swallowed so a refresh API hiccup
+    cannot break the recording, etc.
+
+    The Mastodon client is instantiated lazily here (no broadcast token
+    needed) so the stage can hit either platform's read API without
+    depending on broadcast credentials being threaded further upstream.
     """
-    bsky_uris = broadcast.bsky_sent_uris or []
-    mastodon_ids = broadcast.mastodon_sent_ids or []
-    if not bsky_uris and not mastodon_ids:
-        return
-
     try:
-        from src.metrics import load_post_metrics, record_post_metric, save_post_metrics
+        from src.metrics import (
+            load_post_metrics,
+            prune_old_metrics,
+            record_post_metric,
+            refresh_stale_metrics,
+            save_post_metrics,
+        )
         post_metrics = load_post_metrics()
         ctx = broadcast.metrics_context or {}
-        posted_at = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        posted_at = now.isoformat()
+
+        # ---- Capture: new rows from this run ----
+        bsky_uris = broadcast.bsky_sent_uris or []
+        mastodon_ids = broadcast.mastodon_sent_ids or []
 
         def _record(post_id: str, platform: str, content: str, position: int) -> None:
             record_post_metric(
@@ -328,6 +339,57 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload) -> None:
         for idx, status_id in enumerate(mastodon_ids):
             content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
             _record(status_id, "mastodon", content, idx)
+
+        # ---- Refresh: pull live counts for rows due an update ----
+        bsky_client = broadcast.bsky_broadcast_client
+        mastodon_client = None
+        if creds.mastodon_access_token:
+            try:
+                from mastodon import Mastodon
+                mastodon_client = Mastodon(
+                    access_token=creds.mastodon_access_token,
+                    api_base_url=creds.mastodon_api_base_url,
+                )
+            except Exception as e:
+                SafeLogger.warn(
+                    "post_metrics_mastodon_client_failed",
+                    "Could not instantiate Mastodon client for metrics refresh",
+                    error_type=type(e).__name__,
+                )
+
+        try:
+            refresh_counts = await refresh_stale_metrics(
+                post_metrics, bsky_client, mastodon_client, now
+            )
+            SafeLogger.info(
+                "post_metrics_refreshed",
+                "Post metrics refresh pass complete",
+                **refresh_counts,
+            )
+        except Exception as e:
+            SafeLogger.warn(
+                "post_metrics_refresh_failed",
+                "Post metrics refresh raised",
+                error_type=type(e).__name__,
+                error_msg=str(e)[:200],
+            )
+
+        # ---- Prune: drop rows older than the cap ----
+        try:
+            pruned = prune_old_metrics(post_metrics, now)
+            if pruned:
+                SafeLogger.info(
+                    "post_metrics_pruned",
+                    "Pruned aged-out post metric rows",
+                    pruned_count=pruned,
+                )
+        except Exception as e:
+            SafeLogger.warn(
+                "post_metrics_prune_failed",
+                "Post metrics prune raised",
+                error_type=type(e).__name__,
+                error_msg=str(e)[:200],
+            )
 
         save_post_metrics(post_metrics)
     except Exception as e:
@@ -411,7 +473,7 @@ async def main():
     mode_payload = await mode_selection_stage()
     content_prep = await content_prep_stage(mode_payload, creds)
     broadcast = await broadcasting_stage(content_prep, settings, creds, active_models=active_models)
-    await capture_post_metrics_stage(broadcast)
+    await capture_post_metrics_stage(broadcast, creds)
     automation = await post_run_automation_stage(broadcast, creds)
     await persistence_stage(automation)
 

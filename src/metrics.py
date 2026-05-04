@@ -10,14 +10,18 @@ then to keep the Step 2 diff tight.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from src.config import (
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
+    POST_METRICS_BLUESKY_BATCH_SIZE,
     POST_METRICS_CONTENT_PREVIEW_MAX_CHARS,
     POST_METRICS_FILE,
+    POST_METRICS_MAX_AGE_DAYS,
+    POST_METRICS_REFRESH_FLOOR_HOURS,
+    POST_METRICS_REFRESH_STALE_HOURS,
 )
 from src.logger import SafeLogger
 
@@ -237,3 +241,154 @@ def record_post_metric(
             "fetched_at": None,
         },
     })
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 Step 5 — refresh stale rows + prune old ones.
+#
+# Refresh policy: hit a row only when posted_at is at least
+# POST_METRICS_REFRESH_FLOOR_HOURS old (skip 0–2h dead zone with no signal),
+# fetched_at is None or older than POST_METRICS_REFRESH_STALE_HOURS (so each
+# row gets refreshed at least once per 24h with 2 runs/day), and posted_at
+# is within POST_METRICS_MAX_AGE_DAYS (don't burn API on rows about to be
+# pruned). Steady-state expectation: ~10–20 API calls per run.
+# ---------------------------------------------------------------------------
+
+def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+    """Tolerant ISO-8601 parser; returns None on bad input.
+
+    Handles the trailing-Z form some serialisers produce as well as
+    timezone-aware ISO strings the bot writes natively.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def should_refresh(post_row: Dict[str, Any], now: datetime) -> bool:
+    """Pure decision: does this row need a metrics refresh on this run?"""
+    posted_at = _parse_iso(post_row.get("posted_at"))
+    if posted_at is None:
+        return False
+    age = now - posted_at
+    if age < timedelta(hours=POST_METRICS_REFRESH_FLOOR_HOURS):
+        return False
+    if age >= timedelta(days=POST_METRICS_MAX_AGE_DAYS):
+        return False
+    fetched_at = _parse_iso(post_row.get("metrics", {}).get("fetched_at"))
+    if fetched_at is None:
+        return True
+    return (now - fetched_at) >= timedelta(hours=POST_METRICS_REFRESH_STALE_HOURS)
+
+
+def prune_old_metrics(post_metrics: Dict[str, Any], now: datetime) -> int:
+    """Drop rows whose posted_at is older than POST_METRICS_MAX_AGE_DAYS.
+
+    Returns the count of pruned rows. Mutates ``post_metrics`` in place.
+    Rows with unparseable posted_at are kept (we'd rather hold a stale
+    row than drop a real one due to a serialiser change).
+    """
+    posts = post_metrics.get("posts", [])
+    cutoff = now - timedelta(days=POST_METRICS_MAX_AGE_DAYS)
+    keep: List[Dict[str, Any]] = []
+    pruned = 0
+    for row in posts:
+        posted_at = _parse_iso(row.get("posted_at"))
+        if posted_at is not None and posted_at < cutoff:
+            pruned += 1
+            continue
+        keep.append(row)
+    post_metrics["posts"] = keep
+    return pruned
+
+
+def _chunked(seq: List[Any], size: int):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+async def refresh_stale_metrics(
+    post_metrics: Dict[str, Any],
+    bsky_client: Any,
+    mastodon_client: Any,
+    now: datetime,
+) -> Dict[str, int]:
+    """Update ``metrics`` sub-objects for rows that are due a refresh.
+
+    Returns a small counts dict suitable for logging: ``{bluesky, mastodon,
+    skipped, errors}``. Errors are caught per-platform so a Bluesky outage
+    cannot block the Mastodon refresh and vice versa.
+    """
+    posts = post_metrics.get("posts", [])
+    counts = {"bluesky": 0, "mastodon": 0, "skipped": 0, "errors": 0}
+
+    bsky_due: List[Dict[str, Any]] = []
+    mastodon_due: List[Dict[str, Any]] = []
+    for row in posts:
+        if not should_refresh(row, now):
+            counts["skipped"] += 1
+            continue
+        if row.get("platform") == "bluesky":
+            bsky_due.append(row)
+        elif row.get("platform") == "mastodon":
+            mastodon_due.append(row)
+
+    fetched_iso = now.isoformat()
+
+    # ---- Bluesky: batched ≤25 URIs per call ----
+    if bsky_due and bsky_client is not None:
+        by_uri = {row["post_id"]: row for row in bsky_due if row.get("post_id")}
+        try:
+            for chunk in _chunked(list(by_uri.keys()), POST_METRICS_BLUESKY_BATCH_SIZE):
+                response = await bsky_client.app.bsky.feed.get_posts({"uris": chunk})
+                for entry in getattr(response, "posts", []) or []:
+                    uri = getattr(entry, "uri", None)
+                    row = by_uri.get(uri)
+                    if row is None:
+                        continue
+                    row["metrics"] = {
+                        "likes": int(getattr(entry, "like_count", 0) or 0),
+                        "reposts": int(getattr(entry, "repost_count", 0) or 0),
+                        "replies": int(getattr(entry, "reply_count", 0) or 0),
+                        "fetched_at": fetched_iso,
+                    }
+                    counts["bluesky"] += 1
+        except Exception as e:
+            counts["errors"] += 1
+            SafeLogger.warn(
+                "post_metrics_bluesky_refresh_failed",
+                "Bluesky metrics refresh raised",
+                error_type=type(e).__name__,
+                error_msg=str(e)[:200],
+            )
+
+    # ---- Mastodon: one call per row, in a thread to avoid blocking the loop ----
+    if mastodon_due and mastodon_client is not None:
+        import asyncio
+        for row in mastodon_due:
+            status_id = row.get("post_id")
+            if not status_id:
+                continue
+            try:
+                status = await asyncio.to_thread(mastodon_client.status, status_id)
+                row["metrics"] = {
+                    "likes": int(status.get("favourites_count", 0) or 0),
+                    "reposts": int(status.get("reblogs_count", 0) or 0),
+                    "replies": int(status.get("replies_count", 0) or 0),
+                    "fetched_at": fetched_iso,
+                }
+                counts["mastodon"] += 1
+            except Exception as e:
+                counts["errors"] += 1
+                SafeLogger.warn(
+                    "post_metrics_mastodon_refresh_failed",
+                    "Mastodon metrics refresh raised",
+                    error_type=type(e).__name__,
+                    error_msg=str(e)[:200],
+                    status_id=status_id,
+                )
+
+    return counts

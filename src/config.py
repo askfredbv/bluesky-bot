@@ -43,6 +43,14 @@ FEED_HEALTH_RECENT_ATTEMPTS_LIMIT: int = 28  # ~2 weeks at 2 runs/day
 POST_METRICS_CONTENT_PREVIEW_MAX_CHARS: int = 80
 POST_METRICS_MAX_AGE_DAYS: int = 30  # rows older than this get pruned in Step 5
 
+# Step 5 refresh policy. The 2h floor skips hour-old posts (no engagement
+# signal yet); the 20h staleness threshold ensures every row is refreshed
+# at least once per 24h even with 2 runs/day. Bluesky's get_posts API
+# accepts up to 25 URIs per call.
+POST_METRICS_REFRESH_FLOOR_HOURS: int = 2
+POST_METRICS_REFRESH_STALE_HOURS: int = 20
+POST_METRICS_BLUESKY_BATCH_SIZE: int = 25
+
 # Fortress Security (v4.4)
 REPLY_CAP_PER_RUN: int = 10
 REPLY_MAX_CHARS: int = 250
