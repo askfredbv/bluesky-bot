@@ -71,6 +71,35 @@ A Mastodon post ended *mid-sentence* with "De uitdaging blijft echter om" — co
 
 **Explicit non-goal:** auto-splitting into threads as length recovery. Threading is an editorial choice by the model; genuine 2-post content should arrive as two complete-sentence posts from Gemini, not one blob chopped by us.
 
+### Extend `post_metrics.json` schema with formatting features [observed 2026-05-05]
+
+Phase 1 telemetry currently captures `had_image` and `had_link_card`, plus the raw `content_preview`. To answer formatting questions with data ("does length matter?", "do hashtags help?", "do questions in posts hurt?"), the schema needs a few cheap derived fields. Compute once at record time, no API calls:
+
+- `emoji_count` — `re.findall` against a unicode emoji range, or use `emoji` package (already in deps? check)
+- `hashtag_count` — `len(re.findall(r"#\w+", text))`
+- `question_count` — count of `?` characters
+- `length_chars` — `len(content_preview)` (or full post text — preview is currently capped at 80)
+- `thread_length_posts` — already implicit via `thread_position`, but a denormalised count per row makes per-thread aggregation cheaper
+- `time_of_day_bucket` — `"morning" | "afternoon"` derived from `posted_at` UTC hour
+
+This is a Track A move per the formatting-→-engagement roadmap (see §3 "Voice formatting A/B"). Pure measurement enrichment — does NOT change what the bot writes. Goal: when Phase 2's digest design starts, the data already has the breakdowns it needs.
+
+Effort: ~30 min in `record_post_metric` + `tests/test_metrics.py`. Risk: none (additive fields, ignored by older readers). Trigger: any time. Recommended to ship before Phase 2 starts so the digest doesn't have to backfill.
+
+### Image reliability — Imagen 3 keeps failing [observed multiple runs]
+
+`image_generation_failed` fires on most Mentor / Strategist runs in the last few weeks (`error_type: ClientError`). Configured `IMAGE_GENERATION_PROBABILITY = 0.5` is the *attempt* rate; the *success* rate is well below that. Posts that should have an image go out without one — a structural drag on engagement that's brand-safe to fix (no voice change involved).
+
+Three plausible fixes, in order of cost:
+
+1. **Switch to a newer Imagen model** if `imagen-3.0-generate-002` is now superseded — check Google's model catalog. May be a one-line config change.
+2. **Cache successful prompts** — if some prompt patterns succeed and others fail, log the prompt + outcome and bias toward the working shapes.
+3. **Static fallback templates** — already exists for prompt-craft failure; could extend to *generation* failure too (return a topic-themed static image instead of skipping).
+
+Investigate first: pull the last 20 `image_generation_failed` events from Actions logs, look at the error message bodies for a pattern (quota? content filter? auth?). The fix follows from what the failures actually say.
+
+Effort: ~1–2h depending on root cause. Risk: low (existing fallback chain pattern). Trigger: any time — likely highest-leverage non-voice engagement lever currently available.
+
 ---
 
 ## §3 — Observational (wait for data)
@@ -79,7 +108,17 @@ A Mastodon post ended *mid-sentence* with "De uitdaging blijft echter om" — co
 - **`CONSENSUS_SYNERGY_BONUS` retune.** Currently `1.5` per additional feed. With 25 feeds, a viral story covered by 5+ sources gets `+6.0` on top of its base score — could start dominating every Curator run. Drop to `1.2` if the Curator starts repeatedly picking the same wire-story everyone covers over genuinely distinctive items.
 - **v4.16 slim refactor.** When `src/utils.py` (923 lines) or `src/config.py` (525 lines) grows another ~100 lines, do the split-into-focused-modules refactor before the next feature. Target layout: `state_io.py`, `feeds.py`, `scoring.py`, `url_safety.py`, `retry.py`, `image_io.py`; `config.py` keeps tunable constants only, prompt text moves to `prompts.py`, curated data to `src/data/{pioneer,feeds,topics}.py`. Mechanical; ~3h with tests. No plan doc needed — when the trigger fires, the layout above is the plan.
 - **Audit script Mastodon path.** `scripts/audit_watchlist.py` Mastodon side returns HTML 200 instead of JSON for `account_search` — almost certainly the `MASTODON_ACCESS_TOKEN` lacks `read:accounts` scope, OR `MASTODON_API_BASE_URL` doesn't match the instance the token was issued for. Verify with `curl -H "Authorization: Bearer $TOKEN" https://<instance>/api/v1/accounts/verify_credentials` (should return JSON, not HTML). Not blocking — Phase 4a closed on Bluesky-only with 2 stake-a-reply candidates. Revisit when adding new Mastodon-only candidates would benefit from automated scoring.
-- **Posts read "dull" — visual/textual variety.** Observation 2026-04-27: scrolling the live feed, posts feel flat. No emojis, no hashtags, rarely a link in-thread, and image hit-rate is low (Imagen 3 fails often, Curator runs intentionally use link cards instead). Existing voice rules (no hype, no reader-bait questions, dry, first-person) stay — but "dry" doesn't have to mean visually featureless. Decide based on Phase 1 engagement data: if posts with images / link cards / occasional hashtags consistently outperform plain prose, encourage them in the prompt. Specific levers to consider when the data lands: (a) raise Imagen 3 success rate or pick a more reliable image source; (b) allow ≤1 hashtag per thread when topic-relevant (no `#AI #tech #thoughts` listicle endings); (c) make sure Curator link cards are rendering — verify `had_link_card` rate in `post_metrics.json`; (d) emoji policy stays "rare and load-bearing" but may not currently be firing at all — check actual rate in posted content. **Do not act before Phase 1 has 2+ weeks of data** — gut-feel "make it less dull" is exactly the kind of change that ends up making the bot sound like every other AI-news account.
+- **Voice formatting A/B — emojis, hashtags, length, questions.** Observation 2026-04-27 (re-raised 2026-05-05 as a roadmap question): scrolling the live feed, posts feel flat. The user's instinct is that occasional emojis, a topical hashtag, or other formatting touches might lift engagement. The strategic question is real; the implementation has to be careful because **voice is a brand decision, not a metric decision** (`PLAN_engagement.md` plan-wide non-goal). A reader returning to a feed that suddenly starts using emojis after 137 dry posts would notice the inconsistency.
+
+  Three-track roadmap:
+
+  - **Track A — instrumentation** (see §2 entry "Extend post_metrics.json schema with formatting features"). Cheap, no voice change. Captures emoji_count, hashtag_count, length, etc. so the data can actually answer "does X help" instead of guessing.
+  - **Track B — image reliability** (see §2 entry "Image reliability — Imagen 3 keeps failing"). Highest-leverage structural fix that needs no voice change and no data — Imagen failures are a pure drag on the existing image-attach plan.
+  - **Track C — voice formatting A/B** (this entry). Gated on (1) Track A having 4+ weeks of data, AND (2) explicit brand-direction approval that "we would use emojis even if data said they help." If both green: ship as A/B (50% of posts get format X, 50% don't), measure delta over 2+ weeks per format, ship the changes that survive the brand-coherence test as well as the engagement test.
+
+  Levers to consider when Track C is in play: (a) ≤1 hashtag per thread when topic-anchored (no `#AI #tech #thoughts` listicle endings); (b) emoji policy "rare and load-bearing" — measurable at any non-zero rate currently means the rule isn't firing; (c) optional question hook on Mentor (different from the banned reader-bait patterns).
+
+  **Do not skip ahead to Track C.** A blanket emoji change without instrumentation or A/B measurement is exactly the gut-feel "make it less dull" move the BACKLOG warned against on 2026-04-27 — and which the bio rewrite (2026-04-29) deliberately moved away from. The fact that the bios were de-emojified makes the question of "should posts get emojis" a coordinated brand decision, not an isolated experiment.
 
 All three decisions get trivial once §1 (engagement metrics) is running — no more guessing at "is the Register feed hurting?"; look at the engagement data.
 
