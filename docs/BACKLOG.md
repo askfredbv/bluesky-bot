@@ -1,12 +1,12 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping fine at v4.16.0. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
+Living list of pending work and parked ideas. Bot is shipping fine at v4.17.0. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
 
 ---
 
 ## Priority order
 
-1. **Phase 1 acceptance gate** — passive, validates tomorrow morning (see §1)
+1. **Wait for telemetry to accumulate** — Phase 2 unblocks ~2026-05-19 (see §1)
 2. **Remaining open issues** — fix when convenient (see §2)
 3. **Observational items** — wait for more runs, then decide (see §3)
 4. **The plan** — `PLAN_engagement.md` covers everything else (see §4)
@@ -15,16 +15,17 @@ Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for
 
 ---
 
-## §1 — Phase 1 acceptance gate (passive)
+## §1 — Wait state
 
-Phase 1 capture pipeline is fully shipped (Steps 1–5; see `PLAN_engagement.md §1f`). Two acceptance signals remain, both validated by natural production runs without further code:
+Phase 1 (Steps 1–5) shipped and **production-confirmed 2026-05-05** across three consecutive runs with zero errors. Released as v4.17.0. There is no actionable Phase 1 work left.
 
-- **Step 5 acceptance:** after 2 runs ~12h apart, prior-day rows in `post_metrics.json` show non-zero like/repost/reply counts (i.e. the refresh pass is actually pulling live engagement data). Tomorrow's 07:00 UTC Curator run is the earliest validator, since today's 14:30 UTC Mentor will be the first run to actually invoke `refresh_stale_metrics`.
-- **Dedup fix acceptance:** the next afternoon Mentor run picks a topic ≠ "Work-Life Balance" and produces visibly different prose from the 2026-05-02 / 2026-05-03 duplicates. Tonight's 14:30 UTC Mentor is the validator.
+What unblocks next, and when:
 
-Once both confirm clean, **cut v4.17.0** with release notes covering Step 5, the dedup fix, the SafeLogger guard, and the bio rewrite. Until then, README + `run_started` stay on v4.16.0.
+- **Phase 2 (weekly digest, ~1h)** — needs 2+ weeks of `post_metrics.json` data to produce signal worth reading. Earliest realistic: ~2026-05-19. Trigger: after that date, draft `scripts/digest.py` + `.github/workflows/engagement-digest.yml` per `PLAN_engagement.md §Phase 2`.
+- **Phase 4b (MVP replies, ~4h)** — gated on Phase 1 data informing reply-prompt design *and* a fresh review of the watchlist (the 4a output `docs/WATCHLIST_AUDIT.md` is a regenerable artefact; rerun `python -m scripts.audit_watchlist` before starting 4b).
+- **Phase 3 (scoring multipliers, ~3h)** — needs 4+ weeks of data. Earliest realistic: ~2026-06-02.
 
-After acceptance, **nothing else here is actionable for ~2 weeks** — Phase 2 (weekly digest) needs 2+ weeks of telemetry data to be useful; Phase 4b is gated on Phase 1 producing data to inform reply-prompt design. The right thing to do during the wait is read the data as it accumulates, not write more code.
+The right thing to do during the wait is **read the data as it accumulates**, not write more code. Specifically: glance at `post_metrics.json` and `feed_health.json` once a week, look for outliers (post types with consistently high/low engagement, feeds gone quiet), and decide whether the candidate Phase 2 digest sections (top/bottom posts, per-source averages, per-topic averages, pioneer category averages, strategist-fallback frequency, feed health) actually surface useful signal.
 
 ---
 
