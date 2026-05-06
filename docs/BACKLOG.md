@@ -71,13 +71,9 @@ A Mastodon post ended *mid-sentence* with "De uitdaging blijft echter om" — co
 
 **Explicit non-goal:** auto-splitting into threads as length recovery. Threading is an editorial choice by the model; genuine 2-post content should arrive as two complete-sentence posts from Gemini, not one blob chopped by us.
 
-### Broken promises — "more to follow", "more soon", "stay tuned" [observed 2026-05-05]
+### ~~Broken promises — "more to follow", "more soon", "stay tuned"~~ [**resolved 2026-05-05**]
 
-The bot occasionally generates Curator-style posts that promise a continuation it never delivers ("Notes on The best AI dictation apps, tested and ranked — more soon."). The architecture has no follow-up mechanism: each run posts independently, and there is no state tracking "we promised a follow-up to X." A reader returning to the feed sees the open promise and no payoff. Brand-corrosive in the same shape as reader-bait questions — both defer substance to a future that does not arrive.
-
-Fix: add the teaser pattern to the banned-phrase list (`BANNED_QUESTION_PATTERNS` is the closest neighbour but the spirit fits there even though grammatically these are statements). Patterns to ban: "more to follow", "more soon", "more to come", "stay tuned", "next week", "i'll dig deeper", "details coming". Probably also "thread incoming", "🧵". The system prompt already says posts must "end on a statement, an observation, or a link" — making this rule explicit shuts down the workaround.
-
-Effort: ~10 min — add to `BANNED_QUESTION_PATTERNS` (or a sibling list `BANNED_TEASER_PATTERNS` if the validator wants stricter typing), update the prompt-rendering in `agents.py`, add a test asserting the rule is in effect. Risk: low — tightens existing voice rules in a direction consistent with the rest. Trigger: any time.
+Shipped same-day as observation. New `BANNED_TEASER_PATTERNS` list in `src/config.py` covers `more to follow / more soon / more to come / stay tuned / to be continued / watch this space / follow for more / details coming / i'll dig deeper / i'll write more / i'll share more / thread incoming / 🧵`. Defensive trim in `agents.py` (`_ends_with_teaser`, `_strip_trailing_teaser`) handles both sentence-boundary and em-dash-fragment shapes — the live observation was "Notes on X — more soon." which is the em-dash fragment case. Prompt rules updated in `STYLE_GUIDELINES`. 10 new tests in `test_voice_trim.py`. Tonight's afternoon Mentor run is the first natural validator.
 
 ### Extend `post_metrics.json` schema with formatting features [observed 2026-05-05]
 

@@ -113,3 +113,73 @@ def test_apply_voice_trim_preserves_post_count():
     """Trimming must never drop or duplicate posts in a thread."""
     posts = ["First post.", "Second post.", "Third post."]
     assert len(_apply_voice_trim(posts)) == 3
+
+
+# ── _ends_with_teaser / _strip_trailing_teaser (v4.17 broken-promise patch) ──
+
+from src.agents import _ends_with_teaser, _strip_trailing_teaser
+
+
+def test_ends_with_teaser_detects_more_soon_after_em_dash():
+    """The shape we observed in the live feed: 'Notes on X — more soon.'"""
+    text = "Notes on The best AI dictation apps, tested and ranked — more soon."
+    assert _ends_with_teaser(text) is True
+
+
+def test_ends_with_teaser_detects_stay_tuned():
+    assert _ends_with_teaser("Big shift in how teams ship. Stay tuned.") is True
+
+
+def test_ends_with_teaser_detects_more_to_follow():
+    assert _ends_with_teaser("Useful pattern in production. More to follow.") is True
+
+
+def test_ends_with_teaser_detects_thread_emoji():
+    assert _ends_with_teaser("Some setup here. 🧵") is True
+
+
+def test_ends_with_teaser_clean_post_returns_false():
+    """A complete post with no teaser must pass through."""
+    text = "Long context windows changed everything about evaluation strategy."
+    assert _ends_with_teaser(text) is False
+
+
+def test_ends_with_teaser_does_not_trip_on_legitimate_more():
+    """'More than X' is not a teaser — only the broken-promise shapes count."""
+    text = "Cache invalidation is more art than science."
+    assert _ends_with_teaser(text) is False
+
+
+def test_strip_trailing_teaser_removes_em_dash_fragment():
+    """The flagship case from the live-feed observation."""
+    text = "Notes on The best AI dictation apps, tested and ranked — more soon."
+    out = _strip_trailing_teaser(text)
+    assert "more soon" not in out.lower()
+    assert "Notes on The best AI dictation apps, tested and ranked" in out
+    assert out.endswith(".")
+
+
+def test_strip_trailing_teaser_removes_full_sentence_when_safe():
+    """Multi-sentence post: drop the trailing teaser sentence."""
+    text = "A real observation about caching invalidation. Stay tuned for more."
+    out = _strip_trailing_teaser(text)
+    assert "stay tuned" not in out.lower()
+    assert "caching invalidation" in out
+
+
+def test_strip_trailing_teaser_keeps_post_when_trim_would_be_too_short():
+    """Conservative — never leave us with an empty / micro post."""
+    text = "More soon."
+    # Trimming would leave nothing meaningful; must return the original.
+    assert _strip_trailing_teaser(text) == text
+
+
+def test_apply_voice_trim_strips_teaser_in_thread():
+    """End-to-end: the public trim entry point catches teasers."""
+    posts = [
+        "A grounded observation about the new model release that runs long enough to survive the validator's minimum-length floor — more soon.",
+        "Final post that lands on its own with enough characters to be substantive.",
+    ]
+    out = _apply_voice_trim(posts)
+    assert "more soon" not in out[0].lower()
+    assert out[1] == posts[1]  # untouched

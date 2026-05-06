@@ -405,6 +405,21 @@ BANNED_QUESTION_PATTERNS: List[str] = [
     "thoughts?", "agree?", "your turn",
 ]
 
+# v4.17: broken-promise teaser patterns — the bot has no follow-up
+# mechanism, so promising one is a credibility-corrosive lie. Observed
+# 2026-05-05 on the live feed: "Notes on … — more soon." with no
+# follow-up post ever appearing. Same family as reader-bait questions
+# (defer substance to a future that does not arrive).
+BANNED_TEASER_PATTERNS: List[str] = [
+    "more to follow", "more soon", "more to come", "more next time",
+    "stay tuned", "to be continued", "watch this space",
+    "follow for more", "details coming", "details to come",
+    "i'll dig deeper", "i will dig deeper",
+    "i'll write more", "i will write more",
+    "i'll share more", "i will share more",
+    "thread incoming", "🧵",
+]
+
 # Day-of-week / calendar openers feel like a corporate content calendar.
 BANNED_OPENERS: List[str] = [
     "tool tuesday", "failure friday", "sunday reset", "motivation monday",
@@ -449,6 +464,10 @@ A post ends on a statement, an observation, or a link. Not a question.
 NEVER USE HYPE WORDS.
 Banned: {", ".join(BANNED_HYPE_WORDS)}.
 If a sentence relies on one, rewrite the sentence.
+
+NEVER PROMISE A FOLLOW-UP THAT WILL NOT HAPPEN.
+The bot posts independently each run; there is no "more soon" mechanism. A post must land complete on its own. If a topic is too big to cover in one post, write a shorter take that is still self-contained — or do not write it at all. Do not end on a teaser.
+Banned: {", ".join(repr(p) for p in BANNED_TEASER_PATTERNS)}.
 
 NEVER OPEN WITH A DAY-OF-WEEK LABEL.
 Banned: {", ".join(BANNED_OPENERS)}.

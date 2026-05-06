@@ -15,7 +15,7 @@ from src.config import (
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
     LANGUAGE_OPTIONS, IMAGEN_MODEL, MAX_OUTPUT_TOKENS,
-    BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS,
+    BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
     PIONEER_PROMPT_DATED, PIONEER_PROMPT_UNDATED,
@@ -128,6 +128,57 @@ def _strip_trailing_question_bait(text: str) -> str:
     return trimmed
 
 
+def _ends_with_teaser(text: str) -> bool:
+    """Detect "more soon" / "stay tuned" / similar broken-promise patterns.
+
+    Looks at the last sentence (after final ., !, ?) and the trailing tail
+    of the post — teasers commonly land as a fragment after an em-dash
+    rather than as a full sentence ("Notes on X — more soon."). We check
+    both shapes against BANNED_TEASER_PATTERNS, case-insensitive.
+    """
+    stripped = text.strip().lower()
+    last_segment = re.split(r'[.!?]\s+', stripped)[-1]
+    # Em-dash fragment too: "Notes on X — more soon" — split on the dash and
+    # check the rightmost piece, which is what readers see at the post end.
+    last_dash_segment = re.split(r'[—–-]\s+', last_segment)[-1]
+    return any(
+        pattern in last_segment or pattern in last_dash_segment
+        for pattern in BANNED_TEASER_PATTERNS
+    )
+
+
+def _strip_trailing_teaser(text: str) -> str:
+    """If the post ends in a banned teaser, drop that fragment.
+
+    Mirrors _strip_trailing_question_bait but also handles em-dash fragments
+    since teasers more often appear as "… — more soon" than as a full
+    sentence. Falls back to the original text if trimming would leave an
+    empty or too-short post.
+    """
+    if not _ends_with_teaser(text):
+        return text
+
+    # Try sentence-boundary trim first.
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    if len(sentences) >= 2:
+        candidate = " ".join(sentences[:-1]).strip()
+        if len(candidate) >= MIN_POST_CHARS_FOR_VALIDATION and not _ends_with_teaser(candidate):
+            return candidate
+
+    # Fall back to em-dash trim — "Notes on X — more soon." → "Notes on X."
+    # Match the last dash that has text after it; drop everything from the
+    # dash onward, then add a period if the truncation left a bare phrase.
+    dash_match = re.search(r'\s+[—–-]\s+[^—–-]*$', text.strip())
+    if dash_match:
+        candidate = text.strip()[: dash_match.start()].rstrip()
+        if candidate and candidate[-1] not in ".!?":
+            candidate += "."
+        if len(candidate) >= MIN_POST_CHARS_FOR_VALIDATION:
+            return candidate
+
+    return text  # could not trim safely; ship as-is and let the warning surface it
+
+
 def _apply_voice_trim(content_list: List[str]) -> List[str]:
     """Apply defensive voice trims to the model's output.
 
@@ -141,7 +192,9 @@ def _apply_voice_trim(content_list: List[str]) -> List[str]:
     trimmed = []
     for idx, post in enumerate(content_list):
         before = post
+        had_teaser = _ends_with_teaser(post)
         post = _strip_trailing_question_bait(post)
+        post = _strip_trailing_teaser(post)
         post = _strip_excess_hashtags(post)
         if post != before:
             SafeLogger.info(
@@ -150,6 +203,7 @@ def _apply_voice_trim(content_list: List[str]) -> List[str]:
                 post_index=idx,
                 length_before=len(before),
                 length_after=len(post),
+                had_teaser=had_teaser,
             )
         # Hype-word detection is log-only — rewriting is the model's job.
         # We surface it so we can spot drift in the logs.
