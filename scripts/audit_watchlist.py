@@ -515,18 +515,50 @@ async def _run() -> int:
             access_token=creds.mastodon_access_token,
             api_base_url=creds.mastodon_api_base_url,
         )
-        for handle in MASTODON_CANDIDATES:
-            print(f"[mastodon] fetching {handle} ...")
-            try:
-                posts = await asyncio.to_thread(fetch_mastodon_posts, masto, handle)
-                audit = HandleAudit(platform="mastodon", handle=handle, posts=posts)
-                score_handle(audit, now)
-                audits.append(audit)
-            except Exception as exc:
+
+        # Preflight: verify the token actually works against the configured
+        # instance URL before iterating MASTODON_CANDIDATES. Without this,
+        # a wrong api_base_url (e.g. profile URL like .../@user instead of
+        # the API base) or an under-scoped token fails opaquely once per
+        # candidate with the instance's HTML landing page in the exception
+        # body. One clear preflight failure beats five obscure ones.
+        try:
+            account = await asyncio.to_thread(masto.account_verify_credentials)
+            handle = account.get("acct") if isinstance(account, dict) else getattr(account, "acct", None)
+            print(f"[mastodon] preflight ok — token belongs to @{handle}")
+        except Exception as exc:
+            print(f"[error] Mastodon preflight failed: {_format_error(exc)}")
+            print(
+                f"  Common cause: MASTODON_API_BASE_URL is wrong. Should be the API base "
+                f"(e.g. https://mastodon.social), not a profile URL. Currently: "
+                f"{creds.mastodon_api_base_url!r}."
+            )
+            print(
+                "  Verify with: curl -H \"Authorization: Bearer $MASTODON_ACCESS_TOKEN\" "
+                "$MASTODON_API_BASE_URL/api/v1/accounts/verify_credentials"
+            )
+            for handle in MASTODON_CANDIDATES:
                 audits.append(HandleAudit(
                     platform="mastodon", handle=handle,
-                    error=_format_error(exc),
+                    error=f"preflight failed: {_format_error(exc)}",
                 ))
+            masto = None
+
+        if masto is None:
+            pass  # candidates already populated as skipped above
+        else:
+            for handle in MASTODON_CANDIDATES:
+                print(f"[mastodon] fetching {handle} ...")
+                try:
+                    posts = await asyncio.to_thread(fetch_mastodon_posts, masto, handle)
+                    audit = HandleAudit(platform="mastodon", handle=handle, posts=posts)
+                    score_handle(audit, now)
+                    audits.append(audit)
+                except Exception as exc:
+                    audits.append(HandleAudit(
+                        platform="mastodon", handle=handle,
+                        error=_format_error(exc),
+                    ))
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(render_markdown(audits, now), encoding="utf-8")
