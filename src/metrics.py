@@ -9,6 +9,7 @@ then to keep the Step 2 diff tight.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -194,6 +195,40 @@ def save_post_metrics(data: Dict[str, Any]) -> None:
         )
 
 
+# Track A formatting-feature helpers — pure, no I/O. Used by record_post_metric
+# to enrich each row with the breakdowns Phase 2's digest will want without
+# having to backfill the schema later.
+_HASHTAG_RE = re.compile(r"#\w+")
+
+
+def _count_emojis(text: str) -> int:
+    """Count Unicode pictographs / emoji-range glyphs in ``text``.
+
+    Heuristic: we count code points >= 0x1F000, which covers the Misc-Symbols-
+    and-Pictographs / Emoticons / Transport-and-Map / Supplemental-Symbols
+    blocks where post-style emojis live. Skin-tone modifiers and ZWJ glue
+    code points get counted as part of the pictograph cluster they belong
+    to, so a complex emoji like family-of-four reads as ~4 instead of 1.
+    For relative-rate measurement (the digest's actual question) that
+    over-count is acceptable — alternative would be a third-party `emoji`
+    package, which is overhead we don't need yet.
+    """
+    return sum(1 for c in text if ord(c) >= 0x1F000)
+
+
+def _bucket_time_of_day(posted_at: Optional[str]) -> Optional[str]:
+    """Return ``"morning"`` for UTC hour < 12, ``"afternoon"`` otherwise.
+
+    Bot's two daily runs are at 07:00 / 14:30 UTC in summer (CEST) and
+    08:00 / 15:30 UTC in winter (CET) — both buckets cleanly separable
+    by the noon-UTC split. Returns None if posted_at is unparseable.
+    """
+    parsed = _parse_iso(posted_at)
+    if parsed is None:
+        return None
+    return "morning" if parsed.hour < 12 else "afternoon"
+
+
 def record_post_metric(
     post_metrics: Dict[str, Any],
     *,
@@ -203,6 +238,7 @@ def record_post_metric(
     posted_at: str,
     content_preview: str,
     thread_position: int,
+    thread_length: int = 1,
     topic: Optional[str] = None,
     source_domain: Optional[str] = None,
     pioneer_id: Optional[str] = None,
@@ -216,9 +252,17 @@ def record_post_metric(
     in live like/repost/reply counts. ``language`` is a placeholder slot —
     not currently captured at broadcast time; Phase 2 can backfill if the
     digest design needs per-language breakdown.
+
+    Track A (Phase 1 post-pipeline enrichment) adds derived formatting
+    features computed at record time: ``length_chars``, ``thread_length``,
+    ``emoji_count``, ``hashtag_count``, ``question_count``, and
+    ``time_of_day_bucket``. These let Phase 2's digest answer "do hashtags
+    correlate with engagement?" without backfilling the schema.
     """
     posts = post_metrics.setdefault("posts", [])
-    preview = (content_preview or "").strip().replace("\n", " ")
+    full_text = (content_preview or "").strip().replace("\n", " ")
+    length_chars = len(full_text)
+    preview = full_text
     if len(preview) > POST_METRICS_CONTENT_PREVIEW_MAX_CHARS:
         preview = preview[: POST_METRICS_CONTENT_PREVIEW_MAX_CHARS - 1] + "…"
     posts.append({
@@ -234,6 +278,12 @@ def record_post_metric(
         "had_image": bool(had_image),
         "had_link_card": bool(had_link_card),
         "thread_position": thread_position,
+        "thread_length": int(thread_length) if thread_length else 1,
+        "length_chars": length_chars,
+        "emoji_count": _count_emojis(full_text),
+        "hashtag_count": len(_HASHTAG_RE.findall(full_text)),
+        "question_count": full_text.count("?"),
+        "time_of_day_bucket": _bucket_time_of_day(posted_at),
         "metrics": {
             "likes": 0,
             "reposts": 0,

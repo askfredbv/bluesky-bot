@@ -248,6 +248,106 @@ def test_record_post_metric_appends_to_existing_rows():
 
 
 # ---------------------------------------------------------------------------
+# Track A — formatting feature enrichment on record_post_metric
+# ---------------------------------------------------------------------------
+
+def test_record_post_metric_captures_length_chars_from_full_text():
+    """length_chars reflects the FULL post text length, not the truncated preview."""
+    post_metrics = {"posts": []}
+    long_content = "A" * 250  # > preview cap, well within Bsky's 300
+    metrics.record_post_metric(
+        post_metrics, **_record_kwargs(content_preview=long_content)
+    )
+    row = post_metrics["posts"][0]
+    assert row["length_chars"] == 250
+    # And the preview is still truncated for display:
+    assert len(row["content_preview"]) <= 80
+
+
+def test_record_post_metric_counts_hashtags():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(content_preview="A note on #AI and #LLMs in production."),
+    )
+    assert post_metrics["posts"][0]["hashtag_count"] == 2
+
+
+def test_record_post_metric_counts_questions():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(content_preview="Why does this matter? Because incentives matter."),
+    )
+    assert post_metrics["posts"][0]["question_count"] == 1
+
+
+def test_record_post_metric_counts_emojis():
+    post_metrics = {"posts": []}
+    # Mix: pictograph (🚀 U+1F680), pictograph (💡 U+1F4A1), text (no emoji)
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(content_preview="🚀 launching today 💡 idea worth shipping"),
+    )
+    # Heuristic counts code points >= 0x1F000; both 🚀 and 💡 fall above it.
+    assert post_metrics["posts"][0]["emoji_count"] == 2
+
+
+def test_record_post_metric_emoji_count_zero_when_text_only():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(content_preview="A perfectly dry sentence with no emoji."),
+    )
+    assert post_metrics["posts"][0]["emoji_count"] == 0
+
+
+def test_record_post_metric_carries_thread_length():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(thread_position=1, thread_length=3),
+    )
+    row = post_metrics["posts"][0]
+    assert row["thread_position"] == 1
+    assert row["thread_length"] == 3
+
+
+def test_record_post_metric_thread_length_defaults_to_one():
+    """A single-post thread is the default — never write 0."""
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(post_metrics, **_record_kwargs())
+    assert post_metrics["posts"][0]["thread_length"] == 1
+
+
+def test_record_post_metric_buckets_morning_for_07_utc():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(posted_at="2026-05-05T07:03:00+00:00"),
+    )
+    assert post_metrics["posts"][0]["time_of_day_bucket"] == "morning"
+
+
+def test_record_post_metric_buckets_afternoon_for_14_utc():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(posted_at="2026-05-05T14:33:00+00:00"),
+    )
+    assert post_metrics["posts"][0]["time_of_day_bucket"] == "afternoon"
+
+
+def test_record_post_metric_time_of_day_handles_unparseable():
+    post_metrics = {"posts": []}
+    metrics.record_post_metric(
+        post_metrics,
+        **_record_kwargs(posted_at="not-a-date"),
+    )
+    assert post_metrics["posts"][0]["time_of_day_bucket"] is None
+
+
+# ---------------------------------------------------------------------------
 # load_post_metrics / save_post_metrics
 # ---------------------------------------------------------------------------
 

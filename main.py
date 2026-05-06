@@ -317,7 +317,7 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
         bsky_uris = broadcast.bsky_sent_uris or []
         mastodon_ids = broadcast.mastodon_sent_ids or []
 
-        def _record(post_id: str, platform: str, content: str, position: int) -> None:
+        def _record(post_id: str, platform: str, content: str, position: int, total: int) -> None:
             record_post_metric(
                 post_metrics,
                 post_id=post_id,
@@ -326,6 +326,7 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
                 posted_at=posted_at,
                 content_preview=content,
                 thread_position=position,
+                thread_length=total,
                 topic=ctx.get("topic"),
                 source_domain=ctx.get("source_domain"),
                 pioneer_id=ctx.get("pioneer_id"),
@@ -333,12 +334,18 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
                 had_link_card=bool(ctx.get("had_link_card")),
             )
 
+        # thread_length is recorded per-platform: a Bluesky thread of 3 and a
+        # Mastodon thread of 3 are independent threads even if the content
+        # is identical, and each row's thread_length describes its own
+        # platform thread.
+        bsky_total = len(bsky_uris)
         for idx, uri in enumerate(bsky_uris):
             content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
-            _record(uri, "bluesky", content, idx)
+            _record(uri, "bluesky", content, idx, bsky_total)
+        mastodon_total = len(mastodon_ids)
         for idx, status_id in enumerate(mastodon_ids):
             content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
-            _record(status_id, "mastodon", content, idx)
+            _record(status_id, "mastodon", content, idx, mastodon_total)
 
         # ---- Refresh: pull live counts for rows due an update ----
         bsky_client = broadcast.bsky_broadcast_client
