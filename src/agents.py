@@ -550,10 +550,15 @@ async def generate_post_image(
     try:
         return await asyncio.to_thread(_sync_generate_image, api_key, visual_prompt)
     except Exception as exc:
+        # error_msg is the diagnostic difference between "quota exhausted",
+        # "auth failed", "content filter", and "model deprecated" — all of
+        # which surface as ClientError without it. Same pattern as the
+        # 2026-04-29 Step 2 KeyError lesson: capture the message text.
         SafeLogger.warn(
             "image_generation_failed",
             "Imagen 3 image generation failed; posting without image",
             error_type=type(exc).__name__,
+            error_msg=str(exc)[:200],
             topic=topic,
         )
         return None

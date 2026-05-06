@@ -90,19 +90,20 @@ This is a Track A move per the formatting-→-engagement roadmap (see §3 "Voice
 
 Effort: ~30 min in `record_post_metric` + `tests/test_metrics.py`. Risk: none (additive fields, ignored by older readers). Trigger: any time. Recommended to ship before Phase 2 starts so the digest doesn't have to backfill.
 
-### Image reliability — Imagen 3 keeps failing [observed multiple runs]
+### Image reliability — Imagen 3 keeps failing [observed 2026-05-05, partially diagnosed]
 
-`image_generation_failed` fires on most Mentor / Strategist runs in the last few weeks (`error_type: ClientError`). Configured `IMAGE_GENERATION_PROBABILITY = 0.5` is the *attempt* rate; the *success* rate is well below that. Posts that should have an image go out without one — a structural drag on engagement that's brand-safe to fix (no voice change involved).
+`image_generation_failed` fires when the bot rolls into the image-generation path (`IMAGE_GENERATION_PROBABILITY = 0.5` of Mentor / Strategist runs). Across the last 7 afternoon Mentor runs, 2 attempted image generation and both failed with `error_type=ClientError` — the other 5 were dice-skipped, not silently succeeding. Posts that should have had an image went out without one.
 
-Three plausible fixes, in order of cost:
+**2026-05-05:** added `error_msg=str(exc)[:200]` to the failure log so the next attempt tells us *what* ClientError actually means. Same pattern as the 2026-04-29 Step 2 KeyError lesson — `error_type` alone is rarely enough to act on. Tonight's afternoon Mentor run (or whichever afternoon next rolls into image gen) is the diagnostic.
 
-1. **Switch to a newer Imagen model** if `imagen-3.0-generate-002` is now superseded — check Google's model catalog. May be a one-line config change.
-2. **Cache successful prompts** — if some prompt patterns succeed and others fail, log the prompt + outcome and bias toward the working shapes.
-3. **Static fallback templates** — already exists for prompt-craft failure; could extend to *generation* failure too (return a topic-themed static image instead of skipping).
+Once the message is in hand, the fix follows from what it says:
 
-Investigate first: pull the last 20 `image_generation_failed` events from Actions logs, look at the error message bodies for a pattern (quota? content filter? auth?). The fix follows from what the failures actually say.
+1. **Quota exceeded** → bump quota or move to a different account / billing tier.
+2. **Model deprecated** (`imagen-3.0-generate-002`) → switch to current Imagen — likely a one-line config change.
+3. **Content filter rejection** → add a guarded retry with a sanitised prompt, or a static fallback template (already exists for prompt-craft failure; extend to generation failure too).
+4. **Auth / API key issue** → rotate the GEMINI_API_KEY; possibly the same key needs a separate Imagen entitlement.
 
-Effort: ~1–2h depending on root cause. Risk: low (existing fallback chain pattern). Trigger: any time — likely highest-leverage non-voice engagement lever currently available.
+Effort once diagnosed: ~30min – 2h depending on cause. Risk: low. Trigger: as soon as the next failure log lands with the message body.
 
 ---
 
