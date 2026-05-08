@@ -90,6 +90,18 @@ This is a Track A move per the formatting-→-engagement roadmap (see §3 "Voice
 
 Effort: ~30 min in `record_post_metric` + `tests/test_metrics.py`. Risk: none (additive fields, ignored by older readers). Trigger: any time. Recommended to ship before Phase 2 starts so the digest doesn't have to backfill.
 
+### Bluesky session cache misses every run [observed 2026-05-05]
+
+`bluesky_session_stale` (with `error_type: BadRequestError`) fires on basically every natural run, immediately followed by `bluesky_session_cached` after the password-fallback succeeds. The caching path in `src/bluesky_session.py` is wired correctly — load from Gist → try session-string login → fall back to password → save new string back. So the writes happen; the reads happen; but the *next* read produces a string atproto rejects.
+
+Leading hypothesis: only the access JWT is in the cached string, and atproto access JWTs expire in ~2h. The 12h gap between runs guarantees the cache is dead by the time the next run reads it. The refresh-token piece needed to renew is missing or being dropped during export. `atproto.AsyncClient.export_session_string()` may return a bundle that needs to be deserialised into the matching `client.login(session_string=...)` shape — worth a 10-min check that the round-trip is symmetric.
+
+Other less-likely candidates: the Gist write is succeeding but truncating; atproto's session-string format changed across SDK versions (we're on 0.0.65); some race between save and the next run's GIST sync.
+
+Cost in steady state: a few seconds extra per run + one extra password-login round-trip. Minor — but the cache exists *to* avoid that, and right now the cache is decorative.
+
+Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
+
 ### Image reliability — Imagen 3 keeps failing [observed 2026-05-05, partially diagnosed]
 
 `image_generation_failed` fires when the bot rolls into the image-generation path (`IMAGE_GENERATION_PROBABILITY = 0.5` of Mentor / Strategist runs). Across the last 7 afternoon Mentor runs, 2 attempted image generation and both failed with `error_type=ClientError` — the other 5 were dice-skipped, not silently succeeding. Posts that should have had an image went out without one.
