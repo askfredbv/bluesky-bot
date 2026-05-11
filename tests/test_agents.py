@@ -545,11 +545,19 @@ async def test_generate_content_avoids_recent_mode_topics_in_mentor(monkeypatch)
 
     monkeypatch.setattr("src.agents._sync_generate", _capture_prompt)
 
-    # 3 of the 4 Mentor topics blocked → only "Learning" should be picked.
+    # v4.18.1: MENTOR_TOPICS expanded from 4 to 12. Blocking 3 no longer
+    # pins the pick to a single value — instead, assert the picker never
+    # lands on a blocked one when fresh options exist.
+    blocked = ["Career", "Automation", "Work-Life Balance"]
     await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
-        recent_mode_topics=["Career", "Automation", "Work-Life Balance"],
+        recent_mode_topics=blocked,
     )
-    assert "TOPIC: Learning" in captured["task"]
+    # Extract the topic from the task — format is "TOPIC: <topic>\n\n"
+    import re as _re
+    match = _re.search(r"TOPIC:\s*(.+?)\n", captured["task"])
+    assert match, f"Could not find TOPIC line in task: {captured['task'][:200]}"
+    picked = match.group(1).strip()
+    assert picked not in blocked, f"Picker landed on a blocked topic: {picked}"

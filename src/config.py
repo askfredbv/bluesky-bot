@@ -208,6 +208,32 @@ RSS_FEEDS = [
     "https://www.theregister.com/headlines.atom",
 ]
 
+# Mentor mode topic pool (was 4 hardcoded entries inline in agents.py until
+# 2026-05-08). Expanded to 12 — a mix of broad anchors that have produced
+# good output before ("Career", "Learning") and more specific observation
+# territories anchored to Frederik's actual practice ("the gap between
+# giving advice and being responsible for outcomes", "infrastructure debt
+# vs organisational debt"). The specific seeds give the model a clearer
+# angle to land; the broad ones keep room for the model to find its own.
+#
+# Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory,
+# so with 12 topics each comes around roughly every 2-3 weeks. Goal: kill
+# the "same Mentor topic two days running" pattern observed pre-v4.16.
+MENTOR_TOPICS: List[str] = [
+    "Career",
+    "Automation",
+    "Work-Life Balance",
+    "Learning",
+    "the gap between giving advice and being responsible for outcomes",
+    "tools you keep using vs tools you keep abandoning",
+    "what gets faster with experience and what doesn't",
+    "writing for someone who has already decided",
+    "infrastructure debt vs organisational debt",
+    "estimating your own time vs estimating someone else's",
+    "the half-life of a clever workaround",
+    "draft revision vs writing from a blank page",
+]
+
 SECONDARY_TOPICS = [
     "mental health and burnout prevention",
     "open-source culture and community",

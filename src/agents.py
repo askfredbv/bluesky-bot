@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from google import genai
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
-    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS,
+    MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS, MENTOR_TOPICS,
     MENTOR_PERSONA_VARIANTS, CURATOR_PERSONA_VARIANTS,
     STYLE_MEMORY_POST_WINDOW, STYLE_MEMORY_MAX_OPENERS, STYLE_MEMORY_MAX_HASHTAGS,
     REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
@@ -693,10 +693,9 @@ async def generate_content(
             "'what does this look like in five years and what should someone be building toward now'."
         )
     else:
-        topic = _pick_topic_avoiding_recent(
-            ["Career", "Automation", "Work-Life Balance", "Learning"],
-            recent_mode_topics,
-        )
+        # MENTOR_TOPICS lives in config.py (was a 4-item inline list pre-v4.18.1).
+        # See the constant's docstring for the design rationale.
+        topic = _pick_topic_avoiding_recent(MENTOR_TOPICS, recent_mode_topics)
         instr = (
             f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
             f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
