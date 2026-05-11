@@ -910,7 +910,7 @@ async def fetch_single_feed(
     url: str,
     *,
     timeout: Optional[httpx.Timeout] = None
-) -> "FeedFetchResult":
+) -> "FeedFetchResult":  # noqa: F821 — forward ref, imported lazily inside the function to break the src.metrics ↔ src.utils circular dependency
     """Fetch and normalise one RSS feed; return a structured outcome.
 
     The `ok` flag reflects whether the HTTP request succeeded (i.e. no

@@ -116,7 +116,6 @@ def test_momentum_product_bonus_case_insensitive():
 
 def test_fetch_news_merges_source_feeds_on_duplicate_link():
     """Items with the same link from different feeds should be merged into one item with both feeds listed."""
-    from src import utils
 
     item_a = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': datetime.now(timezone.utc)}
     item_b = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-b.com/rss'], 'pub_date': datetime.now(timezone.utc)}

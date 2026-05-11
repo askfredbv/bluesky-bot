@@ -111,6 +111,15 @@ Cost in steady state: a few seconds extra per run + one extra password-login rou
 
 Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
 
+### Wire `ruff` into CI to catch dead imports + style drift [observed 2026-05-08]
+
+Quick scan with `ruff` on 2026-05-08 found 19 issues across the codebase. Eight were unused imports (real dead code, auto-fixed in this commit), one was a false-positive forward-reference (suppressed with `# noqa: F821` and an explanatory comment), and 10 remain as style-class warnings the project hasn't decided on yet:
+
+- **E701 (8):** single-line `if x: return y` guards. Sometimes intentional, sometimes drift. Decision needed: keep (suppress in config) or fix (one-time cleanup).
+- **E402 (2):** two imports below module-level constants in `src/agents.py:28-29`. Easy reorder fix.
+
+Effort: ~30 min total — add `ruff` to `requirements.txt` (or a `requirements-dev.txt`), add a one-step GitHub Actions check on push, decide on E701 (configure-to-allow or fix-once), fix the two E402s. Risk: low. Trigger: any time. **Without this, the same 8 unused imports + 1 forward-ref noise will accumulate again as code churns.**
+
 ### ~~Model priority chain is one model deep in practice~~ [**partially shipped 2026-05-08**]
 
 Re-framed under Option 1 as a quality question, not a reliability one (see strategy turn in the 2026-05-08 session). Commit `8c99378`:

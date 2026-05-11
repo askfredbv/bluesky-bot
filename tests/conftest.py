@@ -1,4 +1,3 @@
-import pytest
 
 # Configure pytest-asyncio to automatically handle async test functions.
 # Without this, async tests are silently skipped or throw a RuntimeError.

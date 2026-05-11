@@ -4,7 +4,6 @@ These helpers are the last line of defence: the prompt tells the model to cap
 hashtags at 2, avoid reader-bait questions, and stay under 300 chars, but the
 model drifts. The trims here catch the drift before posting.
 """
-import pytest
 
 from src.agents import (
     MAX_HASHTAGS_PER_POST,

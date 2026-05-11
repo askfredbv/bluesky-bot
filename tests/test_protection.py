@@ -1,4 +1,3 @@
-import pytest
 from src.agents import _sanitize_mention, validate_summary
 
 

@@ -468,7 +468,6 @@ def test_prune_old_metrics_handles_empty_posts():
 
 # ---- refresh_stale_metrics ----
 
-import pytest
 
 
 @pytest.mark.asyncio
