@@ -1,0 +1,46 @@
+# ruff configuration for askfredbv/bluesky-bot.
+#
+# Wired into CI 2026-05-08 to catch dead imports + style drift as they land,
+# rather than discovering 8 unused imports six weeks later (which is what
+# happened on the first scan). See BACKLOG §2 "Wire ruff into CI" for the
+# decision trail.
+
+# Match the project's Python version (matches .github/workflows/tests.yml).
+target-version = "py311"
+
+# Standard line length. Not aggressively enforced; the project uses dry
+# voice and verbose docstrings, both of which can run long.
+line-length = 120
+
+[lint]
+# Rules to actively enforce. Ruff's defaults (F + E4/E7/E9) catch the
+# classes of issue that matter: dead imports, undefined names, unused
+# locals, real syntax errors. We explicitly add F401/F811/F841 to be
+# clear about the dead-code rules we care about most.
+select = [
+    "F",      # pyflakes — dead imports, undefined names, redefinitions
+    "E4",     # pycodestyle — import-position errors (E401, E402)
+    "E7",     # pycodestyle — comparison style, ambiguous names
+    "E9",     # pycodestyle — runtime errors caught at parse time
+]
+
+# Project-style decisions: rules we choose to ignore.
+ignore = [
+    # E701: single-line "if x: return y" guards. This codebase uses them
+    # as idiomatic early-return clauses (see validate_summary in
+    # src/agents.py and handle_interactions early-out). Splitting them
+    # onto two lines makes guard chains more verbose without making
+    # them clearer. Project preference: allow.
+    "E701",
+]
+
+[lint.per-file-ignores]
+# Tests get a slightly more permissive ruleset by convention:
+# - F401: pytest / asyncio sometimes imported for decorators or
+#   monkeypatching where the name doesn't appear on a line ruff sees.
+# - E402: tests cluster imports near the test blocks that need them
+#   (e.g. additional datetime helpers above a section of date-sensitive
+#   tests). Imports-at-top convention is for production code.
+# - E702: setup-and-patch one-liners like `rng = Random(); rng.random = ...`
+#   are clearer one-line than four.
+"tests/**.py" = ["F401", "E402", "E702"]

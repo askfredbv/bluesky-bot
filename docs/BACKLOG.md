@@ -111,14 +111,9 @@ Cost in steady state: a few seconds extra per run + one extra password-login rou
 
 Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
 
-### Wire `ruff` into CI to catch dead imports + style drift [observed 2026-05-08]
+### ~~Wire `ruff` into CI to catch dead imports + style drift~~ [**resolved 2026-05-08**]
 
-Quick scan with `ruff` on 2026-05-08 found 19 issues across the codebase. Eight were unused imports (real dead code, auto-fixed in this commit), one was a false-positive forward-reference (suppressed with `# noqa: F821` and an explanatory comment), and 10 remain as style-class warnings the project hasn't decided on yet:
-
-- **E701 (8):** single-line `if x: return y` guards. Sometimes intentional, sometimes drift. Decision needed: keep (suppress in config) or fix (one-time cleanup).
-- **E402 (2):** two imports below module-level constants in `src/agents.py:28-29`. Easy reorder fix.
-
-Effort: ~30 min total — add `ruff` to `requirements.txt` (or a `requirements-dev.txt`), add a one-step GitHub Actions check on push, decide on E701 (configure-to-allow or fix-once), fix the two E402s. Risk: low. Trigger: any time. **Without this, the same 8 unused imports + 1 forward-ref noise will accumulate again as code churns.**
+Shipped same-day as the first scan. `ruff==0.15.12` added to `requirements.txt`; `ruff.toml` codifies the project-style decisions (E701 single-line guards allowed; tests get F401/E402/E702 ignored since test files cluster imports near related blocks and use setup-and-patch one-liners idiomatically); `.github/workflows/tests.yml` runs `ruff check src/ main.py scripts/ tests/` as a step before pytest. Both E402 violations in `src/agents.py` fixed by consolidating the two stray imports into the existing `from src.utils` line at the top of the file. CI now fails on new unused imports / undefined names; the same 8 unused imports won't accumulate again silently.
 
 ### ~~Model priority chain is one model deep in practice~~ [**partially shipped 2026-05-08**]
 

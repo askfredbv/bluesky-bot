@@ -20,13 +20,12 @@ from src.config import (
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
     PIONEER_PROMPT_DATED, PIONEER_PROMPT_UNDATED,
 )
-from src.utils import prune_pioneer_recent
+from src.utils import prune_pioneer_recent, update_replied_to
+from src.logger import SafeLogger
 
 # v4.14 voice rules
 MAX_HASHTAGS_PER_POST: int = 2
 MIN_POST_CHARS_FOR_VALIDATION: int = 40  # was 60; lowered for image-led short posts
-from src.utils import update_replied_to
-from src.logger import SafeLogger
 
 _CLIENT_CACHE: Dict[str, Any] = {}
 
