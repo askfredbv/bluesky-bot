@@ -250,16 +250,20 @@ def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
-    """An API-level exception on the first model should cause the next model to be tried."""
+    """An API-level exception on the primary model should cause the next
+    model to be tried. v4.18.1 promoted gemini-2.5-pro to primary; this
+    test now fails on the primary and succeeds on the next-tier fallback
+    (gemini-2.5-flash) to verify the failover still works after the
+    re-ordering."""
     models_tried = []
 
-    def _track_and_fail_first(api_key, system_instr, task, model):
+    def _track_and_fail_primary(api_key, system_instr, task, model):
         models_tried.append(model)
-        if model == "gemini-2.5-flash":
+        if model == "gemini-2.5-pro":
             raise ConnectionError("quota exceeded")
         return '["This is a long enough post that covers #AI and passes all validation checks."]'
 
-    monkeypatch.setattr("src.agents._sync_generate", _track_and_fail_first)
+    monkeypatch.setattr("src.agents._sync_generate", _track_and_fail_primary)
 
     content, _ = await generate_content(
         api_key="fake-key",
@@ -267,8 +271,8 @@ async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
         mode="mentor",
     )
 
+    assert "gemini-2.5-pro" in models_tried
     assert "gemini-2.5-flash" in models_tried
-    assert "gemini-2.0-flash" in models_tried
     assert isinstance(content, list)
     assert len(content) >= 1
     assert "quota exceeded" not in content[0]

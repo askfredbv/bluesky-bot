@@ -733,6 +733,7 @@ async def generate_content(
     # falls back to GEMINI_MODEL_PRIORITY if not provided.
     for model in (model_priority or GEMINI_MODEL_PRIORITY):
         for attempt in range(2):
+            response_text = ""  # bound before try so the except can see it
             try:
                 response_text = await asyncio.to_thread(_sync_generate, api_key, instr, user_task, model)
                 clean_text = response_text.replace('```json', '').replace('```', '').strip()
@@ -752,7 +753,12 @@ async def generate_content(
                 raise ValueError(reason)
 
             except (json.JSONDecodeError, ValueError) as e:
-                # Content quality error — retry on same model
+                # Content quality error — retry on same model.
+                # v4.18.1: capture response_text excerpt + error_msg per retro
+                # discipline (error_type alone wasn't enough to diagnose the
+                # 30%+ JSONDecodeError rate on gemini-2.5-flash). The excerpt
+                # is the first 300 chars; usually enough to see if the model
+                # returned commentary, an unwrapped object, or partial JSON.
                 SafeLogger.warn(
                     "content_generation_attempt_failed",
                     "Content generation or validation failed",
@@ -760,6 +766,8 @@ async def generate_content(
                     model=model,
                     attempt=attempt + 1,
                     error_type=type(e).__name__,
+                    error_msg=str(e)[:200],
+                    response_text=response_text[:300] if response_text else "",
                 )
                 if attempt < 1:
                     await asyncio.sleep(0.2 * (attempt + 1))

@@ -126,8 +126,23 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
     "social-default", "share-image-default",
 ]
 
-# AI Model Priority (failover order on quota/availability errors)
+# AI Model Priority (failover order on quota/availability errors).
+#
+# v4.18.1 promotion: gemini-2.5-pro is now the primary, gemini-2.5-flash
+# the fallback. Rationale: at ~4 inference calls per day the cost delta
+# between flash ($0.30/M in, $2.50/M out) and pro ($1.25/M in, $10/M out)
+# is roughly $0.90/month — negligible — while the quality difference on a
+# constrained-format JSON task at the edge of flash's capability appears
+# to be meaningful. Sharp-vs-templated Mentor post variance observed
+# 2026-05-01 → 2026-05-08 is the signal we're acting on. See
+# docs/RETRO_2026-05-08.md for the framing: "the bot was using flash as
+# if it had to handle hundreds of runs an hour; it runs twice a day."
+#
+# filter_available_models() at startup prunes any model the API doesn't
+# expose. If 2.5-pro isn't available for the API key, the chain falls
+# through to 2.5-flash cleanly without code changes.
 GEMINI_MODEL_PRIORITY: List[str] = [
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash-latest",
