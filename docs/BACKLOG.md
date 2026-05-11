@@ -21,20 +21,38 @@ Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for
 
 **2026-05-08:** explicit commitment to Option 1 over Options 2 (representation) or 3 (craft). See `RETRO_2026-05-08.md` for the framing decision and `PLAN_engagement.md`'s GOAL CHANGE block for the phase re-ordering.
 
-**Immediate next-up (in order):**
+### Shipped 2026-05-08 (awaiting production validation)
 
-1. **Production validation of the model swap** (commit `8c99378`, gemini-2.5-pro promoted to primary). 2–3 production runs to read the live feed and judge whether output quality visibly improved. **No code work needed** — passive wait, but the right discipline gate per the retro.
-2. **Phase 4b — proactive replies** (~4h). The only audience-acquisition lever in the plan. Watchlist exists from Phase 4a (`simonwillison.net`, `xeiaso.net`). Gate was always conservative-by-default; cleared as of 2026-05-08.
-3. **Curator template rewrite** (~1–2h). "Notes on [paper title]" is 73% of posts; needs to die. Demand a Frederik-shape take, not a summary.
-4. **Mentor topic pool expansion** (~1h). 4 hardcoded topics → ~10–12 anchored to Frederik's actual practice.
+Nine commits since v4.18.0, all on `main`, all hitting production at the next runs:
 
-**Parallel-track work safe to do during the model-swap validation window:**
+- `8c99378` — `gemini-2.5-pro` promoted to primary model (+ `response_text` diagnostic on JSONDecodeError)
+- `45f27ce` — Follower-count snapshots per run (`growth.json` — the real Option 1 success metric) + docs realigned to Option 1
+- `2db0ec0` — Curator prompt: lead with the finding, not the source; explicit ban on "Notes on X" openers with BAD/GOOD examples
+- `8f1cae4` — Mentor topic pool 4 → 12 (mix of broad anchors + specific observation territories)
+- `2b762ff` — Retro doc `RETRO_2026-05-08.md` + pointers from BACKLOG / PLAN / project memory
+- `8eb934e` — README "How it works" sync (5 gaps closed)
+- `be7dbd9` — Ruff scan: 8 unused imports removed; 1 forward-ref documented
+- `27a1b1f` — Ruff CI integration (`ruff.toml` + lint step in `tests.yml`)
 
-- ✅ **Follower-count instrumentation** (shipped 2026-05-08 — see commit log). Adds `followersCount` capture per run; the real Option 1 success metric. The bot has been live for months without follower-delta telemetry.
-- **Reach-data spike** — check whether Bluesky public API exposes impression counts. ~15 min investigation.
-- **Custom-feed outreach** — user action; identify 3–5 relevant AI/tech Bluesky custom feeds and ask their curators to include `@askfred.be`.
+### Tomorrow's validators
 
-**Phase 2 (weekly digest) and Phase 3 (scoring multipliers) are lower priority under Option 1.** They want an audience to measure against; building them before 4b ships is the trap the retro documented. Still on the list, just behind 4b + content-quality work.
+| Run | What it confirms |
+|---|---|
+| 07:00 UTC Curator | (1) `gemini-2.5-pro` produces sharper output, (2) "Notes on X" pattern is gone, (3) `growth.json` populates cleanly |
+| 14:30 UTC Mentor | (1) model swap visible in output, (2) topic picked outside the original 4 (or one of the originals — both are valid), (3) prose is structurally different from the recent placeholder posts |
+
+**Reading discipline (binding per retro):** pull the live feed via `app.bsky.feed.getAuthorFeed` and read the posts. Metrics are not a substitute for reading.
+
+If clean: cut v4.19.0 with release notes covering all 9 commits. If not clean: read the live feed, diagnose specifically, fix specifically.
+
+### Next after validation
+
+1. **Phase 4b — proactive replies** (~4h, multi-session arc). The only audience-acquisition lever in the plan. Watchlist exists from Phase 4a. No real gates left.
+2. **Bluesky session cache fix** (~30 min). Minor; cached session string rejected on next run.
+3. **Reach data spike** (~15 min). Does Bluesky API expose impressions?
+4. **Custom-feed outreach** (user action, async, ~1h). Identify 3–5 relevant AI/tech Bluesky custom feeds; ask curators to include `@askfred.be`.
+
+**Phase 2 (weekly digest) and Phase 3 (scoring multipliers)** remain data-gated and lower priority under Option 1. Building them before 4b ships is the trap the retro documented.
 
 ---
 
