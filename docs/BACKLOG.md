@@ -1,6 +1,6 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping fine at v4.17.1. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
+Living list of pending work and parked ideas. Bot is shipping fine at v4.18.0. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
 
 ---
 
@@ -101,6 +101,19 @@ Other less-likely candidates: the Gist write is succeeding but truncating; atpro
 Cost in steady state: a few seconds extra per run + one extra password-login round-trip. Minor — but the cache exists *to* avoid that, and right now the cache is decorative.
 
 Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
+
+### Model priority chain is one model deep in practice [observed 2026-05-08]
+
+`filter_available_models()` at startup prunes `gemini-1.5-flash-latest` and `gemma-3-27b-it` from the configured priority — both genuinely unavailable. The chain reduces to `[gemini-2.5-flash, gemini-2.0-flash]`. Of those, `gemini-2.0-flash` consistently returns ClientError (model_unavailable per the log). So **the bot is effectively running on a single model** — `gemini-2.5-flash` — which also hits `JSONDecodeError` semi-regularly (~30% of recent runs).
+
+When 2.5-flash fails twice, the chain exhausts. As of v4.18.0 the bot skips the post (good — was shipping garbage before). But "skip" isn't the long-term outcome we want; we want the post to land.
+
+Two ways to expand the working chain:
+
+1. **Add a real third model.** Candidates: `gemini-2.5-pro` (probably available; would be slower but higher-quality and a different failure profile from 2.5-flash). Worth a one-line config addition + a single run to verify discovery accepts it.
+2. **Investigate the 2.5-flash JSONDecodeError.** No model in the chain is bulletproof, but ~30% JSON failure on the primary is unusual. Could be the prompt asking for JSON in a way that confuses the model, or markdown wrapping the parser doesn't catch. Add `response_text=response_text[:300]` to the content_generation_attempt_failed log on JSON errors so we can see what the model actually returned. Same diagnostic discipline as the Imagen fix.
+
+Effort: ~10 min for option 1 (one config line + verify); ~30 min for option 2 (one diagnostic line + wait for next failure). Risk: low. Trigger: any time — this is the "fewer no-post days" follow-up to v4.18.0's "no garbage post days" fix.
 
 ### ~~Image reliability — Imagen 3 keeps failing~~ [**resolved 2026-05-08**]
 
