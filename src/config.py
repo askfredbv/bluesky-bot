@@ -136,7 +136,12 @@ GEMINI_MODEL_PRIORITY: List[str] = [
 
 # Image generation
 IMAGE_GENERATION_PROBABILITY: float = 0.5
-IMAGEN_MODEL: str = "imagen-3.0-generate-002"
+# v4.18: was imagen-3.0-generate-002 — shut down per Google docs.
+# imagen-4.0-generate-001 is the standard drop-in successor (also
+# available: imagen-4.0-ultra / imagen-4.0-fast). Diagnostic message
+# from 2026-05-07 14:30 confirmed the 404:
+#   "models/imagen-3.0-generate-002 is not found for API version v1beta"
+IMAGEN_MODEL: str = "imagen-4.0-generate-001"
 
 TOPIC_MAP: Dict[str, List[str]] = {
     "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],

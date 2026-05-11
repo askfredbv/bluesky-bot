@@ -102,20 +102,11 @@ Cost in steady state: a few seconds extra per run + one extra password-login rou
 
 Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
 
-### Image reliability — Imagen 3 keeps failing [observed 2026-05-05, partially diagnosed]
+### ~~Image reliability — Imagen 3 keeps failing~~ [**resolved 2026-05-08**]
 
-`image_generation_failed` fires when the bot rolls into the image-generation path (`IMAGE_GENERATION_PROBABILITY = 0.5` of Mentor / Strategist runs). Across the last 7 afternoon Mentor runs, 2 attempted image generation and both failed with `error_type=ClientError` — the other 5 were dice-skipped, not silently succeeding. Posts that should have had an image went out without one.
+Diagnosed and fixed same-day. Diagnostic surface from v4.17.1 caught the actual error message on the 2026-05-07 14:30 Mentor run: `"404 NOT_FOUND. models/imagen-3.0-generate-002 is not found for API version v1beta"`. Imagen 3 was shut down per Google's deprecation notice; the standard drop-in is `imagen-4.0-generate-001`. Config bumped, README updated.
 
-**2026-05-05:** added `error_msg=str(exc)[:200]` to the failure log so the next attempt tells us *what* ClientError actually means. Same pattern as the 2026-04-29 Step 2 KeyError lesson — `error_type` alone is rarely enough to act on. Tonight's afternoon Mentor run (or whichever afternoon next rolls into image gen) is the diagnostic.
-
-Once the message is in hand, the fix follows from what it says:
-
-1. **Quota exceeded** → bump quota or move to a different account / billing tier.
-2. **Model deprecated** (`imagen-3.0-generate-002`) → switch to current Imagen — likely a one-line config change.
-3. **Content filter rejection** → add a guarded retry with a sanitised prompt, or a static fallback template (already exists for prompt-craft failure; extend to generation failure too).
-4. **Auth / API key issue** → rotate the GEMINI_API_KEY; possibly the same key needs a separate Imagen entitlement.
-
-Effort once diagnosed: ~30min – 2h depending on cause. Risk: low. Trigger: as soon as the next failure log lands with the message body.
+The diagnostic discipline ("never log error_type alone, always include error_msg") paid for itself again — same lesson as 2026-04-29's Step 2 KeyError. Worth keeping as the project default.
 
 ---
 
