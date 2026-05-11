@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from src.config import (
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
+    GROWTH_FILE,
     POST_METRICS_BLUESKY_BATCH_SIZE,
     POST_METRICS_CONTENT_PREVIEW_MAX_CHARS,
     POST_METRICS_FILE,
@@ -442,3 +443,82 @@ async def refresh_stale_metrics(
                 )
 
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Growth telemetry (2026-05-08) — per-run follower-count snapshots.
+#
+# Until 2026-05-08 the bot measured per-post engagement (likes/reposts/replies)
+# but had no telemetry on the actual Option 1 success metric: follower count.
+# Each run appends one snapshot per platform to growth.json so the weekly
+# delta becomes visible without reading the platforms' UIs.
+#
+# Schema is intentionally append-only and uncapped; at 2 runs/day × 2 platforms
+# the file grows ~4 rows/day, which is fine indefinitely. Trim/prune logic can
+# be added if it ever matters.
+# ---------------------------------------------------------------------------
+
+def load_growth() -> Dict[str, Any]:
+    """Load growth.json via the same Gist/local pattern as feed_health."""
+    from src.utils import _atomic_write_json, _load_gist_state, _load_json_with_repair
+
+    default: Dict[str, Any] = {"snapshots": []}
+
+    gist_data = _load_gist_state("growth.json")
+    if isinstance(gist_data, dict) and "snapshots" in gist_data:
+        return gist_data
+
+    data = _load_json_with_repair(GROWTH_FILE, lambda: default)
+    if isinstance(data, dict) and "snapshots" in data:
+        return data
+
+    try:
+        _atomic_write_json(GROWTH_FILE, default)
+    except Exception as e:
+        SafeLogger.warn(
+            "growth_repair_failed",
+            "Failed to rewrite growth.json with default shape",
+            error_type=type(e).__name__,
+        )
+    return default
+
+
+def save_growth(data: Dict[str, Any]) -> None:
+    """Persist growth.json; Gist first, local file as fallback."""
+    from src.utils import _atomic_write_json, _save_gist_state
+
+    if _save_gist_state("growth.json", data):
+        return
+    try:
+        _atomic_write_json(GROWTH_FILE, data)
+    except Exception as e:
+        SafeLogger.error(
+            "growth_save_failed",
+            "Failed to save growth snapshot",
+            exception=e,
+        )
+
+
+def record_follower_snapshot(
+    growth: Dict[str, Any],
+    *,
+    platform: str,
+    followers_count: int,
+    follows_count: Optional[int] = None,
+    posts_count: Optional[int] = None,
+    snapshot_at: Optional[str] = None,
+) -> None:
+    """Append a follower-count snapshot. Mutates ``growth`` in place.
+
+    ``follows_count`` and ``posts_count`` are captured when the platform's
+    API exposes them in the same call — purely informational, not required.
+    The weekly delta in ``followers_count`` is the Option 1 success metric.
+    """
+    snapshots = growth.setdefault("snapshots", [])
+    snapshots.append({
+        "at": snapshot_at or _now_iso(),
+        "platform": platform,
+        "followers": int(followers_count),
+        "follows": int(follows_count) if follows_count is not None else None,
+        "posts": int(posts_count) if posts_count is not None else None,
+    })

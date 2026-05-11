@@ -35,6 +35,7 @@ SEEN_FILE = Path("seen_articles.json")
 REPLIED_FILE = Path("replied_to.json")
 FEED_HEALTH_FILE = Path("feed_health.json")
 POST_METRICS_FILE = Path("post_metrics.json")
+GROWTH_FILE = Path("growth.json")
 
 # Feed health telemetry (Phase 1)
 FEED_HEALTH_RECENT_ATTEMPTS_LIMIT: int = 28  # ~2 weeks at 2 runs/day

@@ -575,3 +575,92 @@ async def test_refresh_does_not_let_one_platform_fail_block_the_other():
     assert counts["bluesky"] == 0
     assert counts["mastodon"] == 1
     assert counts["errors"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Growth telemetry (2026-05-08)
+# ---------------------------------------------------------------------------
+
+def test_record_follower_snapshot_appends_row():
+    growth = {"snapshots": []}
+    metrics.record_follower_snapshot(
+        growth,
+        platform="bluesky",
+        followers_count=26,
+        follows_count=35,
+        posts_count=137,
+        snapshot_at="2026-05-08T18:00:00+00:00",
+    )
+    assert len(growth["snapshots"]) == 1
+    row = growth["snapshots"][0]
+    assert row["platform"] == "bluesky"
+    assert row["followers"] == 26
+    assert row["follows"] == 35
+    assert row["posts"] == 137
+    assert row["at"] == "2026-05-08T18:00:00+00:00"
+
+
+def test_record_follower_snapshot_accepts_missing_optional_fields():
+    """follows_count and posts_count may not be exposed by every platform API."""
+    growth = {"snapshots": []}
+    metrics.record_follower_snapshot(
+        growth,
+        platform="mastodon",
+        followers_count=10,
+        snapshot_at="2026-05-08T18:00:00+00:00",
+    )
+    row = growth["snapshots"][0]
+    assert row["followers"] == 10
+    assert row["follows"] is None
+    assert row["posts"] is None
+
+
+def test_record_follower_snapshot_coerces_counts_to_int():
+    growth = {"snapshots": []}
+    # Some clients return counts as strings or floats; coerce to int.
+    metrics.record_follower_snapshot(
+        growth,
+        platform="bluesky",
+        followers_count="26",  # type: ignore[arg-type]
+        follows_count=35.0,  # type: ignore[arg-type]
+    )
+    row = growth["snapshots"][0]
+    assert row["followers"] == 26
+    assert isinstance(row["followers"], int)
+    assert row["follows"] == 35
+    assert isinstance(row["follows"], int)
+
+
+def test_record_follower_snapshot_appends_to_existing():
+    growth = {"snapshots": [{"at": "old", "platform": "bluesky", "followers": 20}]}
+    metrics.record_follower_snapshot(
+        growth, platform="bluesky", followers_count=22
+    )
+    assert len(growth["snapshots"]) == 2
+    assert growth["snapshots"][1]["followers"] == 22
+
+
+def test_load_growth_returns_default_shape_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.utils._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.metrics.GROWTH_FILE", tmp_path / "growth.json")
+    assert metrics.load_growth() == {"snapshots": []}
+
+
+def test_load_growth_uses_gist_data_when_available(monkeypatch):
+    payload = {"snapshots": [{"at": "x", "platform": "bluesky", "followers": 99}]}
+    monkeypatch.setattr(
+        "src.utils._load_gist_state",
+        lambda name: payload if name == "growth.json" else None,
+    )
+    assert metrics.load_growth() == payload
+
+
+def test_save_growth_falls_back_to_local_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.utils._save_gist_state", lambda *_: False)
+    target = tmp_path / "growth.json"
+    monkeypatch.setattr("src.metrics.GROWTH_FILE", target)
+
+    metrics.save_growth({"snapshots": [{"at": "x", "platform": "bluesky", "followers": 1}]})
+    assert target.exists()
+    import json
+    assert json.loads(target.read_text(encoding="utf-8"))["snapshots"][0]["followers"] == 1

@@ -17,17 +17,24 @@ Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for
 
 ---
 
-## §1 — Wait state
+## §1 — Goal change executed: Option 1 (build a following)
 
-Phase 1 (Steps 1–5) shipped and **production-confirmed 2026-05-05** across three consecutive runs with zero errors. Released as v4.17.0. There is no actionable Phase 1 work left.
+**2026-05-08:** explicit commitment to Option 1 over Options 2 (representation) or 3 (craft). See `RETRO_2026-05-08.md` for the framing decision and `PLAN_engagement.md`'s GOAL CHANGE block for the phase re-ordering.
 
-What unblocks next, and when:
+**Immediate next-up (in order):**
 
-- **Phase 2 (weekly digest, ~1h)** — needs 2+ weeks of `post_metrics.json` data to produce signal worth reading. Earliest realistic: ~2026-05-19. Trigger: after that date, draft `scripts/digest.py` + `.github/workflows/engagement-digest.yml` per `PLAN_engagement.md §Phase 2`.
-- **Phase 4b (MVP replies, ~4h)** — gated on Phase 1 data informing reply-prompt design *and* a fresh review of the watchlist (the 4a output `docs/WATCHLIST_AUDIT.md` is a regenerable artefact; rerun `python -m scripts.audit_watchlist` before starting 4b).
-- **Phase 3 (scoring multipliers, ~3h)** — needs 4+ weeks of data. Earliest realistic: ~2026-06-02.
+1. **Production validation of the model swap** (commit `8c99378`, gemini-2.5-pro promoted to primary). 2–3 production runs to read the live feed and judge whether output quality visibly improved. **No code work needed** — passive wait, but the right discipline gate per the retro.
+2. **Phase 4b — proactive replies** (~4h). The only audience-acquisition lever in the plan. Watchlist exists from Phase 4a (`simonwillison.net`, `xeiaso.net`). Gate was always conservative-by-default; cleared as of 2026-05-08.
+3. **Curator template rewrite** (~1–2h). "Notes on [paper title]" is 73% of posts; needs to die. Demand a Frederik-shape take, not a summary.
+4. **Mentor topic pool expansion** (~1h). 4 hardcoded topics → ~10–12 anchored to Frederik's actual practice.
 
-The right thing to do during the wait is **read the data as it accumulates**, not write more code. Specifically: glance at `post_metrics.json` and `feed_health.json` once a week, look for outliers (post types with consistently high/low engagement, feeds gone quiet), and decide whether the candidate Phase 2 digest sections (top/bottom posts, per-source averages, per-topic averages, pioneer category averages, strategist-fallback frequency, feed health) actually surface useful signal.
+**Parallel-track work safe to do during the model-swap validation window:**
+
+- ✅ **Follower-count instrumentation** (shipped 2026-05-08 — see commit log). Adds `followersCount` capture per run; the real Option 1 success metric. The bot has been live for months without follower-delta telemetry.
+- **Reach-data spike** — check whether Bluesky public API exposes impression counts. ~15 min investigation.
+- **Custom-feed outreach** — user action; identify 3–5 relevant AI/tech Bluesky custom feeds and ask their curators to include `@askfred.be`.
+
+**Phase 2 (weekly digest) and Phase 3 (scoring multipliers) are lower priority under Option 1.** They want an audience to measure against; building them before 4b ships is the trap the retro documented. Still on the list, just behind 4b + content-quality work.
 
 ---
 
@@ -104,18 +111,14 @@ Cost in steady state: a few seconds extra per run + one extra password-login rou
 
 Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
 
-### Model priority chain is one model deep in practice [observed 2026-05-08]
+### ~~Model priority chain is one model deep in practice~~ [**partially shipped 2026-05-08**]
 
-`filter_available_models()` at startup prunes `gemini-1.5-flash-latest` and `gemma-3-27b-it` from the configured priority — both genuinely unavailable. The chain reduces to `[gemini-2.5-flash, gemini-2.0-flash]`. Of those, `gemini-2.0-flash` consistently returns ClientError (model_unavailable per the log). So **the bot is effectively running on a single model** — `gemini-2.5-flash` — which also hits `JSONDecodeError` semi-regularly (~30% of recent runs).
+Re-framed under Option 1 as a quality question, not a reliability one (see strategy turn in the 2026-05-08 session). Commit `8c99378`:
 
-When 2.5-flash fails twice, the chain exhausts. As of v4.18.0 the bot skips the post (good — was shipping garbage before). But "skip" isn't the long-term outcome we want; we want the post to land.
+1. ✅ **Added `gemini-2.5-pro` as the new primary**, demoted `gemini-2.5-flash` to fallback. Quality + resilience combined move. If 2.5-pro isn't available for the API key, `filter_available_models()` prunes it and the chain falls through cleanly.
+2. ✅ **Added `response_text=response_text[:300]` + `error_msg=str(e)[:200]`** to the `content_generation_attempt_failed` log on JSON errors. Next failure tells us what flash is actually returning (commentary wrap? unwrapped object? partial JSON?).
 
-Two ways to expand the working chain:
-
-1. **Add a real third model.** Candidates: `gemini-2.5-pro` (probably available; would be slower but higher-quality and a different failure profile from 2.5-flash). Worth a one-line config addition + a single run to verify discovery accepts it.
-2. **Investigate the 2.5-flash JSONDecodeError.** No model in the chain is bulletproof, but ~30% JSON failure on the primary is unusual. Could be the prompt asking for JSON in a way that confuses the model, or markdown wrapping the parser doesn't catch. Add `response_text=response_text[:300]` to the content_generation_attempt_failed log on JSON errors so we can see what the model actually returned. Same diagnostic discipline as the Imagen fix.
-
-Effort: ~10 min for option 1 (one config line + verify); ~30 min for option 2 (one diagnostic line + wait for next failure). Risk: low. Trigger: any time — this is the "fewer no-post days" follow-up to v4.18.0's "no garbage post days" fix.
+Awaiting 2–3 production runs to evaluate whether the model was the constraint vs prompts.
 
 ### ~~Image reliability — Imagen 3 keeps failing~~ [**resolved 2026-05-08**]
 

@@ -9,5 +9,6 @@ seen_articles.json
 replied_to.json
 feed_health.json
 post_metrics.json
+growth.json
 .claude/
 docs/WATCHLIST_AUDIT.md

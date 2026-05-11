@@ -2,6 +2,29 @@
 
 > **Read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md) before executing further on this plan.** The phase ordering below (capture → digest → act → participate) was followed through 2026-04 / 2026-05 and shipped a coherent Phase 1, but the retro documents why the implicit assumption ("an audience exists to engage with the content") was wrong from the start. Phase 4 (proactive replies) is the only path in this plan that creates an audience; running 1→2→3 before 4 measured a feed that had no readers. Question whether the plan's phase order still matches the project's goal before adding work on top.
 
+---
+
+## GOAL CHANGE — 2026-05-08
+
+The project's explicit goal is now **Option 1: build a following.** Real audience acquisition. See `RETRO_2026-05-08.md` for the framing decision. The phase ordering below was structurally tuned for an Option 3 (craft / learning) interpretation of the work; under Option 1 the ordering needs to be **re-read in priority order, not numerical order:**
+
+| Phase | Original ordering | New priority under Option 1 |
+|---|---|---|
+| 4b. MVP proactive replies | "After 4a produces ranked watchlist" (data-gated) | **First in line.** Only audience-acquisition lever in this plan. Watchlist exists. Stop waiting for Phase 1 data — that gate was conservative-by-default. |
+| Content-quality fixes (Curator template rewrite, Mentor topic pool, model swap to gemini-2.5-pro) | Not in plan; ad-hoc work | **Second priority.** Phase 4b will expose the feed to wider readership; output should be as good as we can make it cheaply before that lands. Model swap shipped 2026-05-08 (8c99378) and is under production validation. |
+| 1. Capture telemetry (Steps 1–5) | First | ✅ Shipped, production-confirmed v4.17.0. Still useful — informs Phase 2 + Track A formatting features feed it. Lower priority for new work now. |
+| 4a. Recon (audit_watchlist) | "Anytime after Phase 1 ships" | ✅ Shipped, 2 stake-able candidates. |
+| 2. Weekly digest | "After Phase 1 has run 2+ weeks" | **Lower priority under Option 1.** Useful when there's an audience to digest engagement from; less useful right now. Can still ship around ~2026-05-19 trigger, but not urgent. |
+| 3. Scoring multipliers | "After 4+ weeks of Phase 1 data" | **Lower priority.** Same reasoning — wants an audience to measure against. |
+
+**What this changes operationally:**
+
+- Phase 4b's gate ("After 4a produces ranked watchlist") is **met**; the *implicit* gate ("Phase 1 producing data to inform reply-prompt design") was always loose and is hereby cleared.
+- New work item not in original plan: **follower-count instrumentation**. Per-post engagement counts don't measure the Option 1 success metric (followers). Shipped 2026-05-08 alongside this rewrite as the cheapest possible parallel-track work during the model-swap validation window.
+- The voice non-goal ("voice is a brand decision, not a metric decision") **still stands.** Option 1 changes what the bot *does* (replies, custom feeds, discoverability) — not what it *sounds like.*
+
+---
+
 The bot posts into a void. Every tuning decision since v4.0 — source tiers, consensus synergy, topic pool, pioneer categories, voice rules — is gut feel. The Mastodon broadcaster silently re-sends already-delivered posts on mid-thread failure. Twenty-five RSS feeds are scored without any signal that some have gone dead. And the bot only broadcasts; it doesn't participate.
 
 This plan addresses all of that as one coherent body of work, because the underlying changes share infrastructure: a broadcaster signature change unlocks per-post idempotency *and* engagement metrics; a Gist-state pattern unlocks post metrics *and* feed health; a weekly digest workflow surfaces all three signal streams in one place; and the same engagement signal that informs scoring also gates which handles get proactive replies.

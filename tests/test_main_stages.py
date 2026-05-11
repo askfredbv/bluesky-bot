@@ -340,3 +340,118 @@ async def test_broadcasting_stage_skips_post_when_generate_returns_empty(monkeyp
     assert payload.bsky_sent_uris == []
     assert payload.mastodon_sent_ids == []
     assert posts_attempted == {"bsky": 0, "mastodon": 0}
+
+
+@pytest.mark.asyncio
+async def test_capture_follower_snapshot_stage_records_bluesky_and_mastodon(monkeypatch):
+    """One run hitting both platforms appends two snapshot rows — one per
+    platform — to growth.json. Bluesky uses getProfile; Mastodon uses
+    account_verify_credentials. Failures are isolated per-platform."""
+    saved = {}
+    monkeypatch.setattr("src.metrics.load_growth", lambda: {"snapshots": []})
+    monkeypatch.setattr("src.metrics.save_growth", lambda d: saved.update(data=d))
+
+    class FakeProfile:
+        followers_count = 26
+        follows_count = 35
+        posts_count = 137
+
+    class FakeActorNs:
+        async def get_profile(self, _params):
+            return FakeProfile()
+
+    class FakeBskyNs:
+        actor = FakeActorNs()
+
+    class FakeAppNs:
+        bsky = FakeBskyNs()
+
+    class FakeBskyClient:
+        app = FakeAppNs()
+
+    class FakeMastodon:
+        def __init__(self, **kwargs):
+            pass
+
+        def account_verify_credentials(self):
+            return {
+                "followers_count": 12,
+                "following_count": 50,
+                "statuses_count": 200,
+            }
+
+    monkeypatch.setattr("mastodon.Mastodon", FakeMastodon)
+
+    broadcast = main.BroadcastPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        content_list=["whatever"],
+        chosen_topic="topic",
+        thread_pause_profile="default",
+        bsky_broadcast_client=FakeBskyClient(),
+    )
+    creds = SimpleNamespace(
+        bluesky_username="askfred.be",
+        mastodon_access_token="t",
+        mastodon_api_base_url="https://mastodon.social",
+    )
+
+    await main.capture_follower_snapshot_stage(broadcast, creds)
+
+    rows = saved["data"]["snapshots"]
+    assert len(rows) == 2
+    platforms = {r["platform"]: r for r in rows}
+    assert platforms["bluesky"]["followers"] == 26
+    assert platforms["bluesky"]["follows"] == 35
+    assert platforms["bluesky"]["posts"] == 137
+    assert platforms["mastodon"]["followers"] == 12
+    assert platforms["mastodon"]["follows"] == 50
+    assert platforms["mastodon"]["posts"] == 200
+
+
+@pytest.mark.asyncio
+async def test_capture_follower_snapshot_stage_isolates_per_platform_failures(monkeypatch):
+    """If Bluesky's getProfile raises, the Mastodon snapshot must still record."""
+    saved = {}
+    monkeypatch.setattr("src.metrics.load_growth", lambda: {"snapshots": []})
+    monkeypatch.setattr("src.metrics.save_growth", lambda d: saved.update(data=d))
+
+    class BrokenBsky:
+        class app:
+            class bsky:
+                class actor:
+                    @staticmethod
+                    async def get_profile(_params):
+                        raise RuntimeError("bluesky api down")
+
+    class FakeMastodon:
+        def __init__(self, **kwargs):
+            pass
+
+        def account_verify_credentials(self):
+            return {"followers_count": 12, "following_count": 50, "statuses_count": 200}
+
+    monkeypatch.setattr("mastodon.Mastodon", FakeMastodon)
+
+    broadcast = main.BroadcastPayload(
+        mode="mentor",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        content_list=["x"],
+        chosen_topic="t",
+        thread_pause_profile="default",
+        bsky_broadcast_client=BrokenBsky(),
+    )
+    creds = SimpleNamespace(
+        bluesky_username="askfred.be",
+        mastodon_access_token="t",
+        mastodon_api_base_url="https://mastodon.social",
+    )
+
+    await main.capture_follower_snapshot_stage(broadcast, creds)
+
+    rows = saved["data"]["snapshots"]
+    assert len(rows) == 1
+    assert rows[0]["platform"] == "mastodon"
+    assert rows[0]["followers"] == 12

@@ -432,6 +432,84 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
         )
 
 
+async def capture_follower_snapshot_stage(broadcast: BroadcastPayload, creds: Any) -> None:
+    """2026-05-08: per-run follower-count snapshot to growth.json.
+
+    Under Option 1 (build a following), the weekly delta in followers IS the
+    success metric — per-post engagement counts measure something else.
+    This stage runs once per run, hits each platform's profile API, appends
+    a row. Failures on either platform are isolated and logged, never raise.
+
+    Bluesky:  app.bsky.actor.getProfile(actor=username) → followersCount
+    Mastodon: account_verify_credentials() → followers_count
+    """
+    try:
+        from src.metrics import load_growth, record_follower_snapshot, save_growth
+        growth = load_growth()
+        snapshot_at = datetime.now(timezone.utc).isoformat()
+        wrote_any = False
+
+        # ---- Bluesky ----
+        bsky_client = broadcast.bsky_broadcast_client
+        if bsky_client is not None:
+            try:
+                profile = await bsky_client.app.bsky.actor.get_profile(
+                    {"actor": creds.bluesky_username}
+                )
+                record_follower_snapshot(
+                    growth,
+                    platform="bluesky",
+                    followers_count=int(getattr(profile, "followers_count", 0) or 0),
+                    follows_count=int(getattr(profile, "follows_count", 0) or 0),
+                    posts_count=int(getattr(profile, "posts_count", 0) or 0),
+                    snapshot_at=snapshot_at,
+                )
+                wrote_any = True
+            except Exception as e:
+                SafeLogger.warn(
+                    "follower_snapshot_bluesky_failed",
+                    "Could not fetch Bluesky follower snapshot",
+                    error_type=type(e).__name__,
+                    error_msg=str(e)[:200],
+                )
+
+        # ---- Mastodon ----
+        if creds.mastodon_access_token:
+            try:
+                from mastodon import Mastodon
+                masto = Mastodon(
+                    access_token=creds.mastodon_access_token,
+                    api_base_url=creds.mastodon_api_base_url,
+                )
+                account = await asyncio.to_thread(masto.account_verify_credentials)
+                record_follower_snapshot(
+                    growth,
+                    platform="mastodon",
+                    followers_count=int(account.get("followers_count", 0) or 0),
+                    follows_count=int(account.get("following_count", 0) or 0),
+                    posts_count=int(account.get("statuses_count", 0) or 0),
+                    snapshot_at=snapshot_at,
+                )
+                wrote_any = True
+            except Exception as e:
+                SafeLogger.warn(
+                    "follower_snapshot_mastodon_failed",
+                    "Could not fetch Mastodon follower snapshot",
+                    error_type=type(e).__name__,
+                    error_msg=str(e)[:200],
+                )
+
+        if wrote_any:
+            save_growth(growth)
+    except Exception as e:
+        SafeLogger.warn(
+            "follower_snapshot_failed",
+            "Follower snapshot stage skipped",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+
+
 async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
     automation_tasks = []
     if broadcast.bsky_broadcast_client is not None:
@@ -505,6 +583,7 @@ async def main():
     content_prep = await content_prep_stage(mode_payload, creds)
     broadcast = await broadcasting_stage(content_prep, settings, creds, active_models=active_models)
     await capture_post_metrics_stage(broadcast, creds)
+    await capture_follower_snapshot_stage(broadcast, creds)
     automation = await post_run_automation_stage(broadcast, creds)
     await persistence_stage(automation)
 
