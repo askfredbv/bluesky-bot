@@ -184,6 +184,30 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         recent_mode_topics=content_prep.seen_data.get("recent_mode_topics", []),
     )
 
+    # v4.18: if generate_content returned no content (all models exhausted),
+    # skip the broadcast entirely. Same philosophy as v4.15.3's
+    # broadcast_invariant_violated: missing one run beats posting garbage.
+    # The capture / automation / persistence stages downstream all handle
+    # empty sent_uris cleanly.
+    if not content_list:
+        SafeLogger.warn(
+            "broadcast_skipped_no_content",
+            "Skipping broadcast — no content was generated for this run",
+            platform="multi",
+            mode=mode,
+            topic=chosen_topic,
+        )
+        return BroadcastPayload(
+            mode=mode,
+            seen_data=content_prep.seen_data,
+            news_items=news_items,
+            content_list=[],
+            chosen_topic=chosen_topic,
+            thread_pause_profile=DEFAULT_THREAD_PAUSE_PROFILE,
+            bsky_broadcast_client=content_prep.bsky_client,
+            pioneer_entry=content_prep.pioneer_entry,
+        )
+
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
     image_bytes = None

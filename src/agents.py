@@ -720,8 +720,13 @@ async def generate_content(
     # instr = system role; user_task = everything the model acts on
     user_task = f"{task}\n\n{style_constraints}\n\n{format_instruction}"
 
-    # v4.14: fallback no longer hardcodes hashtags (banned generic mood tags)
-    fallback_post = f"Notes on {topic} — more soon."
+    # v4.18: NO content-fallback string. The previous "Notes on {topic} —
+    # more soon." sentinel was a credibility-corrosive lie that bypassed
+    # _apply_voice_trim entirely (returned directly from line 772). When
+    # the model chain exhausts, the right behaviour is to skip the post,
+    # not ship a placeholder. Same philosophy as v4.15.3's
+    # broadcast_invariant_violated: missing one run beats posting garbage.
+    # On exhaustion we return ([], topic); the caller skips the broadcast.
 
     # Rescue Pipeline: iterate models, retry content errors on same model.
     # model_priority is the pre-filtered list from filter_available_models;
@@ -769,7 +774,17 @@ async def generate_content(
                 )
                 break  # exits attempt loop; outer loop advances to next model
 
-    return [fallback_post[:MAX_POST_LENGTH_BSKY]], topic
+    # All models in the priority chain failed. Signal exhaustion to the
+    # caller with an empty content list; broadcasting_stage skips the
+    # broadcast entirely rather than posting a content-less stub.
+    SafeLogger.error(
+        "content_generation_exhausted",
+        "All models in priority chain failed; skipping this run's broadcast",
+        platform="system",
+        mode=mode,
+        topic=topic,
+    )
+    return [], topic
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""

@@ -6,8 +6,15 @@ from src.config import REPLY_MAX_CHARS
 
 
 @pytest.mark.asyncio
-async def test_generate_content_falls_back_when_model_always_fails(monkeypatch):
-    """If every model call fails, function should return a safe fallback list and topic."""
+async def test_generate_content_returns_empty_when_all_models_fail(monkeypatch):
+    """v4.18: when every model in the chain fails, return ([], topic).
+
+    Previously the function returned a hardcoded "Notes on {topic} —
+    more soon." placeholder that bypassed _apply_voice_trim entirely
+    and shipped to production as a credibility-corrosive zero-content
+    post. broadcasting_stage now treats the empty list as a signal to
+    skip the broadcast — missing one run beats shipping garbage.
+    """
 
     def _always_fail(*args, **kwargs):
         raise RuntimeError("forced generation error")
@@ -21,9 +28,7 @@ async def test_generate_content_falls_back_when_model_always_fails(monkeypatch):
         news_items=[{"title": "Fallback Topic", "description": "desc", "link": "https://example.com"}],
     )
 
-    assert isinstance(content, list)
-    assert content
-    assert all(isinstance(item, str) for item in content)
+    assert content == []
     assert topic == "Fallback Topic"
 
 
@@ -188,17 +193,18 @@ async def test_handle_interactions_can_skip_reply_for_human_cadence(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_generate_content_falls_back_when_model_returns_non_list(monkeypatch):
+async def test_generate_content_returns_empty_when_model_always_returns_non_list(monkeypatch):
+    """v4.18: non-list responses exhaust the chain (ValueError → retry → next model
+    → all fail) and now return [] instead of a hardcoded placeholder string."""
     monkeypatch.setattr("src.agents._sync_generate", lambda *_args, **_kwargs: '{"not":"a list"}')
 
-    content, topic = await generate_content(
+    content, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
     )
 
-    assert isinstance(content, list)
-    assert len(content) == 1
+    assert content == []
 
 
 def test_sync_generate_reuses_cached_client(monkeypatch):
@@ -288,10 +294,9 @@ async def test_model_failover_does_not_advance_on_json_error(monkeypatch):
     )
 
     # Should have retried the same models 2x each — never jumped early due to JSON error
-    # All models will be tried (2 attempts each), ending in fallback
+    # All models will be tried (2 attempts each), ending in exhaustion (empty list)
     assert models_tried.count("gemini-2.5-flash") == 2
-    assert isinstance(content, list)
-    assert len(content) == 1  # fallback post
+    assert content == []  # v4.18: exhausted chain returns empty, not placeholder
 
 
 @pytest.mark.asyncio

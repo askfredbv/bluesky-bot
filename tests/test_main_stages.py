@@ -288,3 +288,55 @@ async def test_capture_post_metrics_stage_still_runs_refresh_when_nothing_sent(m
 
     assert refresh_calls == [True]
     assert len(save_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_broadcasting_stage_skips_post_when_generate_returns_empty(monkeypatch):
+    """v4.18: if generate_content returns ([], topic), broadcasting_stage
+    must skip the broadcast entirely — not call post_to_bluesky / post_to_mastodon.
+    This is the safety net that catches the model-chain-exhaustion case
+    that previously shipped "Notes on X — more soon." stub posts."""
+    posts_attempted = {"bsky": 0, "mastodon": 0}
+
+    async def fake_generate(*args, **kwargs):
+        return [], "exhausted topic"
+
+    async def should_not_be_called_bsky(*args, **kwargs):
+        posts_attempted["bsky"] += 1
+        raise AssertionError("post_to_bluesky must not be called on empty content")
+
+    async def should_not_be_called_mastodon(*args, **kwargs):
+        posts_attempted["mastodon"] += 1
+        raise AssertionError("post_to_mastodon must not be called on empty content")
+
+    async def no_delay(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate)
+    monkeypatch.setattr(main, "post_to_bluesky", should_not_be_called_bsky)
+    monkeypatch.setattr(main, "post_to_mastodon", should_not_be_called_mastodon)
+    monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
+
+    creds = SimpleNamespace(
+        gemini_api_key="g",
+        bluesky_username="u",
+        bluesky_password="p",
+        mastodon_access_token="t",
+        mastodon_api_base_url="https://masto",
+    )
+    settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
+    prep = main.ContentPrepPayload(
+        mode="mentor",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        link_meta=None,
+        bsky_client="some-client",
+        recent_posts=[],
+    )
+
+    payload = await main.broadcasting_stage(prep, settings, creds)
+
+    assert payload.content_list == []
+    assert payload.bsky_sent_uris == []
+    assert payload.mastodon_sent_ids == []
+    assert posts_attempted == {"bsky": 0, "mastodon": 0}
