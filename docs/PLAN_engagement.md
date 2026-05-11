@@ -1,5 +1,7 @@
 # Plan: Engagement — measure, observe, act, participate
 
+> **Read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md) before executing further on this plan.** The phase ordering below (capture → digest → act → participate) was followed through 2026-04 / 2026-05 and shipped a coherent Phase 1, but the retro documents why the implicit assumption ("an audience exists to engage with the content") was wrong from the start. Phase 4 (proactive replies) is the only path in this plan that creates an audience; running 1→2→3 before 4 measured a feed that had no readers. Question whether the plan's phase order still matches the project's goal before adding work on top.
+
 The bot posts into a void. Every tuning decision since v4.0 — source tiers, consensus synergy, topic pool, pioneer categories, voice rules — is gut feel. The Mastodon broadcaster silently re-sends already-delivered posts on mid-thread failure. Twenty-five RSS feeds are scored without any signal that some have gone dead. And the bot only broadcasts; it doesn't participate.
 
 This plan addresses all of that as one coherent body of work, because the underlying changes share infrastructure: a broadcaster signature change unlocks per-post idempotency *and* engagement metrics; a Gist-state pattern unlocks post metrics *and* feed health; a weekly digest workflow surfaces all three signal streams in one place; and the same engagement signal that informs scoring also gates which handles get proactive replies.

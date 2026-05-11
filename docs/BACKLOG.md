@@ -2,6 +2,8 @@
 
 Living list of pending work and parked ideas. Bot is shipping fine at v4.18.0. Nothing here is urgent — the ordering below is what I'd tackle in sequence if I had the time.
 
+> **Before working on this project, read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md).** Six weeks of infrastructure landed on top of a hardcoded fallback that was shipping placeholder posts to production the whole time. The retro names the pattern (metrics-as-substitute-for-reading) and the corrective (open the live feed first). Don't repeat it.
+
 ---
 
 ## Priority order
