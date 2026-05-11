@@ -409,6 +409,34 @@ def _is_gemma(model_name: str) -> bool:
     return "gemma" in model_name.lower()
 
 
+def _thinking_budget_for(model_name: str) -> Optional[int]:
+    """Return the explicit thinking_budget to use for a 2.5-family model.
+
+    The Gemini 2.5 family runs in thinking-mode by default, and the thinking
+    tokens count against `max_output_tokens`. With the bot's tight cap, a
+    default thinking budget can consume so much of the output budget that
+    the model returns no visible text — surfaced 2026-05-11 on gemini-2.5-pro
+    as ``AttributeError: 'NoneType' object has no attribute 'replace'`` (the
+    parse step tried to clean a None response).
+
+    Per Google's docs, thinking_budget has model-specific ranges:
+      - gemini-2.5-pro:   [128, 32768], cannot fully disable
+      - gemini-2.5-flash: [0, 24576], can fully disable
+      - gemini-2.5-flash-lite: [0, 24576], default off
+      - older / non-2.5 models: no thinking_config
+
+    We pin each thinking-capable model to its minimum so most of
+    MAX_OUTPUT_TOKENS goes to actual content. Returns None for models
+    where no thinking_config should be sent.
+    """
+    lower = model_name.lower()
+    if "2.5-pro" in lower:
+        return 128   # 2.5-pro minimum; cannot fully disable
+    if "2.5-flash" in lower:
+        return 0     # disable entirely
+    return None
+
+
 def _build_generate_kwargs(model_name: str, system_instr: str, task: str) -> dict:
     """Build the kwargs dict for client.models.generate_content.
 
@@ -422,18 +450,26 @@ def _build_generate_kwargs(model_name: str, system_instr: str, task: str) -> dic
     cannot emit more than the cap — if it tries, it stops early and the
     resulting JSON fails parsing, which triggers the retry/fallback path.
     This is cheaper and more honest than post-hoc truncation.
+
+    v4.18 (2026-05-11): adds thinking_config for 2.5-family models so the
+    thinking-mode budget doesn't consume the entire output budget. See
+    _thinking_budget_for above for the per-model rationale.
     """
     if _is_gemma(model_name):
         return {
             "contents": f"{system_instr}\n\n---\n\n{task}",
             "config": {"max_output_tokens": MAX_OUTPUT_TOKENS},
         }
+    config: Dict[str, Any] = {
+        "system_instruction": system_instr,
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+    }
+    thinking_budget = _thinking_budget_for(model_name)
+    if thinking_budget is not None:
+        config["thinking_config"] = {"thinking_budget": thinking_budget}
     return {
         "contents": task,
-        "config": {
-            "system_instruction": system_instr,
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
-        },
+        "config": config,
     }
 
 

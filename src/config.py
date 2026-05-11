@@ -10,16 +10,19 @@ MAX_GENERATION_RETRIES: int = 3
 # enforcement of post-length invariants (v4.15.3). 1 token ≈ 3.5 chars in
 # English, ~3 chars in Dutch; 5 posts × 300 chars ≈ 450 tokens.
 #
-# v4.18 (2026-05-11): bumped 600 → 900. The previous cap was tight enough
-# that Dutch generations on specific Mentor seeds (which prompt for longer
-# takes) sometimes truncated mid-string, producing JSONDecodeError on the
-# parse and exhausting the model chain. Diagnostic on the JSON catch
-# surfaced response_text excerpts like
-#   "[\"De uitdaging van een lege pagina zit zelden in het schrijven zelf. Het is de afwezig"
-# — mid-string truncation. Per-post hard length is still enforced at
-# MAX_POST_LENGTH_BSKY=300 in the broadcaster's invariant check, so the
-# bump doesn't loosen the user-visible length contract.
-MAX_OUTPUT_TOKENS: int = 900
+# v4.18 (2026-05-11): 600 → 900 → 1500. The 600 cap truncated Dutch
+# Mentor seeds mid-string; the 900 cap was still tight for Pioneer-
+# dimension content (longer biographical detail + observation + link
+# context). 1500 gives clear headroom while remaining well under the
+# Gemini 2.5 family's 8192 default limit. Per-post hard length is still
+# enforced at MAX_POST_LENGTH_BSKY=300 in the broadcaster's invariant
+# check, so the bump doesn't loosen the user-visible length contract.
+#
+# Thinking budget (gemini-2.5-pro / gemini-2.5-flash) is configured
+# separately in _build_generate_kwargs and counts against this cap.
+# At thinking_budget=128 (pro min) we have ~1370 tokens left for
+# content output; plenty.
+MAX_OUTPUT_TOKENS: int = 1500
 RECENT_POSTS_LIMIT: int = 20
 STYLE_MEMORY_POST_WINDOW: int = 10
 STYLE_MEMORY_MAX_OPENERS: int = 5
@@ -154,7 +157,13 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
 GEMINI_MODEL_PRIORITY: List[str] = [
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    # v4.18 (2026-05-11): gemini-2.0-flash dropped — Google has deprecated
+    # it for new users (the error_msg diagnostic surfaced the 404 message:
+    # "models/gemini-2.0-flash is no longer available to new users").
+    # Same pattern as Imagen 3 deprecation a week earlier. Leaving 1.5 and
+    # gemma in the list as vestigial — they get pruned at startup anyway,
+    # and if Google ever re-enables them for this account, no code change
+    # is needed.
     "gemini-1.5-flash-latest",
     "gemma-3-27b-it",
 ]
