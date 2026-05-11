@@ -771,12 +771,20 @@ async def generate_content(
                     await asyncio.sleep(0.2 * (attempt + 1))
 
             except Exception as exc:
-                # API-level error (quota, model unavailable, etc.) — skip to next model
+                # API-level error (quota, model unavailable, etc.) — skip to next model.
+                # v4.18 (2026-05-11): added error_msg per retro discipline. The model
+                # swap to gemini-2.5-pro on 2026-05-08 was silently failing here with
+                # AttributeError on every call — invisible because the warn only
+                # logged error_type. The same gap that caused the Step 2 KeyError
+                # debacle (29 April) and the Imagen 3 deprecation lag (early May).
+                # Third time this exact discipline gap has bitten us; this catch
+                # gets the same treatment as every other except in the codebase.
                 SafeLogger.warn(
                     "model_unavailable",
                     "Model failed, trying next in priority list",
                     model=model,
                     error_type=type(exc).__name__,
+                    error_msg=str(exc)[:200],
                 )
                 break  # exits attempt loop; outer loop advances to next model
 
