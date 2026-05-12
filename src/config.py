@@ -366,11 +366,13 @@ PIONEER_FACTS_UNDATED: List[Dict[str, object]] = [
     {"id": "paris-paper-plane", "category": "project",
      "title": "The Register flew a paper plane to space",
      "detail": "PARIS — Paper Aircraft Released Into Space. 2010, weather balloon, 27km altitude. Multi-part live build series. Plane recovered intact. Followed by LOHAN, a paper-plane-launched rocket.",
-     "link": "https://www.theregister.com/Tag/Paris/Paper%20Aircraft%20Released%20Into%20Space/"},
+     "link": "https://www.theregister.com/tag/Paris/Paper%20Aircraft%20Released%20Into%20Space/"},
     {"id": "story-of-mel", "category": "project",
      "title": "The Story of Mel",
      "detail": "1983 Usenet post by Ed Nather about a programmer who wrote self-modifying code on a drum-memory computer because timing the drum rotation was faster than using subroutines. The original real-programmer lore.",
-     "link": "https://www.catb.org/jargon/html/story-of-mel.html"},
+     # 2026-05-12: catb.org's HTTPS cert is misconfigured (SEC_E_WRONG_PRINCIPAL);
+     # cs.utah.edu mirror hosts the canonical text and resolves cleanly.
+     "link": "https://www.cs.utah.edu/~elb/folklore/mel.html"},
     {"id": "curl-one-person", "category": "project",
      "title": "curl has had one maintainer for 25 years",
      "detail": "Daniel Stenberg started it in 1996. It runs in cars, satellites, every operating system. He still does most reviews himself. He keeps a list of every device he knows curl ships in — last count: more than 20 billion installs."},
@@ -432,7 +434,8 @@ PIONEER_PROMPT_DATED: str = (
     "- The detail IS the post. No moral, no 'and that's why we should…', no link to the present.\n"
     "- All voice rules from the style guide apply: first-person where natural, no hype words, no reader-bait\n"
     "  questions, default zero hashtags (max 1 if it's a clear topic anchor).\n"
-    "- Length: under 300 chars. The link, if any, eats characters — count them.\n"
+    "- {link_directive}"
+    "- Length: under 300 chars TOTAL (including the URL when present). Budget your prose so the URL fits.\n"
     "- Output: a JSON array with exactly ONE string."
 )
 
@@ -447,7 +450,8 @@ PIONEER_PROMPT_UNDATED: str = (
     "- The detail IS the post. No moral, no link to the present, no 'this reminds us that…'.\n"
     "- All voice rules from the style guide apply: first-person where natural, no hype words, no reader-bait\n"
     "  questions, default zero hashtags (max 1 if it's a clear topic anchor).\n"
-    "- Length: under 300 chars. The link, if any, eats characters — count them.\n"
+    "- {link_directive}"
+    "- Length: under 300 chars TOTAL (including the URL when present). Budget your prose so the URL fits.\n"
     "- Output: a JSON array with exactly ONE string."
 )
 

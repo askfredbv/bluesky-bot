@@ -561,3 +561,112 @@ async def test_generate_content_avoids_recent_mode_topics_in_mentor(monkeypatch)
     assert match, f"Could not find TOPIC line in task: {captured['task'][:200]}"
     picked = match.group(1).strip()
     assert picked not in blocked, f"Picker landed on a blocked topic: {picked}"
+
+
+# ---------------------------------------------------------------------------
+# v4.19 Pioneer URL-required validator
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pioneer_post_missing_required_url_is_rejected(monkeypatch):
+    """If the pioneer entry has a `link`, the post MUST contain that URL.
+    A post that omits the URL must trigger the retry path (raises ValueError
+    inside the rescue loop, surfaces as content_generation_attempt_failed)."""
+    required_url = "https://example.com/canonical-source"
+    attempts = []
+
+    def _model_omits_url(_api_key, _system_instr, task, _model):
+        attempts.append(task)
+        # Realistic-length post that passes shape + voice validators but
+        # deliberately omits the URL the entry requires.
+        return '["A perfectly reasonable observation about the historical event in question that lands on a statement and meets the minimum-length floor."]'
+
+    monkeypatch.setattr("src.agents._sync_generate", _model_omits_url)
+
+    pioneer_entry = {
+        "pool": "undated",
+        "entry": {
+            "id": "fake-pioneer",
+            "title": "A fake pioneer fact",
+            "detail": "Some detail that does not include any URL.",
+            "link": required_url,
+        },
+    }
+
+    content, _ = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+        pioneer_entry=pioneer_entry,
+    )
+
+    # Model never included the URL → all attempts rejected → chain exhausts
+    # → returns [] (per v4.18 catastrophic-fallback removal).
+    assert content == []
+    # And the prompt-builder did include the required URL in the task:
+    assert required_url in attempts[0]
+
+
+@pytest.mark.asyncio
+async def test_pioneer_post_with_required_url_is_accepted(monkeypatch):
+    """Counter-test: same setup but the model includes the URL → accepted."""
+    required_url = "https://example.com/canonical-source"
+
+    def _model_includes_url(_api_key, _system_instr, _task, _model):
+        return (
+            '["A perfectly reasonable observation about the historical event '
+            'in question that lands on a statement and meets the minimum-length '
+            f'floor.\\n\\n{required_url}"]'
+        )
+
+    monkeypatch.setattr("src.agents._sync_generate", _model_includes_url)
+
+    pioneer_entry = {
+        "pool": "undated",
+        "entry": {
+            "id": "fake-pioneer",
+            "title": "A fake pioneer fact",
+            "detail": "Some detail.",
+            "link": required_url,
+        },
+    }
+
+    content, _ = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+        pioneer_entry=pioneer_entry,
+    )
+
+    assert len(content) == 1
+    assert required_url in content[0]
+
+
+@pytest.mark.asyncio
+async def test_pioneer_post_without_link_field_skips_url_check(monkeypatch):
+    """Entries without a `link` field are exempt — the validator only fires
+    when the entry actually has a URL. A post without a URL should pass."""
+
+    def _model_returns_plain_post(_api_key, _system_instr, _task, _model):
+        return '["A perfectly reasonable observation about the historical event in question that lands on a statement and meets the minimum-length floor."]'
+
+    monkeypatch.setattr("src.agents._sync_generate", _model_returns_plain_post)
+
+    pioneer_entry = {
+        "pool": "undated",
+        "entry": {
+            "id": "fake-pioneer-no-link",
+            "title": "A fact with no source URL",
+            "detail": "Some detail.",
+            # no "link" key
+        },
+    }
+
+    content, _ = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="mentor",
+        pioneer_entry=pioneer_entry,
+    )
+
+    assert len(content) == 1

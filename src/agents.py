@@ -265,22 +265,46 @@ def select_pioneer_topic(
 
 
 def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
-    """Render the pioneer prompt template using the chosen entry."""
+    """Render the pioneer prompt template using the chosen entry.
+
+    v4.19 (2026-05-12): when the entry has a link, the URL MUST appear in
+    the post text — quiet inline link at the end, no CTA-style framing
+    ("👇 Read more here"). Bluesky/Mastodon render bare URLs as clickable
+    inline AND trigger link-card previews; the bare-URL form gets both
+    layers of click affordance without a CTA fingerprint that would
+    clash with the bot's dry-advisor voice. See user_writing_style.md
+    voice anchors and 2026-05-12 design conversation.
+    """
     entry = pioneer["entry"]
     pool = pioneer["pool"]
     link = entry.get("link")
-    link_line = f"Link to include in the post: {link}\n" if link else ""
+    if link:
+        link_line = f"Link to include in the post: {link}\n"
+        link_directive = (
+            f"REQUIRED: include this exact URL on its own line at the end of the post: {link}\n"
+            "  Do NOT precede it with CTA framing like 'Read more here:', '👇', or 'Source:'. "
+            "Just the bare URL on its own line after the prose. The platforms render it as "
+            "clickable inline + link-card preview automatically.\n"
+        )
+    else:
+        link_line = ""
+        link_directive = (
+            "No URL is required for this entry — write the post as a complete observation, "
+            "no link-card teaser.\n"
+        )
     if pool == "dated":
         return PIONEER_PROMPT_DATED.format(
             title=entry["title"],
             year=entry["year"],
             detail=entry["detail"],
             link_line=link_line,
+            link_directive=link_directive,
         )
     return PIONEER_PROMPT_UNDATED.format(
         title=entry["title"],
         detail=entry["detail"],
         link_line=link_line,
+        link_directive=link_directive,
     )
 
 
@@ -778,6 +802,20 @@ async def generate_content(
 
                 post_validations = [validate_summary(post) for post in content_list]
                 if all(is_valid for is_valid, _ in post_validations):
+                    # v4.19 (2026-05-12): pioneer entries with a `link` must
+                    # have the URL present in the post text. The bot is
+                    # making a factual claim about tech history; readers
+                    # must be able to verify. ValueError here triggers the
+                    # existing retry path; if the model keeps omitting the
+                    # URL across the chain, the run skips cleanly (per the
+                    # v4.18 catastrophic-fallback removal) rather than
+                    # shipping an unverifiable claim.
+                    if pioneer_entry and pioneer_entry.get("entry", {}).get("link"):
+                        required_url = pioneer_entry["entry"]["link"]
+                        if not any(required_url in p for p in content_list):
+                            raise ValueError(
+                                f"pioneer post missing required URL: {required_url}"
+                            )
                     # v4.14: defensive voice trim — strip reader-bait questions,
                     # excess hashtags, and word-boundary-back-up on overflow.
                     content_list = _apply_voice_trim(content_list)
