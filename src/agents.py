@@ -289,8 +289,9 @@ def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
     else:
         link_line = ""
         link_directive = (
-            "No URL is required for this entry — write the post as a complete observation, "
-            "no link-card teaser.\n"
+            "No URL is required for this entry — write the post as a complete observation. "
+            "Do NOT invent or fabricate a URL. Do NOT add 'Source:' references or '(via …)' "
+            "attributions for sources we have not provided. The detail above is the post.\n"
         )
     if pool == "dated":
         return PIONEER_PROMPT_DATED.format(
