@@ -289,6 +289,8 @@ def record_post_metric(
             "likes": 0,
             "reposts": 0,
             "replies": 0,
+            "quotes": 0,       # v4.19: Bluesky exposes quoteCount; Mastodon has no analogue (left at 0)
+            "bookmarks": 0,    # v4.19: Bluesky exposes bookmarkCount; Mastodon has no analogue
             "fetched_at": None,
         },
     })
@@ -400,10 +402,15 @@ async def refresh_stale_metrics(
                     row = by_uri.get(uri)
                     if row is None:
                         continue
+                    # v4.19: capture quoteCount + bookmarkCount (Bluesky exposes
+                    # both; we'd been throwing them away). atproto SDK snake_cases
+                    # the camelCase fields → quote_count / bookmark_count.
                     row["metrics"] = {
                         "likes": int(getattr(entry, "like_count", 0) or 0),
                         "reposts": int(getattr(entry, "repost_count", 0) or 0),
                         "replies": int(getattr(entry, "reply_count", 0) or 0),
+                        "quotes": int(getattr(entry, "quote_count", 0) or 0),
+                        "bookmarks": int(getattr(entry, "bookmark_count", 0) or 0),
                         "fetched_at": fetched_iso,
                     }
                     counts["bluesky"] += 1
@@ -425,10 +432,17 @@ async def refresh_stale_metrics(
                 continue
             try:
                 status = await asyncio.to_thread(mastodon_client.status, status_id)
+                # v4.19: Mastodon has no quoteCount/bookmarkCount in the
+                # status API surface — leave those at the row's existing
+                # values (initialised to 0 by record_post_metric) so the
+                # schema shape is consistent across platforms.
+                existing = row.get("metrics", {})
                 row["metrics"] = {
                     "likes": int(status.get("favourites_count", 0) or 0),
                     "reposts": int(status.get("reblogs_count", 0) or 0),
                     "replies": int(status.get("replies_count", 0) or 0),
+                    "quotes": int(existing.get("quotes", 0) or 0),
+                    "bookmarks": int(existing.get("bookmarks", 0) or 0),
                     "fetched_at": fetched_iso,
                 }
                 counts["mastodon"] += 1

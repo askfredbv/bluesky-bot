@@ -45,6 +45,7 @@ def _save_cached_session(session_string: str) -> None:
             "bluesky_session_save_failed",
             "Failed to persist Bluesky session string to Gist",
             error_type=type(e).__name__,
+            error_msg=str(e)[:200],
         )
 
 
@@ -74,10 +75,17 @@ async def load_or_login(
             )
             return
         except Exception as e:
+            # v4.19 (2026-05-12): error_msg added per retro discipline. The
+            # session_stale event fires on basically every natural run with
+            # error_type=BadRequestError — the cache is decorative right now.
+            # Without the message body we cannot tell whether atproto is
+            # rejecting the access JWT (TTL ~2h), the refresh JWT, the session
+            # bundle format, or something else. Next run's error_msg surfaces it.
             SafeLogger.info(
                 "bluesky_session_stale",
                 "Cached Bluesky session invalid; falling back to password login",
                 error_type=type(e).__name__,
+                error_msg=str(e)[:200],
             )
 
     # Fresh password login
@@ -97,4 +105,5 @@ async def load_or_login(
             "bluesky_session_export_failed",
             "Could not export Bluesky session string; next run will re-authenticate",
             error_type=type(e).__name__,
+            error_msg=str(e)[:200],
         )

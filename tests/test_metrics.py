@@ -178,7 +178,16 @@ def test_record_post_metric_appends_row_with_zeroed_metrics():
     assert row["mode"] == "curator"
     assert row["thread_position"] == 0
     # Metrics sub-object starts at zero — Step 5's refresh fills it later.
-    assert row["metrics"] == {"likes": 0, "reposts": 0, "replies": 0, "fetched_at": None}
+    # v4.19: quotes + bookmarks added (Bluesky-exposed signals; Mastodon
+    # has no analogue so they stay at 0 there).
+    assert row["metrics"] == {
+        "likes": 0,
+        "reposts": 0,
+        "replies": 0,
+        "quotes": 0,
+        "bookmarks": 0,
+        "fetched_at": None,
+    }
 
 
 def test_record_post_metric_truncates_long_content_preview():
