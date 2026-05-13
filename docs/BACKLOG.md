@@ -58,6 +58,62 @@ If clean: cut v4.19.0 with release notes covering all 9 commits. If not clean: r
 
 ## §2 — Open issues (fix when convenient)
 
+### 🔥 Tomorrow's queue (2026-05-14)
+
+Three issues surfaced 2026-05-13 by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) is fixed end-to-end as of 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. These three items are the follow-on work to prevent recurrence and clean up adjacent debt.
+
+#### 1. Promote `gist_state_save_failed` from WARN to noisy / surfaced [the retro callback]
+
+The 2026-04-22 retro on Gist 404s explicitly said:
+> *"Silent state-persistence failures are a worse outcome than noisy ones. The warn-only path in `_save_gist_state` meant the bot ran for a week+ writing to `/tmp` with no one noticing. Phase 1's metrics capture should avoid repeating this pattern — surface `gist_state_save_failed` count in the weekly digest."*
+
+**The mitigation was never shipped.** The exact same anti-pattern recurred 2026-05-11 → 2026-05-13: PAT regenerated without Gists: Write scope → `_save_gist_state` started returning 403 on every call → silent fallback to ephemeral local-file writes → state vanished between runs → duplicate-source posts on 2026-05-12 and 2026-05-13. The user found it from the live feed, not from any alarm.
+
+Three options to ship, in order of cost/effort:
+
+- **(a) Promote the log level from WARN to ERROR** in `_save_gist_state`. One line. Doesn't change behaviour (the bot still falls back to local file and continues), but the Actions UI shows the step as having errors, surfacing it the same way `feed_health_record_failed` and `model_unavailable` surface today. Cheapest defensible mitigation.
+- **(b) Add an explicit "Gist write smoke test"** as a step in `daily_post.yml` that writes a tiny test value to the Gist and calls `raise_for_status()`. Fails the workflow loudly when writes are broken. Same shape as the existing snapshot step. ~10 min.
+- **(c) The original retro plan**: surface `gist_state_save_failed` count in the (still-data-gated) Phase 2 weekly digest. Useful but not urgent — won't catch the failure for up to 7 days.
+
+I'd ship (a) and (b) together. (c) follows from Phase 2 whenever that lands.
+
+#### 2. `bluesky_session_stale` — token revocation loop, not expiry [diagnosed 2026-05-13]
+
+The diagnostic shipped 2026-05-12 (`error_msg=str(e)[:200]` on the session_stale catch) surfaced the actual error on this validation run:
+
+```
+error_type: BadRequestError
+error_msg: Response(success=False, status_code=400,
+           content=XrpcError(error='ExpiredToken', message='Token has been revoked'), ...)
+```
+
+**Not expired — revoked.** Different from the natural ~2h access-JWT expiry the SDK auto-refreshes from the refresh JWT. Revocation means Bluesky's session-management explicitly invalidated the refresh JWT on the other side. Three hypotheses worth investigating in order:
+
+- **(a) The password-login itself revokes prior sessions.** Bluesky's app-password protocol may invalidate any other active sessions when a new login happens. If true, every cached-session-then-fallback-to-password cycle creates a self-defeating loop: load cached → revoked → password-login → caches new session BUT also revokes any other session including the one we just tried. Test: log every distinct session string we cache; check if the previously-cached one ever survives long enough to be loaded successfully.
+- **(b) Parallel manual logins** (user via web UI, or another automation) are revoking the bot's session.
+- **(c) Short-lived TTL on refresh JWTs** that the atproto SDK or Bluesky service handles differently than the documented 60-day window.
+
+Cost of current behaviour: ~1s extra per run (one extra password-login round-trip) + one extra session string written to the Gist each run. Minor, not blocking. But the cache exists *to* avoid that, and right now it's decorative.
+
+Investigation effort: ~30 min, mostly reading atproto SDK source + Bluesky's session-management docs.
+
+#### 3. `post_metrics_refreshed: errors=11` per run [observed 2026-05-13]
+
+Today's validation run showed `bluesky=2, mastodon=0, skipped=2, errors=11` on the metrics refresh pass. 11 individual rows failed to refresh against the platforms' read APIs. Likely causes:
+
+- **Stale post IDs in `post_metrics.json`** that the platforms have GC'd or that were never actually posted (the 2-day Gist-save outage may have left orphan rows for posts the broadcaster recorded but that never persisted on the wire — though unlikely since broadcast happens BEFORE record_post_metric).
+- **Mastodon-side 404s** for posts on a Mastodon instance that's GC'd them (free-tier instances sometimes prune).
+- **Bluesky URI format drift** from earlier SDK versions, where the recorded URI no longer resolves via current `get_posts`.
+
+The refresh path catches exceptions per row (we shipped that as part of Step 5's per-platform isolation), so individual failures don't break the pass. But 11 errors per run is noisy — and if the underlying rows are unfixable, we should prune them rather than retry forever.
+
+Effort: ~30–45 min. Steps:
+- Add `response_text` / `error_msg` diagnostic to the per-row failure loggers (same retro discipline — the current `post_metrics_bluesky_refresh_failed` warn captures error_type but not message)
+- Wait for one run to see the actual error messages
+- Decide per failure shape: prune row, mark stale, or fix retrieval
+
+---
+
 ### ~~Profile bios drift from what the bot actually does~~ [**resolved 2026-04-29**]
 
 Both bios manually pasted into the platform UIs. Config holds the canonical text in `APPROVED_BIO_BSKY` / `APPROVED_BIO_MASTODON` as reference for the next change. Voice now matches the bot's own posts: dry, statement-led, "house rules" line earns the dryness with a position rather than just enacting brevity.
