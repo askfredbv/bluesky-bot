@@ -62,7 +62,9 @@ If clean: cut v4.19.0 with release notes covering all 9 commits. If not clean: r
 
 Three issues surfaced 2026-05-13 by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) is fixed end-to-end as of 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. These three items are the follow-on work to prevent recurrence and clean up adjacent debt.
 
-#### 1. Promote `gist_state_save_failed` from WARN to noisy / surfaced [the retro callback]
+**Status (2026-05-14):** #1 and #3 shipped in `2be1148`. #2 still open.
+
+#### ~~1. Promote `gist_state_save_failed` from WARN to noisy / surfaced~~ [the retro callback] [**shipped 2026-05-14, `2be1148`**]
 
 The 2026-04-22 retro on Gist 404s explicitly said:
 > *"Silent state-persistence failures are a worse outcome than noisy ones. The warn-only path in `_save_gist_state` meant the bot ran for a week+ writing to `/tmp` with no one noticing. Phase 1's metrics capture should avoid repeating this pattern — surface `gist_state_save_failed` count in the weekly digest."*
@@ -75,7 +77,7 @@ Three options to ship, in order of cost/effort:
 - **(b) Add an explicit "Gist write smoke test"** as a step in `daily_post.yml` that writes a tiny test value to the Gist and calls `raise_for_status()`. Fails the workflow loudly when writes are broken. Same shape as the existing snapshot step. ~10 min.
 - **(c) The original retro plan**: surface `gist_state_save_failed` count in the (still-data-gated) Phase 2 weekly digest. Useful but not urgent — won't catch the failure for up to 7 days.
 
-I'd ship (a) and (b) together. (c) follows from Phase 2 whenever that lands.
+(a) and (b) shipped 2026-05-14 in `2be1148`. (c) still follows from Phase 2 whenever that lands.
 
 #### 2. `bluesky_session_stale` — token revocation loop, not expiry [diagnosed 2026-05-13]
 
@@ -97,7 +99,7 @@ Cost of current behaviour: ~1s extra per run (one extra password-login round-tri
 
 Investigation effort: ~30 min, mostly reading atproto SDK source + Bluesky's session-management docs.
 
-#### 3. `post_metrics_refreshed: errors=11` per run [observed 2026-05-13]
+#### ~~3. `post_metrics_refreshed: errors=11` per run~~ [observed 2026-05-13] [**shipped 2026-05-14, `2be1148`**]
 
 Today's validation run showed `bluesky=2, mastodon=0, skipped=2, errors=11` on the metrics refresh pass. 11 individual rows failed to refresh against the platforms' read APIs. Likely causes:
 
@@ -111,6 +113,8 @@ Effort: ~30–45 min. Steps:
 - Add `response_text` / `error_msg` diagnostic to the per-row failure loggers (same retro discipline — the current `post_metrics_bluesky_refresh_failed` warn captures error_type but not message)
 - Wait for one run to see the actual error messages
 - Decide per failure shape: prune row, mark stale, or fix retrieval
+
+**Shipped resolution (2026-05-14, `2be1148`):** Mastodon 404s are now treated as `orphaned=True` on the row (upstream deletion) rather than counted as errors. `should_refresh` skips orphaned rows so we don't re-poll forever. Detection is via exception type name or "404"/"Not Found" substring, so the implementation doesn't need to import Mastodon.py exception classes into utils. Non-404 errors still count as errors. Four tests in `tests/test_metrics.py` cover orphan-skip, 404→orphaned, non-404 counter, and end-to-end no-repoll. The Bluesky-side question (URI format drift) is not addressed by this change — if the 11 errors persist on next run after Mastodon orphans are filtered out, the remainder belongs to Bluesky and warrants its own diagnostic pass.
 
 ---
 
