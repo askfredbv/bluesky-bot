@@ -21,29 +21,11 @@ Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for
 
 **2026-05-08:** explicit commitment to Option 1 over Options 2 (representation) or 3 (craft). See `RETRO_2026-05-08.md` for the framing decision and `PLAN_engagement.md`'s GOAL CHANGE block for the phase re-ordering.
 
-### Shipped 2026-05-08 (awaiting production validation)
+### Shipped 2026-05-08 → v4.19.0
 
-Nine commits since v4.18.0, all on `main`, all hitting production at the next runs:
-
-- `8c99378` — `gemini-2.5-pro` promoted to primary model (+ `response_text` diagnostic on JSONDecodeError)
-- `45f27ce` — Follower-count snapshots per run (`growth.json` — the real Option 1 success metric) + docs realigned to Option 1
-- `2db0ec0` — Curator prompt: lead with the finding, not the source; explicit ban on "Notes on X" openers with BAD/GOOD examples
-- `8f1cae4` — Mentor topic pool 4 → 12 (mix of broad anchors + specific observation territories)
-- `2b762ff` — Retro doc `RETRO_2026-05-08.md` + pointers from BACKLOG / PLAN / project memory
-- `8eb934e` — README "How it works" sync (5 gaps closed)
-- `be7dbd9` — Ruff scan: 8 unused imports removed; 1 forward-ref documented
-- `27a1b1f` — Ruff CI integration (`ruff.toml` + lint step in `tests.yml`)
-
-### Tomorrow's validators
-
-| Run | What it confirms |
-|---|---|
-| 07:00 UTC Curator | (1) `gemini-2.5-pro` produces sharper output, (2) "Notes on X" pattern is gone, (3) `growth.json` populates cleanly |
-| 14:30 UTC Mentor | (1) model swap visible in output, (2) topic picked outside the original 4 (or one of the originals — both are valid), (3) prose is structurally different from the recent placeholder posts |
+Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated in production over the following days: `gemini-2.5-pro` as primary model, `growth.json` follower-count snapshots, Curator "lead with the finding" prompt rewrite, Mentor topic pool 4 → 12, ruff CI integration. See the 2026-05-11 release notes for the substantiating live-feed read.
 
 **Reading discipline (binding per retro):** pull the live feed via `app.bsky.feed.getAuthorFeed` and read the posts. Metrics are not a substitute for reading.
-
-If clean: cut v4.19.0 with release notes covering all 9 commits. If not clean: read the live feed, diagnose specifically, fix specifically.
 
 ### Next after validation
 
@@ -58,26 +40,17 @@ If clean: cut v4.19.0 with release notes covering all 9 commits. If not clean: r
 
 ## §2 — Open issues (fix when convenient)
 
-### 🔥 Tomorrow's queue (2026-05-14)
+### Duplicate-source-posts follow-ups (surfaced 2026-05-13)
 
-Three issues surfaced 2026-05-13 by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) is fixed end-to-end as of 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. These three items are the follow-on work to prevent recurrence and clean up adjacent debt.
-
-**Status (2026-05-14):** #1 and #3 shipped in `2be1148`. #2 still open.
+Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. #1 and #3 shipped 2026-05-14 in `2be1148`; **#2 still open**.
 
 #### ~~1. Promote `gist_state_save_failed` from WARN to noisy / surfaced~~ [the retro callback] [**shipped 2026-05-14, `2be1148`**]
 
-The 2026-04-22 retro on Gist 404s explicitly said:
-> *"Silent state-persistence failures are a worse outcome than noisy ones. The warn-only path in `_save_gist_state` meant the bot ran for a week+ writing to `/tmp` with no one noticing. Phase 1's metrics capture should avoid repeating this pattern — surface `gist_state_save_failed` count in the weekly digest."*
+The 2026-04-22 retro flagged that silent state-persistence failures degrade duplicate-detection for days. The mitigation was never shipped, and the exact anti-pattern recurred 2026-05-11 → 2026-05-13: PAT regenerated without `Gists: write` → `_save_gist_state` returned 403 silently → state vanished between runs → duplicate-source posts on consecutive days. Found from the live feed, not from any alarm.
 
-**The mitigation was never shipped.** The exact same anti-pattern recurred 2026-05-11 → 2026-05-13: PAT regenerated without Gists: Write scope → `_save_gist_state` started returning 403 on every call → silent fallback to ephemeral local-file writes → state vanished between runs → duplicate-source posts on 2026-05-12 and 2026-05-13. The user found it from the live feed, not from any alarm.
+Shipped: log level promoted WARN → ERROR in `_save_gist_state` (surfaces in Actions UI same as `feed_health_record_failed`), and a new "Gist write smoke test" step in `daily_post.yml` does a real PATCH round-trip with `raise_for_status()` — fails the workflow loudly before the broadcast attempt if the PAT loses Gists:Write again. The original retro plan of surfacing `gist_state_save_failed` count in a weekly digest still follows from Phase 2 whenever that lands.
 
-Three options to ship, in order of cost/effort:
-
-- **(a) Promote the log level from WARN to ERROR** in `_save_gist_state`. One line. Doesn't change behaviour (the bot still falls back to local file and continues), but the Actions UI shows the step as having errors, surfacing it the same way `feed_health_record_failed` and `model_unavailable` surface today. Cheapest defensible mitigation.
-- **(b) Add an explicit "Gist write smoke test"** as a step in `daily_post.yml` that writes a tiny test value to the Gist and calls `raise_for_status()`. Fails the workflow loudly when writes are broken. Same shape as the existing snapshot step. ~10 min.
-- **(c) The original retro plan**: surface `gist_state_save_failed` count in the (still-data-gated) Phase 2 weekly digest. Useful but not urgent — won't catch the failure for up to 7 days.
-
-(a) and (b) shipped 2026-05-14 in `2be1148`. (c) still follows from Phase 2 whenever that lands.
+**Lesson worth keeping:** the same silent-degradation pattern recurred 3 weeks after the retro that documented it. Writing the retro is not the same as shipping the mitigation.
 
 #### 2. `bluesky_session_stale` — token revocation loop, not expiry [diagnosed 2026-05-13]
 
@@ -101,20 +74,11 @@ Investigation effort: ~30 min, mostly reading atproto SDK source + Bluesky's ses
 
 #### ~~3. `post_metrics_refreshed: errors=11` per run~~ [observed 2026-05-13] [**shipped 2026-05-14, `2be1148`**]
 
-Today's validation run showed `bluesky=2, mastodon=0, skipped=2, errors=11` on the metrics refresh pass. 11 individual rows failed to refresh against the platforms' read APIs. Likely causes:
+Validation run showed `bluesky=2, mastodon=0, skipped=2, errors=11` on the metrics refresh pass. 11 rows failing per run was noisy and — if the rows were genuinely unfixable — should prune rather than retry forever.
 
-- **Stale post IDs in `post_metrics.json`** that the platforms have GC'd or that were never actually posted (the 2-day Gist-save outage may have left orphan rows for posts the broadcaster recorded but that never persisted on the wire — though unlikely since broadcast happens BEFORE record_post_metric).
-- **Mastodon-side 404s** for posts on a Mastodon instance that's GC'd them (free-tier instances sometimes prune).
-- **Bluesky URI format drift** from earlier SDK versions, where the recorded URI no longer resolves via current `get_posts`.
+Shipped: Mastodon 404s now mark the row `orphaned=True` (upstream deletion) instead of counting as errors. `should_refresh` skips orphaned rows so the loop terminates. Detection uses exception type name or "404"/"Not Found" substring to avoid importing Mastodon.py classes into the metrics layer. Non-404 errors still count as errors. Four tests cover orphan-skip, 404→orphaned, non-404 counter, and no-repoll.
 
-The refresh path catches exceptions per row (we shipped that as part of Step 5's per-platform isolation), so individual failures don't break the pass. But 11 errors per run is noisy — and if the underlying rows are unfixable, we should prune them rather than retry forever.
-
-Effort: ~30–45 min. Steps:
-- Add `response_text` / `error_msg` diagnostic to the per-row failure loggers (same retro discipline — the current `post_metrics_bluesky_refresh_failed` warn captures error_type but not message)
-- Wait for one run to see the actual error messages
-- Decide per failure shape: prune row, mark stale, or fix retrieval
-
-**Shipped resolution (2026-05-14, `2be1148`):** Mastodon 404s are now treated as `orphaned=True` on the row (upstream deletion) rather than counted as errors. `should_refresh` skips orphaned rows so we don't re-poll forever. Detection is via exception type name or "404"/"Not Found" substring, so the implementation doesn't need to import Mastodon.py exception classes into utils. Non-404 errors still count as errors. Four tests in `tests/test_metrics.py` cover orphan-skip, 404→orphaned, non-404 counter, and end-to-end no-repoll. The Bluesky-side question (URI format drift) is not addressed by this change — if the 11 errors persist on next run after Mastodon orphans are filtered out, the remainder belongs to Bluesky and warrants its own diagnostic pass.
+**Open follow-up:** the Bluesky-side hypothesis (URI format drift from older SDK versions) isn't addressed here. If `errors` stays >0 on next run after Mastodon 404s are filtered out, the remainder belongs to Bluesky and warrants its own diagnostic pass.
 
 ---
 
