@@ -160,7 +160,15 @@ def _save_gist_state(filename: str, data: Any) -> bool:
         resp.raise_for_status()
         return True
     except Exception as e:
-        SafeLogger.warn(
+        # v4.19 (2026-05-13): promoted WARN → ERROR per the 2026-04-22 retro
+        # callback. Silent state-persistence failures are worse than noisy ones.
+        # The bot continues (returns False, caller falls back to local file),
+        # but the run's log now shows ERROR-level events surfaced in the
+        # GitHub Actions UI — same visibility as broadcast_invariant_violated
+        # and content_generation_exhausted. The retro's other mitigation
+        # ("surface count in weekly digest") still applies once Phase 2 lands;
+        # this is the cheap defensible interim.
+        SafeLogger.error(
             "gist_state_save_failed",
             "Gist state save failed",
             error_type=type(e).__name__,

@@ -484,7 +484,7 @@ async def test_refresh_skips_rows_not_due():
     """No refresh-due rows → no API calls, no errors."""
     pm = {"posts": [_row(posted_at_ago_hours=1, post_id="too-fresh")]}
     counts = await metrics.refresh_stale_metrics(pm, bsky_client=None, mastodon_client=None, now=NOW)
-    assert counts == {"bluesky": 0, "mastodon": 0, "skipped": 1, "errors": 0}
+    assert counts == {"bluesky": 0, "mastodon": 0, "skipped": 1, "errors": 0, "orphaned": 0}
 
 
 @pytest.mark.asyncio
@@ -583,6 +583,90 @@ async def test_refresh_does_not_let_one_platform_fail_block_the_other():
     assert counts["bluesky"] == 0
     assert counts["mastodon"] == 1
     assert counts["errors"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# v4.19 orphan-on-404 (2026-05-13)
+# ---------------------------------------------------------------------------
+
+def test_should_refresh_skips_orphaned_rows():
+    """v4.19: rows marked orphaned=True are never refreshed again."""
+    orphan = _row(posted_at_ago_hours=24, post_id="dead-status")
+    orphan["orphaned"] = True
+    assert metrics.should_refresh(orphan, NOW) is False
+
+
+@pytest.mark.asyncio
+async def test_mastodon_404_marks_row_orphaned_not_error():
+    """Status 404 on Mastodon refresh → row.orphaned=True, counts.orphaned
+    increments, counts.errors does NOT. Next refresh skips the row."""
+    pm = {"posts": [
+        _row(posted_at_ago_hours=24, post_id="dead-1", platform="mastodon"),
+        _row(posted_at_ago_hours=24, post_id="dead-2", platform="mastodon"),
+    ]}
+
+    class FakeMastodonNotFoundError(Exception):
+        pass
+    FakeMastodonNotFoundError.__name__ = "MastodonNotFoundError"
+
+    class FakeMasto:
+        def status(self, status_id):
+            raise FakeMastodonNotFoundError(
+                ("Mastodon API returned error", 404, "Not Found", "Not Found")
+            )
+
+    counts = await metrics.refresh_stale_metrics(
+        pm, bsky_client=None, mastodon_client=FakeMasto(), now=NOW
+    )
+
+    assert counts["orphaned"] == 2
+    assert counts["errors"] == 0
+    assert counts["mastodon"] == 0
+    # Both rows should now carry the orphaned marker
+    assert all(row.get("orphaned") is True for row in pm["posts"])
+
+
+@pytest.mark.asyncio
+async def test_mastodon_non_404_error_still_counts_as_error():
+    """Counter-test: a non-404 Mastodon error (e.g. rate limit) must still
+    count as an error and NOT orphan the row — orphaning is reserved for
+    genuinely-gone posts."""
+    pm = {"posts": [_row(posted_at_ago_hours=24, post_id="rate-limited", platform="mastodon")]}
+
+    class FakeMasto:
+        def status(self, status_id):
+            raise RuntimeError("Mastodon API returned error 429 Too Many Requests")
+
+    counts = await metrics.refresh_stale_metrics(
+        pm, bsky_client=None, mastodon_client=FakeMasto(), now=NOW
+    )
+
+    assert counts["orphaned"] == 0
+    assert counts["errors"] == 1
+    assert pm["posts"][0].get("orphaned") is not True
+
+
+@pytest.mark.asyncio
+async def test_orphaned_row_not_polled_on_next_refresh():
+    """End-to-end: once a row is orphaned, subsequent refresh passes
+    don't even call the Mastodon API for it (it's filtered out in
+    should_refresh before the per-row try-block runs)."""
+    pm = {"posts": [_row(posted_at_ago_hours=24, post_id="dead-1", platform="mastodon")]}
+    pm["posts"][0]["orphaned"] = True
+
+    status_calls = []
+
+    class FakeMasto:
+        def status(self, status_id):
+            status_calls.append(status_id)
+            return {"favourites_count": 1, "reblogs_count": 0, "replies_count": 0}
+
+    counts = await metrics.refresh_stale_metrics(
+        pm, bsky_client=None, mastodon_client=FakeMasto(), now=NOW
+    )
+
+    assert status_calls == []  # API never hit
+    assert counts["skipped"] == 1
 
 
 # ---------------------------------------------------------------------------

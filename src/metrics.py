@@ -322,7 +322,16 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
 
 
 def should_refresh(post_row: Dict[str, Any], now: datetime) -> bool:
-    """Pure decision: does this row need a metrics refresh on this run?"""
+    """Pure decision: does this row need a metrics refresh on this run?
+
+    v4.19 (2026-05-13): rows marked ``orphaned=True`` are skipped — the
+    platform has confirmed the underlying post is gone (HTTP 404 on a
+    previous refresh). Re-fetching would just rack up API errors every
+    run. The row stays in post_metrics.json for analysis (the at-broadcast
+    metadata is still useful); it just stops being polled.
+    """
+    if post_row.get("orphaned"):
+        return False
     posted_at = _parse_iso(post_row.get("posted_at"))
     if posted_at is None:
         return False
@@ -376,7 +385,7 @@ async def refresh_stale_metrics(
     cannot block the Mastodon refresh and vice versa.
     """
     posts = post_metrics.get("posts", [])
-    counts = {"bluesky": 0, "mastodon": 0, "skipped": 0, "errors": 0}
+    counts = {"bluesky": 0, "mastodon": 0, "skipped": 0, "errors": 0, "orphaned": 0}
 
     bsky_due: List[Dict[str, Any]] = []
     mastodon_due: List[Dict[str, Any]] = []
@@ -447,14 +456,37 @@ async def refresh_stale_metrics(
                 }
                 counts["mastodon"] += 1
             except Exception as e:
-                counts["errors"] += 1
-                SafeLogger.warn(
-                    "post_metrics_mastodon_refresh_failed",
-                    "Mastodon metrics refresh raised",
-                    error_type=type(e).__name__,
-                    error_msg=str(e)[:200],
-                    status_id=status_id,
+                # v4.19 (2026-05-13): detect 404 specifically and mark the
+                # row orphaned so should_refresh skips it on future runs.
+                # MastodonNotFoundError is the typed exception; we also
+                # fall through to a stringly-typed check in case the SDK
+                # changes the error type. Logging level stays warn here
+                # because the row is still queryable; the per-row failure
+                # isn't itself a workflow-failing event.
+                msg = str(e)
+                is_404 = (
+                    type(e).__name__ == "MastodonNotFoundError"
+                    or "404" in msg
+                    or "Not Found" in msg
                 )
+                if is_404:
+                    row["orphaned"] = True
+                    counts["orphaned"] += 1
+                    SafeLogger.info(
+                        "post_metrics_row_orphaned",
+                        "Mastodon status not found; marking row orphaned (will skip future refreshes)",
+                        status_id=status_id,
+                        platform="mastodon",
+                    )
+                else:
+                    counts["errors"] += 1
+                    SafeLogger.warn(
+                        "post_metrics_mastodon_refresh_failed",
+                        "Mastodon metrics refresh raised",
+                        error_type=type(e).__name__,
+                        error_msg=msg[:200],
+                        status_id=status_id,
+                    )
 
     return counts
 

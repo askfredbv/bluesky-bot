@@ -31,6 +31,56 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 2026-05-13: belt-and-suspenders to the WARN→ERROR promotion in
+      # src/utils.py. The bot itself catches Gist write failures and falls
+      # back to local-file writes (which are ephemeral on the runner), so
+      # without this step a failed PAT scope can silently degrade state
+      # persistence for days. This step does a real round-trip write to a
+      # dedicated smoke-test file in the Gist, and `raise_for_status` fails
+      # the workflow loudly when the PAT loses Gists:Write permission. Same
+      # category of explicit check as the existing "Snapshot Gist state"
+      # step (which does a READ round-trip).
+      - name: Gist write smoke test
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: |
+          python - <<'PY'
+          import datetime, json, os, sys, httpx
+          gist_id = os.environ.get("GIST_ID", "").strip()
+          token = os.environ.get("GIST_TOKEN", "").strip()
+          if not gist_id or not token:
+              print("GIST_ID or GIST_TOKEN missing — skipping smoke test")
+              sys.exit(0)
+          payload = {
+              "files": {
+                  "smoke_test.json": {
+                      "content": json.dumps(
+                          {
+                              "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                              "run_id": os.environ.get("GITHUB_RUN_ID", "unknown"),
+                              "purpose": "Gist write smoke test — proves PAT has Gists:Write permission",
+                          },
+                          indent=2,
+                      )
+                  }
+              }
+          }
+          resp = httpx.patch(
+              f"https://api.github.com/gists/{gist_id}",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+              json=payload,
+              timeout=15,
+          )
+          resp.raise_for_status()
+          print(f"Gist write smoke test ok — status {resp.status_code}")
+          PY
+
       - name: Run daily post
         env:
           # Required
