@@ -12,7 +12,8 @@ and the new session is written back to the Gist.
 """
 
 from typing import Optional
-from atproto import AsyncClient
+from atproto import AsyncClient, SessionEvent
+from atproto_client.client.session import Session
 from src.logger import SafeLogger
 
 
@@ -55,15 +56,50 @@ async def load_or_login(
     """Authenticate the client, preferring a cached session over a fresh login.
 
     Flow:
-      1. Load cached session string from Gist.
-      2. If present, attempt session-string login — fast and credential-free.
-      3. If absent or stale (any exception), fall through to password login.
-      4. After a successful password login, export and cache the new session.
+      1. Register an ``on_session_change`` callback so the cache stays current
+         across both initial CREATE (after password login) and any mid-run
+         REFRESH (when atproto auto-rotates the JWT pair).
+      2. Load cached session string from Gist.
+      3. If present, attempt session-string login — fast and credential-free.
+      4. If absent or stale (any exception), fall through to password login.
 
     The caller does not need to distinguish between the two paths — the
     client is authenticated either way on return, or an exception propagates
     (letting the caller decide whether to skip Bluesky for this run).
+
+    v4.20.1 (2026-05-15) — fixes the ``bluesky_session_stale`` revocation
+    loop. Root cause: atproto auto-rotates the JWT pair during the run when
+    the access JWT nears expiry; each rotation invalidates the previous
+    refresh_jwt server-side. Pre-v4.20.1 we only exported once after
+    password login, so the cached pair went stale *during* the run.
+    Next run loaded the now-revoked refresh token → "Token has been revoked".
+    Fix: persist on CREATE *and* REFRESH via the SDK's documented hook.
     """
+
+    @client.on_session_change
+    async def _persist_session(event: SessionEvent, session: Session) -> None:
+        # Persist on CREATE (after password login) and REFRESH (mid-run
+        # JWT rotation). Skip IMPORT — that fires when we hand the SDK
+        # the cached string, and rewriting the same value would just
+        # noise the Gist patch history.
+        if event in (SessionEvent.CREATE, SessionEvent.REFRESH):
+            try:
+                _save_cached_session(session.export())
+                SafeLogger.info(
+                    "bluesky_session_persisted",
+                    "Bluesky session persisted to Gist",
+                    session_event=event.value,
+                )
+            except Exception as e:
+                # Non-fatal — the run continues; next session-change retries
+                SafeLogger.warn(
+                    "bluesky_session_persist_failed",
+                    "Could not persist Bluesky session on session-change event",
+                    session_event=event.value,
+                    error_type=type(e).__name__,
+                    error_msg=str(e)[:200],
+                )
+
     cached = _load_cached_session()
 
     if cached:
@@ -75,12 +111,6 @@ async def load_or_login(
             )
             return
         except Exception as e:
-            # v4.19 (2026-05-12): error_msg added per retro discipline. The
-            # session_stale event fires on basically every natural run with
-            # error_type=BadRequestError — the cache is decorative right now.
-            # Without the message body we cannot tell whether atproto is
-            # rejecting the access JWT (TTL ~2h), the refresh JWT, the session
-            # bundle format, or something else. Next run's error_msg surfaces it.
             SafeLogger.info(
                 "bluesky_session_stale",
                 "Cached Bluesky session invalid; falling back to password login",
@@ -88,22 +118,6 @@ async def load_or_login(
                 error_msg=str(e)[:200],
             )
 
-    # Fresh password login
+    # Fresh password login — the CREATE event from the callback above
+    # will persist the new session.
     await client.login(username, password)
-
-    # Cache the new session for the next run
-    try:
-        session_string = client.export_session_string()
-        _save_cached_session(session_string)
-        SafeLogger.info(
-            "bluesky_session_cached",
-            "New Bluesky session cached for reuse",
-        )
-    except Exception as e:
-        # Non-fatal — the run continues without caching
-        SafeLogger.warn(
-            "bluesky_session_export_failed",
-            "Could not export Bluesky session string; next run will re-authenticate",
-            error_type=type(e).__name__,
-            error_msg=str(e)[:200],
-        )

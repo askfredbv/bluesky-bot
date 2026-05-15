@@ -25,6 +25,7 @@ async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
     creds = SimpleNamespace(bluesky_username="u", bluesky_password="p")
 
     class FakeClient:
+        def on_session_change(self, cb): return cb
         async def login(self, username, password):
             return None
 

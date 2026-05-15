@@ -24,6 +24,7 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
     )
 
     class FailingAsyncClient:
+        def on_session_change(self, cb): return cb
         async def login(self, username, password):
             raise RuntimeError("login failed")
 
@@ -88,6 +89,7 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_err
     )
 
     class FailingAsyncClient:
+        def on_session_change(self, cb): return cb
         async def login(self, username, password):
             raise ValueError("bad credentials")
 
@@ -135,6 +137,7 @@ async def test_curator_switches_to_strategist_when_feed_volume_is_low(monkeypatc
     creds = SimpleNamespace(bluesky_username="bsky-user", bluesky_password="bsky-pass")
 
     class FakeAsyncClient:
+        def on_session_change(self, cb): return cb
         async def login(self, username, password):
             return None
 
