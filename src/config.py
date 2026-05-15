@@ -109,6 +109,18 @@ SOURCE_TIERS: Dict[str, int] = {
     "microsoft.com": 7,
     "vkrakovna.wordpress.com": 7,
     "theregister.com": 7,  # software/headlines.atom gets 7; main headlines.atom scores lower naturally
+    # v4.20 (2026-05-15) broad-IT diet expansion — bio promises "AI and tech"
+    # but the feed mix was 100% AI. These four cover kernel/systems (LWN),
+    # security incidents (Krebs), curated programmer community (Lobsters —
+    # Linux/SQL/languages/systems), and broad-IT firehose (HN best). Tier
+    # values: LWN is high-signal single-source quality in its niche (9);
+    # Krebs is the same shape (8); Lobsters is curated submitters with
+    # higher signal density than HN (8); HN best is community-filtered but
+    # higher volume and lower density (6).
+    "lwn.net": 9,
+    "krebsonsecurity.com": 8,
+    "lobste.rs": 8,
+    "hnrss.org": 6,
 }
 
 PRODUCT_KEYWORDS: List[str] = ["launch", "integrated", "available", "feature", "release", "app", "tool", "partnership"]
@@ -224,6 +236,18 @@ RSS_FEEDS = [
     "https://vkrakovna.wordpress.com/feed/",
     "https://www.theregister.com/software/headlines.atom",
     "https://www.theregister.com/headlines.atom",
+    # v4.20 (2026-05-15) broad-IT diet expansion — the original 25 feeds
+    # were all AI-tagged, which structurally forced the Curator to specialise
+    # in AI-methodology meta-content. These four feeds cover the territories
+    # the bio promises but the diet didn't deliver: systems/kernel (LWN),
+    # security incidents (Krebs), curated programmer community (Lobsters),
+    # and broad-IT firehose (HN best). The existing consensus_synergy bonus
+    # surfaces stories with cross-feed coverage naturally — no scoring or
+    # prompt changes needed.
+    "https://lwn.net/headlines/rss",
+    "https://krebsonsecurity.com/feed/",
+    "https://lobste.rs/rss",
+    "https://hnrss.org/best",
 ]
 
 # Mentor mode topic pool (was 4 hardcoded entries inline in agents.py until
@@ -238,10 +262,14 @@ RSS_FEEDS = [
 # so with 12 topics each comes around roughly every 2-3 weeks. Goal: kill
 # the "same Mentor topic two days running" pattern observed pre-v4.16.
 MENTOR_TOPICS: List[str] = [
-    "Career",
-    "Automation",
-    "Work-Life Balance",
-    "Learning",
+    # v4.20 (2026-05-15) — the original 12 included four broad anchors
+    # ("Career", "Automation", "Work-Life Balance", "Learning") that, in
+    # production, produced four work-life-balance variants and three
+    # estimation variants out of 9 Mentor posts in the 2026-04-26 → 2026-05-15
+    # window. The broad words evoke soft territory; the specific seeds below
+    # consistently produce the sharper output. Replaced the four broad
+    # anchors with four more IT-flavoured observation territories. Keep the
+    # 8 originally-specific seeds; the picker stays at 12 entries.
     "the gap between giving advice and being responsible for outcomes",
     "tools you keep using vs tools you keep abandoning",
     "what gets faster with experience and what doesn't",
@@ -250,6 +278,10 @@ MENTOR_TOPICS: List[str] = [
     "estimating your own time vs estimating someone else's",
     "the half-life of a clever workaround",
     "draft revision vs writing from a blank page",
+    "code review dynamics — what changes when the reviewer is more senior than the author",
+    "the half-life of internal documentation",
+    "migrations — what makes them succeed besides 'doing them'",
+    "the difference between a decision that looks technical and one that is",
 ]
 
 SECONDARY_TOPICS = [
@@ -280,7 +312,7 @@ SECONDARY_TOPICS = [
 # only — Curator (news mode) is unaffected.
 
 PIONEER_DIMENSION_ENABLED: bool = True
-PIONEER_FALLBACK_PROBABILITY: float = 0.20  # ~3 posts/week on the afternoon run
+PIONEER_FALLBACK_PROBABILITY: float = 0.35  # v4.20: 0.20 → 0.35. 7 afternoon slots × 0.35 ≈ 2.5 undated firings/week, plus dated anniversaries. The Pioneer dimension consistently produces the most distinctive posts in the feed (Lynn Conway, PARIS); user asked to bias toward more of it.
 PIONEER_COOLDOWN_DAYS: int = 30             # don't repeat the same fact within this window
 
 PIONEER_EVENTS_DATED: List[Dict[str, object]] = [
