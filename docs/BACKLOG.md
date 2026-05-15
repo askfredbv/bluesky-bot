@@ -1,6 +1,6 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping fine at v4.19.0 — the model chain (gemini-2.5-pro primary, gemini-2.5-flash fallback) is producing genuinely sharp Frederik-voice content for the first time since the project started; see the 2026-05-11 release notes for the substantiating evidence. Nothing below is urgent.
+Living list of pending work and parked ideas. Bot is shipping at v4.20.0 — the model chain (gemini-2.5-pro primary, gemini-2.5-flash fallback) is producing genuinely sharp Frederik-voice content, and the 2026-05-15 batch broadened the RSS diet beyond AI-only, sharpened the Mentor topic pool, and dialled Pioneer to 0.35. Nothing below is urgent.
 
 > **Before working on this project, read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md).** Six weeks of infrastructure landed on top of a hardcoded fallback that was shipping placeholder posts to production the whole time. The retro names the pattern (metrics-as-substitute-for-reading) and the corrective (open the live feed first). Don't repeat it.
 
