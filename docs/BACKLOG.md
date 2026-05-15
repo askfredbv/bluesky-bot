@@ -42,7 +42,7 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ### Duplicate-source-posts follow-ups (surfaced 2026-05-13)
 
-Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. #1 and #3 shipped 2026-05-14 in `2be1148`; **#2 still open**.
+Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. **All three shipped:** #1 and #3 in `2be1148` (2026-05-14), #2 in `76f1287` (2026-05-15).
 
 #### ~~1. Promote `gist_state_save_failed` from WARN to noisy / surfaced~~ [the retro callback] [**shipped 2026-05-14, `2be1148`**]
 
@@ -52,25 +52,15 @@ Shipped: log level promoted WARN → ERROR in `_save_gist_state` (surfaces in Ac
 
 **Lesson worth keeping:** the same silent-degradation pattern recurred 3 weeks after the retro that documented it. Writing the retro is not the same as shipping the mitigation.
 
-#### 2. `bluesky_session_stale` — token revocation loop, not expiry [diagnosed 2026-05-13]
+#### ~~2. `bluesky_session_stale` — token revocation loop, not expiry~~ [diagnosed 2026-05-13] [**shipped 2026-05-15, `76f1287`**]
 
-The diagnostic shipped 2026-05-12 (`error_msg=str(e)[:200]` on the session_stale catch) surfaced the actual error on this validation run:
+The diagnostic shipped 2026-05-12 (`error_msg=str(e)[:200]` on the session_stale catch) surfaced: `error_type=BadRequestError`, `error_msg=Response(..., content=XrpcError(error='ExpiredToken', message='Token has been revoked'), ...)`.
 
-```
-error_type: BadRequestError
-error_msg: Response(success=False, status_code=400,
-           content=XrpcError(error='ExpiredToken', message='Token has been revoked'), ...)
-```
+Three hypotheses were on the table (password-login revokes prior, parallel manual logins, short refresh-JWT TTL). The real cause was none of them: **atproto's HTTP layer auto-rotates the JWT pair during the run** when the access token nears expiry. Each rotation invalidates the previous refresh_jwt server-side. Pre-fix, we only called `export_session_string()` once after password login — so the cache went stale *during* the run, and next run loaded the now-revoked refresh token. Not server-side revocation; **self-inflicted** by the bot's own normal API calls.
 
-**Not expired — revoked.** Different from the natural ~2h access-JWT expiry the SDK auto-refreshes from the refresh JWT. Revocation means Bluesky's session-management explicitly invalidated the refresh JWT on the other side. Three hypotheses worth investigating in order:
+The atproto SDK has `Client.on_session_change` exactly for this, with the docstring tip: *"save the session string to persistent storage on SessionEvent.CREATE and SessionEvent.REFRESH event."* Pre-fix we handled CREATE (via the manual export after login) but not REFRESH. Now both fire through the same callback path; IMPORT is intentionally skipped (rewriting the same value would just noise the Gist patch history).
 
-- **(a) The password-login itself revokes prior sessions.** Bluesky's app-password protocol may invalidate any other active sessions when a new login happens. If true, every cached-session-then-fallback-to-password cycle creates a self-defeating loop: load cached → revoked → password-login → caches new session BUT also revokes any other session including the one we just tried. Test: log every distinct session string we cache; check if the previously-cached one ever survives long enough to be loaded successfully.
-- **(b) Parallel manual logins** (user via web UI, or another automation) are revoking the bot's session.
-- **(c) Short-lived TTL on refresh JWTs** that the atproto SDK or Bluesky service handles differently than the documented 60-day window.
-
-Cost of current behaviour: ~1s extra per run (one extra password-login round-trip) + one extra session string written to the Gist each run. Minor, not blocking. But the cache exists *to* avoid that, and right now it's decorative.
-
-Investigation effort: ~30 min, mostly reading atproto SDK source + Bluesky's session-management docs.
+**Lesson worth keeping:** "revoked" in the error message was a red herring. From Bluesky's perspective, the previous JWT pair *was* revoked — but by the bot itself, via the SDK's normal refresh cycle. Three hypotheses on the table were all about external causes; the actual cause was the bot's own API traffic. The diagnostic message correctly named the symptom; reading the SDK source named the cause.
 
 #### ~~3. `post_metrics_refreshed: errors=11` per run~~ [observed 2026-05-13] [**shipped 2026-05-14, `2be1148`**]
 
