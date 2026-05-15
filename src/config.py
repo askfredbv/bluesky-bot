@@ -416,6 +416,33 @@ PIONEER_FACTS_UNDATED: List[Dict[str, object]] = [
      "title": "curl has had one maintainer for 25 years",
      "detail": "Daniel Stenberg started it in 1996. It runs in cars, satellites, every operating system. He still does most reviews himself. He keeps a list of every device he knows curl ships in — last count: more than 20 billion installs."},
 
+    # ── El Reg lore (5) ──────────────────────────────────────────────────────
+    # v4.20 (2026-05-15) — entries in The Register's register: dry-but-warm,
+    # structurally witty, never mean, rooted in genuine affection for the
+    # absurdity of computing. Pioneer is the bounded channel for this voice
+    # (readers learn "this is the distinctive post"); the rest of the feed
+    # stays consistently dry per the bio.
+    {"id": "bofh-still-shipping", "category": "lore",
+     "title": "BOFH has been running since 1992",
+     "detail": "Simon Travaglia's Bastard Operator From Hell started on Usenet, moved to The Register in 2000, still posts new instalments. Thirty-plus years of one sysadmin's increasingly elaborate revenge against management, users, and physics. Almost every IT in-joke about cattle prods, lift shafts, and SAN failures traces back here.",
+     "link": "https://www.theregister.com/data_centre/bofh/"},
+    {"id": "rfc-1149-avian-carriers", "category": "lore",
+     "title": "RFC 1149: IP over avian carriers",
+     "detail": "April 1990 standards document specifying how to route IP packets via pigeon. The IETF took it seriously enough to assign it a number. In 2001 a group of Norwegian Linux users actually implemented it — nine packets sent, four lost, 3kb of data delivered, packet loss tolerated.",
+     "link": "https://datatracker.ietf.org/doc/html/rfc1149"},
+    {"id": "rfc-2324-htcpcp", "category": "lore",
+     "title": "RFC 2324: the coffee pot protocol",
+     "detail": "April 1998. Hyper Text Coffee Pot Control Protocol. Defines HTTP methods BREW, GET-COFFEE, and POST-COFFEE. Adds the immortal status code 418 'I'm a teapot'. Still implemented by tea-aware web servers and at least one Google Easter egg.",
+     "link": "https://datatracker.ietf.org/doc/html/rfc2324"},
+    {"id": "knuth-hex-bounty", "category": "lore",
+     "title": "Knuth pays for bugs in hexadecimal dollars",
+     "detail": "Every bug reported in TeX or in the typeset volumes of The Art of Computer Programming earns the finder a cheque from Donald Knuth — for $2.56. Hexadecimal dollars, as he calls it. Most recipients frame the cheque rather than cash it.",
+     "link_required": False},
+    {"id": "lp0-on-fire", "category": "lore",
+     "title": "'lp0 on fire' is a real Linux error",
+     "detail": "The kernel printer driver inherited the message from Unix, which inherited it from a 1970s era when chain printers genuinely could ignite if jammed. The error path is still in drivers/char/lp.c. It almost never fires now, but every Linux box ships ready to report a printer fire.",
+     "link_required": False},
+
     # ── Forgotten heroes (12) ────────────────────────────────────────────────
     {"id": "bechtolsheim-google-cheque", "category": "hero",
      "title": "Bechtolsheim wrote a cheque to a company that didn't exist",
