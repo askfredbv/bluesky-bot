@@ -284,6 +284,24 @@ MENTOR_TOPICS: List[str] = [
     "the difference between a decision that looks technical and one that is",
 ]
 
+# ── Phase 4b — Proactive replies (scaffolding only, no behaviour yet) ────────
+# v4.21 (2026-05-15) — first commit lands config + state schema only. The
+# scan/generate/approve flow lands in subsequent commits. Nothing in the
+# daily run reads these constants yet, so changing them is risk-free.
+#
+# Watchlist sourced from the Phase 4a audit (docs/WATCHLIST_AUDIT.md, gitignored)
+# which scored both candidates at voice=100 and reply_opportunity ≥58.
+
+PROACTIVE_REPLY_WATCHLIST: List[str] = [
+    "simonwillison.net",
+    "xeiaso.net",
+]
+PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS: int = 7   # max one draft per handle per 7 days
+PROACTIVE_REPLY_MAX_PARENT_AGE_HOURS: int = 12      # parent post must be < this old
+PROACTIVE_REPLY_MIN_PARENT_ENGAGEMENT: int = 1      # parent must have ≥1 reply/repost (alive)
+PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS: int = 24        # drafts older than this auto-rejected as 'expired'
+PROACTIVE_REPLY_MAX_CHARS: int = 200                # tighter than post limit — replies are conversational
+
 SECONDARY_TOPICS = [
     "mental health and burnout prevention",
     "open-source culture and community",
