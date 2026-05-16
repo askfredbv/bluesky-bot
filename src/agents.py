@@ -19,6 +19,9 @@ from src.config import (
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
     PIONEER_PROMPT_DATED, PIONEER_PROMPT_UNDATED,
+    BANNED_OPENERS,
+    PROACTIVE_REPLY_MAX_CHARS,
+    PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS, PROACTIVE_REPLY_FEW_SHOT_EXAMPLES,
 )
 from src.utils import prune_pioneer_recent, update_replied_to
 from src.logger import SafeLogger
@@ -217,6 +220,166 @@ def _apply_voice_trim(content_list: List[str]) -> List[str]:
             )
         trimmed.append(post)
     return trimmed
+
+
+# ── Phase 4b proactive reply validation + generation (v4.21) ─────────────────
+# Used by src/proactive.py's scan loop (lands in commit 3). Nothing in the
+# daily Curator/Mentor pipeline calls these yet — pure scaffolding.
+
+_PROACTIVE_REPLY_MIN_CHARS: int = 30  # under this it's not info-add territory
+
+
+def _is_skip_response(text: str) -> bool:
+    """Detect the SKIP escape-hatch literal in the model's response.
+
+    Strict: the entire response, stripped of whitespace and trailing
+    punctuation, must equal "SKIP" case-insensitive. Does NOT treat
+    "I'll skip this one because…" as SKIP — that's the model commenting
+    on a skip rather than signalling one, and the right response is to
+    fail validation and retry (or exhaust).
+
+    Empty / whitespace-only responses are also treated as SKIP: the
+    model gave us nothing usable.
+    """
+    if not text:
+        return True
+    stripped = text.strip().rstrip('.!?,;:').strip()
+    return stripped.upper() == "SKIP"
+
+
+def _validate_proactive_reply(text: str) -> Tuple[bool, str]:
+    """Strict voice + length validation for proactive replies.
+
+    Stricter than ``validate_summary`` for posts because replies are
+    conversational and shorter — hype/teasers/reader-bait in a reply
+    are more grating than in a broadcast.
+    """
+    if not text:
+        return False, "Empty reply"
+    text = text.strip()
+    if len(text) < _PROACTIVE_REPLY_MIN_CHARS:
+        return False, f"Reply too short (< {_PROACTIVE_REPLY_MIN_CHARS} chars) to add information"
+    if len(text) > PROACTIVE_REPLY_MAX_CHARS:
+        return False, f"Reply exceeds {PROACTIVE_REPLY_MAX_CHARS} chars"
+    if re.search(r'(.)\1{4,}', text):
+        return False, "Detected repetitive pattern/gibberish"
+    lower = text.lower()
+    hype_hits = [w for w in BANNED_HYPE_WORDS if w in lower]
+    if hype_hits:
+        return False, f"Contains banned hype word(s): {hype_hits}"
+    for opener in BANNED_OPENERS:
+        if lower.startswith(opener.lower()):
+            return False, f"Starts with banned opener: {opener}"
+    if _ends_with_reader_bait_question(text):
+        return False, "Ends with reader-bait question"
+    if _ends_with_teaser(text):
+        return False, "Ends with teaser pattern"
+    return True, "OK"
+
+
+async def generate_proactive_reply(
+    api_key: str,
+    parent_author: str,
+    parent_text: str,
+    model_priority: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Generate a reply to a watched account's post, or None.
+
+    Contract:
+      - Returns a non-empty string when the model produces a draft that
+        passes every voice validator.
+      - Returns ``None`` when the model returns the literal ``SKIP``
+        (its escape hatch for "I have nothing substantive to add"),
+        when validation fails on every attempt across the model chain,
+        or when the whole model chain exhausts without success.
+
+    Caller (``src/proactive.py``'s scan loop) treats ``None`` as "no
+    draft staged for this candidate this scan" — the common case under
+    a strict info-add bar, not an error.
+
+    Uses the same model fallback chain as ``generate_content`` so
+    proactive replies inherit the production-validated quality
+    properties of Curator/Mentor posts.
+    """
+    system_instr = PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS
+    task = (
+        f"{PROACTIVE_REPLY_FEW_SHOT_EXAMPLES}\n\n"
+        "---\n\n"
+        f"Parent: @{parent_author}: {parent_text}\n"
+        "Reply:"
+    )
+
+    for model in (model_priority or GEMINI_MODEL_PRIORITY):
+        for attempt in range(2):
+            response_text = ""
+            try:
+                response_text = await asyncio.to_thread(
+                    _sync_generate, api_key, system_instr, task, model
+                )
+                response_text = (response_text or "").strip()
+
+                if _is_skip_response(response_text):
+                    SafeLogger.info(
+                        "proactive_reply_skip",
+                        "Model returned SKIP — no draft for this candidate",
+                        model=model,
+                        parent_author=parent_author,
+                    )
+                    return None
+
+                # Strip common artifacts the model sometimes adds despite the
+                # prompt: surrounding quotes, a "Reply:" prefix echoed from the
+                # few-shot block. Cheap defensive cleanup before validation.
+                candidate = response_text.strip().strip('"').strip("'").strip()
+                if candidate.lower().startswith("reply:"):
+                    candidate = candidate[len("reply:"):].strip()
+
+                ok, reason = _validate_proactive_reply(candidate)
+                if ok:
+                    SafeLogger.info(
+                        "proactive_reply_generated",
+                        "Proactive reply draft generated successfully",
+                        model=model,
+                        parent_author=parent_author,
+                        length=len(candidate),
+                    )
+                    return candidate
+
+                raise ValueError(reason)
+
+            except ValueError as e:
+                # Validation error — retry on same model.
+                SafeLogger.warn(
+                    "proactive_reply_validation_failed",
+                    "Proactive reply failed voice/length validation",
+                    model=model,
+                    attempt=attempt + 1,
+                    parent_author=parent_author,
+                    error_msg=str(e)[:200],
+                    response_text=response_text[:300] if response_text else "",
+                )
+                if attempt < 1:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+
+            except Exception as exc:
+                # API-level error — skip to next model.
+                SafeLogger.warn(
+                    "proactive_reply_model_failed",
+                    "Proactive reply model call failed",
+                    model=model,
+                    parent_author=parent_author,
+                    error_type=type(exc).__name__,
+                    error_msg=str(exc)[:200],
+                )
+                break  # next model
+
+    SafeLogger.info(
+        "proactive_reply_exhausted",
+        "Proactive reply model chain exhausted with no valid draft",
+        parent_author=parent_author,
+    )
+    return None
+
 
 # ── Pioneer dimension (v4.15) ────────────────────────────────────────────────
 
