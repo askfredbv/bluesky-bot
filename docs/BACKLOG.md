@@ -29,10 +29,11 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ### Next after validation
 
-1. **Phase 4b — proactive replies** (~4h, multi-session arc). The only audience-acquisition lever in the plan. Watchlist exists from Phase 4a. No real gates left.
-2. **Bluesky session cache fix** (~30 min). Minor; cached session string rejected on next run.
-3. **Reach data spike** (~15 min). Does Bluesky API expose impressions?
-4. **Custom-feed outreach** (user action, async, ~1h). Identify 3–5 relevant AI/tech Bluesky custom feeds; ask curators to include `@askfred.be`.
+1. **Phase 4b — proactive replies** [**in flight, 1/6 commits landed 2026-05-15 in `0d04426`**]. The only audience-acquisition lever in the plan. Watchlist exists from Phase 4a (two handles: `simonwillison.net`, `xeiaso.net`). Multi-session arc — one commit per session is the working rhythm. Commit 1 (config + state schema + I/O helpers + 12 tests) shipped; daily run is unchanged. **Next commit:** `generate_proactive_reply` in `src/agents.py` — the interesting design work is the SKIP-literal contract and few-shot examples anchoring the info-add rule. See `PLAN_engagement.md §4b` for the file-by-file map.
+2. **Custom-feed outreach** (user action, async, ~1h). Identify 3–5 relevant AI/tech Bluesky custom feeds; ask curators to include `@askfred.be`.
+
+~~Bluesky session cache fix~~ shipped 2026-05-15 in v4.20.1 (`76f1287`) — cache actually works now, was decorative before due to missed REFRESH events.
+~~Reach data spike~~ shipped 2026-05-12 in v4.19 (`48333a9`) — Bluesky exposes `quoteCount` and `bookmarkCount`, not impressions; both now captured in `post_metrics.json`.
 
 **Phase 2 (weekly digest) and Phase 3 (scoring multipliers)** remain data-gated and lower priority under Option 1. Building them before 4b ships is the trap the retro documented.
 
