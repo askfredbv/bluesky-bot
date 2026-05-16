@@ -336,6 +336,8 @@ Output: ranked markdown table + sample-post appendix so the scores can be eyebal
 
 Top 2–3 handles from 4a, hard-coded as `PROACTIVE_REPLY_WATCHLIST` in config. Daily scan picks **at most one** reply candidate. **Bot does not post the reply** — writes a draft to new Gist file `pending_replies.json`. Human approves/rejects via manual `workflow_dispatch`.
 
+**Structural separation (load-bearing kill-switch — 2026-05-15):** the proactive pipeline lives in its own module (`src/proactive.py`), its own workflows (`proactive_scan.yml` + `approve_pending_reply.yml`), and its own state file (`pending_replies.json`). **Never tangle the daily Curator/Mentor path with it.** No imports from `main.py` into `src/proactive.py`. No shared state between `seen_articles.json` and `pending_replies.json`. No code path where disabling Phase 4b breaks the daily post. This is the kill-switch guarantee — if the feature turns out to be tone-deaf or off-brand, disable the workflows in the Actions UI and the bot returns to its pre-4b behaviour with zero risk to the Curator/Mentor pipeline. Each future commit on 4b must preserve this property; if a wiring change would require importing `proactive` into the daily flow, that's a design smell and the answer is to refactor the shared piece into `src/utils.py` instead.
+
 **Files:**
 - `src/config.py` — `PROACTIVE_REPLY_WATCHLIST`, `PROACTIVE_REPLY_PROMPT`
 - `src/agents.py` — `generate_proactive_reply(parent_text, parent_author, context)` using same Gemini fallback chain
