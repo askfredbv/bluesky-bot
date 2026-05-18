@@ -3,13 +3,13 @@
 
 # Core runtime dependencies
 python-dotenv>=1.0,<2
-requests>=2.32,<3
+requests>=2.34.2,<3
 beautifulsoup4>=4.12,<5
 Pillow>=12,<13
 
 # Critical integrations
 atproto>=0.0.61,<0.1
-google-genai>=1.74.0,<2
+google-genai>=2.4.0,<3
 Mastodon.py>=2.2,<3
 httpx>=0.28,<0.29
 feedparser>=6.0.11,<7
