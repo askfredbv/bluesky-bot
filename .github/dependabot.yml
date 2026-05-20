@@ -12,6 +12,13 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-patch"]
+      # google-genai 2.x parked per BACKLOG §3 (2026-05-15) — no
+      # forcing function until one of three named triggers fires
+      # (1.x SDK bug, CVE, or a planned feature needing 2.x-only
+      # capability). PR #46 was closed for this reason on 2026-05-18.
+      # Belt-and-suspenders with the `<2` ceiling in requirements.in.
+      - dependency-name: "google-genai"
+        update-types: ["version-update:semver-major"]
     # Bundle minor/major bumps into a single weekly PR so we regenerate
     # requirements.txt once per week, not once per dependency.
     groups:
