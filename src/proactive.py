@@ -430,3 +430,186 @@ def stage_draft_reply(
         draft_length=len(draft_reply),
     )
     return draft
+
+
+# ── Approve + reject ────────────────────────────────────────────────────────
+
+def find_draft_in_pending(
+    draft_id: str,
+    state: Dict[str, List[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Find a pending draft by ID, or oldest if ``draft_id == 'first'``.
+
+    The ``first`` sentinel is the workflow input default — the
+    common case is "approve whatever's at the top of the queue."
+    Returns ``None`` when no match.
+    """
+    pending = state.get("pending", [])
+    if not pending:
+        return None
+    if draft_id == "first":
+        return min(pending, key=lambda d: d.get("generated_at", ""))
+    for draft in pending:
+        if draft.get("id") == draft_id:
+            return draft
+    return None
+
+
+def _move_to_rejected(
+    draft: Dict[str, Any],
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+    reason: str,
+) -> Dict[str, Any]:
+    """Move a draft from pending → rejected. Returns the rejected entry.
+
+    Defensive: if the draft has already been removed from pending, we
+    still record it in rejected so the bookkeeping reflects intent.
+    """
+    rejected_entry = dict(draft)
+    rejected_entry["rejected_at"] = now.isoformat()
+    rejected_entry["rejected_reason"] = reason
+    try:
+        state.get("pending", []).remove(draft)
+    except ValueError:
+        pass
+    state.setdefault("rejected", []).append(rejected_entry)
+    SafeLogger.info(
+        "proactive_draft_rejected",
+        "Draft moved to rejected bucket",
+        draft_id=draft.get("id", "?"),
+        rejected_reason=reason,
+    )
+    return rejected_entry
+
+
+def reject_draft(
+    draft_id: str,
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+    reason: str = "manual",
+) -> Optional[Dict[str, Any]]:
+    """Reject a pending draft, returning the rejected entry or None."""
+    draft = find_draft_in_pending(draft_id, state)
+    if draft is None:
+        SafeLogger.error(
+            "proactive_reject_draft_not_found",
+            "No matching pending draft to reject",
+            draft_id=draft_id,
+        )
+        return None
+    return _move_to_rejected(draft, state, now, reason)
+
+
+async def approve_draft(
+    draft_id: str,
+    bsky_client: Any,
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> Optional[Dict[str, Any]]:
+    """Approve a pending draft: re-fetch parent, post reply, move to posted.
+
+    Returns the posted entry on success, ``None`` on any failure.
+    Failures auto-move the draft to ``rejected`` with a descriptive
+    reason — the user sees what happened in the next state snapshot
+    rather than having to dig through logs.
+
+    Defensive design (per PLAN_engagement.md §4b):
+      - Re-fetches the parent post via ``get_posts`` before sending.
+        Aborts on 404 (parent deleted between scan and approval) or
+        any fetch failure.
+      - Uses the fresh ``cid`` from the re-fetch, not the staged
+        candidate's. Parent edits invalidate the original cid; using
+        stale cid → API error or wrong-thread reply.
+      - Top-level parents only (filter rule), so ``root == parent`` in
+        the reply ref.
+    """
+    draft = find_draft_in_pending(draft_id, state)
+    if draft is None:
+        SafeLogger.error(
+            "proactive_approve_draft_not_found",
+            "No matching pending draft to approve",
+            draft_id=draft_id,
+        )
+        return None
+
+    parent_uri = draft.get("parent_post_uri", "")
+    try:
+        response = await bsky_client.app.bsky.feed.get_posts(
+            {"uris": [parent_uri]}
+        )
+    except Exception as e:
+        reason = f"parent_refetch_failed: {type(e).__name__}: {str(e)[:100]}"
+        SafeLogger.error(
+            "proactive_approve_refetch_failed",
+            "Could not re-fetch parent post; rejecting draft",
+            draft_id=draft_id,
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        _move_to_rejected(draft, state, now, reason)
+        return None
+
+    posts = getattr(response, "posts", None) or []
+    if not posts:
+        SafeLogger.error(
+            "proactive_approve_parent_gone",
+            "Parent post no longer exists; rejecting draft",
+            draft_id=draft_id,
+            parent_post_uri=parent_uri,
+        )
+        _move_to_rejected(draft, state, now, "parent_gone")
+        return None
+
+    parent_view = posts[0]
+    parent_cid = getattr(parent_view, "cid", None)
+    fresh_parent_uri = getattr(parent_view, "uri", parent_uri)
+    if not parent_cid:
+        SafeLogger.error(
+            "proactive_approve_no_cid",
+            "Re-fetched parent has no cid; rejecting draft",
+            draft_id=draft_id,
+        )
+        _move_to_rejected(draft, state, now, "parent_no_cid")
+        return None
+
+    reply_ref = {
+        "parent": {"cid": parent_cid, "uri": fresh_parent_uri},
+        "root":   {"cid": parent_cid, "uri": fresh_parent_uri},
+    }
+
+    try:
+        posted = await bsky_client.send_post(
+            text=draft["draft_reply"],
+            reply_to=reply_ref,
+        )
+    except Exception as e:
+        reason = f"post_failed: {type(e).__name__}: {str(e)[:100]}"
+        SafeLogger.error(
+            "proactive_approve_post_failed",
+            "Bluesky send_post failed; rejecting draft",
+            draft_id=draft_id,
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        _move_to_rejected(draft, state, now, reason)
+        return None
+
+    posted_uri = getattr(posted, "uri", "")
+    try:
+        state.get("pending", []).remove(draft)
+    except ValueError:
+        pass
+    posted_entry = dict(draft)
+    posted_entry["posted_at"] = now.isoformat()
+    posted_entry["posted_uri"] = posted_uri
+    state.setdefault("posted", []).append(posted_entry)
+
+    SafeLogger.info(
+        "proactive_approve_succeeded",
+        "Draft posted to Bluesky as reply",
+        draft_id=draft_id,
+        parent_author=draft.get("parent_author", ""),
+        posted_uri=posted_uri,
+    )
+    return posted_entry

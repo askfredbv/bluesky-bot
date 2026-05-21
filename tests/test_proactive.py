@@ -3,8 +3,7 @@
   - Commit 1: state schema + load/save helpers in ``src/proactive.py``
   - Commit 2: ``generate_proactive_reply`` + voice validator in ``src/agents.py``
   - Commit 3: scan / filter / pick / stage in ``src/proactive.py``
-
-Approve / reject flow lands in commit 4.
+  - Commit 5: approve / reject / find_draft_in_pending in ``src/proactive.py``
 """
 
 from datetime import datetime, timedelta, timezone
@@ -872,3 +871,237 @@ def test_stage_preserves_existing_pending_drafts():
 
     assert len(state["pending"]) == 2
     assert state["pending"][0] is existing
+
+
+# ===========================================================================
+# Commit 5 — find / reject / approve
+# ===========================================================================
+
+def _draft(*, draft_id="abc", author="simonwillison.net", uri="at://parent/x",
+           text="A parent post.", reply="A draft reply.", generated_hours_ago=2):
+    """Build a pending-draft dict for approval-flow tests."""
+    return {
+        "id": draft_id,
+        "platform": "bluesky",
+        "parent_author": author,
+        "parent_post_uri": uri,
+        "parent_text": text,
+        "draft_reply": reply,
+        "generated_at": (_NOW - timedelta(hours=generated_hours_ago)).isoformat(),
+        "expires_at": (_NOW + timedelta(hours=20)).isoformat(),
+    }
+
+
+class _FakeReplyClient:
+    """Bluesky client stub for approve_draft tests.
+
+    Mirrors the two SDK call points: ``client.app.bsky.feed.get_posts({"uris": [...]})``
+    returning ``SimpleNamespace(posts=[...])``, and ``client.send_post(text=..., reply_to=...)``.
+    Both can be configured to raise via constructor flags.
+    """
+
+    def __init__(self, *,
+                 fetched_posts=None,
+                 fetch_raises=False,
+                 post_raises=False,
+                 posted_uri="at://did:plc:askfred/app.bsky.feed.post/newreply"):
+        self._fetched_posts = fetched_posts if fetched_posts is not None else []
+        self._fetch_raises = fetch_raises
+        self._post_raises = post_raises
+        self._posted_uri = posted_uri
+        self.fetch_calls: list[dict] = []
+        self.send_calls: list[dict] = []
+        # Mirror SDK shape: client.app.bsky.feed.get_posts
+        self.app = SimpleNamespace(bsky=SimpleNamespace(feed=self))
+
+    async def get_posts(self, params):
+        self.fetch_calls.append(params)
+        if self._fetch_raises:
+            raise RuntimeError("fetch boom")
+        return SimpleNamespace(posts=self._fetched_posts)
+
+    async def send_post(self, *, text, reply_to):
+        self.send_calls.append({"text": text, "reply_to": reply_to})
+        if self._post_raises:
+            raise RuntimeError("post boom")
+        return SimpleNamespace(uri=self._posted_uri, cid="newcid")
+
+
+def _fake_parent_view(uri="at://parent/x", cid="fresh-cid-123"):
+    return SimpleNamespace(uri=uri, cid=cid)
+
+
+# ---------------------------------------------------------------------------
+# find_draft_in_pending
+# ---------------------------------------------------------------------------
+
+def test_find_returns_match_by_id():
+    state = {"pending": [_draft(draft_id="a"), _draft(draft_id="b")], "posted": [], "rejected": []}
+    found = proactive.find_draft_in_pending("b", state)
+    assert found is state["pending"][1]
+
+
+def test_find_returns_none_when_id_not_present():
+    state = {"pending": [_draft(draft_id="a")], "posted": [], "rejected": []}
+    assert proactive.find_draft_in_pending("not-there", state) is None
+
+
+def test_find_first_returns_oldest_by_generated_at():
+    """'first' sentinel should select the oldest pending draft."""
+    old = _draft(draft_id="old", generated_hours_ago=10)
+    new = _draft(draft_id="new", generated_hours_ago=2)
+    state = {"pending": [new, old], "posted": [], "rejected": []}
+    found = proactive.find_draft_in_pending("first", state)
+    assert found is old
+
+
+def test_find_first_returns_none_when_pending_empty():
+    state = proactive._empty_state()
+    assert proactive.find_draft_in_pending("first", state) is None
+
+
+# ---------------------------------------------------------------------------
+# reject_draft
+# ---------------------------------------------------------------------------
+
+def test_reject_moves_draft_to_rejected_with_reason():
+    draft = _draft(draft_id="abc")
+    state = {"pending": [draft], "posted": [], "rejected": []}
+
+    result = proactive.reject_draft("abc", state, _NOW, reason="off_voice")
+
+    assert result is not None
+    assert state["pending"] == []
+    assert len(state["rejected"]) == 1
+    assert state["rejected"][0]["rejected_reason"] == "off_voice"
+    assert state["rejected"][0]["id"] == "abc"
+    assert state["rejected"][0]["rejected_at"] == _NOW.isoformat()
+
+
+def test_reject_defaults_reason_to_manual():
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    proactive.reject_draft("abc", state, _NOW)
+    assert state["rejected"][0]["rejected_reason"] == "manual"
+
+
+def test_reject_unknown_id_returns_none_and_no_mutation():
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    result = proactive.reject_draft("not-there", state, _NOW)
+    assert result is None
+    assert len(state["pending"]) == 1
+    assert state["rejected"] == []
+
+
+# ---------------------------------------------------------------------------
+# approve_draft — happy path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_approve_happy_path_posts_and_moves_to_posted():
+    """Re-fetch succeeds, send_post succeeds → move to posted with posted_uri."""
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is not None
+    assert state["pending"] == []
+    assert len(state["posted"]) == 1
+    assert state["posted"][0]["posted_at"] == _NOW.isoformat()
+    assert state["posted"][0]["posted_uri"] == "at://did:plc:askfred/app.bsky.feed.post/newreply"
+    # send_post called with the draft text + correct reply_ref shape
+    assert len(client.send_calls) == 1
+    assert client.send_calls[0]["text"] == "A draft reply."
+    assert client.send_calls[0]["reply_to"]["parent"]["cid"] == "fresh-cid-123"
+    # Top-level parent → root == parent
+    assert client.send_calls[0]["reply_to"]["root"] == client.send_calls[0]["reply_to"]["parent"]
+
+
+@pytest.mark.asyncio
+async def test_approve_uses_fresh_cid_not_staged_one():
+    """Defensive: the cid we send must come from the refetch, not the staged candidate.
+
+    The staged candidate doesn't carry a cid (only uri); confirms we
+    don't accidentally trust stale data even if the schema grew one.
+    """
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view(cid="brand-new")])
+
+    await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert client.send_calls[0]["reply_to"]["parent"]["cid"] == "brand-new"
+
+
+# ---------------------------------------------------------------------------
+# approve_draft — failure paths
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_approve_unknown_id_returns_none_no_network():
+    """Draft id not in pending → None, no API calls, no state mutation."""
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft("not-there", client, state, _NOW)
+
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
+    assert len(state["pending"]) == 1  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_approve_parent_gone_rejects_with_reason():
+    """get_posts returns empty list (parent deleted) → reject with 'parent_gone'."""
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[])  # parent gone
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is None
+    assert state["pending"] == []
+    assert len(state["rejected"]) == 1
+    assert state["rejected"][0]["rejected_reason"] == "parent_gone"
+    assert client.send_calls == []  # no post attempt
+
+
+@pytest.mark.asyncio
+async def test_approve_refetch_raises_rejects_with_descriptive_reason():
+    """Re-fetch raises → reject with reason starting 'parent_refetch_failed:'."""
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetch_raises=True)
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is None
+    assert state["pending"] == []
+    assert state["rejected"][0]["rejected_reason"].startswith("parent_refetch_failed:")
+    assert "RuntimeError" in state["rejected"][0]["rejected_reason"]
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_send_post_raises_rejects_with_descriptive_reason():
+    """send_post raises → reject with reason starting 'post_failed:'."""
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()], post_raises=True)
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is None
+    assert state["pending"] == []
+    assert state["rejected"][0]["rejected_reason"].startswith("post_failed:")
+    assert "RuntimeError" in state["rejected"][0]["rejected_reason"]
+
+
+@pytest.mark.asyncio
+async def test_approve_parent_no_cid_rejects():
+    """Re-fetched parent missing cid (shouldn't happen, but defensive) → reject."""
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    parent = SimpleNamespace(uri="at://parent/x", cid=None)
+    client = _FakeReplyClient(fetched_posts=[parent])
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is None
+    assert state["rejected"][0]["rejected_reason"] == "parent_no_cid"
