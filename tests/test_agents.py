@@ -390,6 +390,66 @@ def test_curator_prompt_makes_first_person_the_default():
     assert "FIRST PERSON IS THE DEFAULT" in p
 
 
+# ---------------------------------------------------------------------------
+# Voice anchor (2026-05-21) — STYLE_GUIDELINES + structural moves
+# ---------------------------------------------------------------------------
+# Verifies the voice-anchor commit's design-intent phrases survive future
+# edits. STYLE_GUIDELINES is injected into Curator / Mentor / Pioneer /
+# Strategist prompts via f-string interpolation, so changes here affect
+# every post the bot writes — these tests are the tripwire if someone
+# accidentally drops a register or move from the canon.
+
+
+def test_style_guidelines_contains_both_voice_registers():
+    """Strategic-advisory + casual-narrative both named explicitly."""
+    from src.config import STYLE_GUIDELINES
+    assert "REGISTER A" in STYLE_GUIDELINES
+    assert "REGISTER B" in STYLE_GUIDELINES
+    assert "STRATEGIC ADVISORY" in STYLE_GUIDELINES
+    assert "CASUAL NARRATIVE" in STYLE_GUIDELINES
+
+
+def test_style_guidelines_contains_anchor_quotes_from_real_posts():
+    """Verbatim quotes from askfred.be (advisory) + frederikvanhecke.com (casual)."""
+    from src.config import STYLE_GUIDELINES
+    s = STYLE_GUIDELINES
+    # Advisory register (askfred.be)
+    assert "The tool rarely fails. Adoption fails." in s
+    assert "If your position exists only in your head, theirs will be on paper." in s
+    # Casual register (frederikvanhecke.com)
+    assert "That's it. I've had it with gravity." in s
+
+
+def test_style_guidelines_names_structural_moves():
+    """The 4 named patterns get explicit framing so the model has handles."""
+    from src.config import STYLE_GUIDELINES
+    s = STYLE_GUIDELINES
+    assert "STRUCTURAL MOVES TO IMITATE" in s
+    assert "KICKER SENTENCE" in s
+    assert "CONCESSION-THEN-PIVOT" in s
+    assert "FALSE-DICHOTOMY-THEN-THIRD-POSITION" in s
+    assert "INVERTED-LIST PIVOT" in s
+
+
+def test_style_guidelines_contractions_rule_is_register_dependent():
+    """The old 'no contractions' rule was wrong — it's register-dependent."""
+    from src.config import STYLE_GUIDELINES
+    s = STYLE_GUIDELINES
+    assert "CONTRACTIONS" in s
+    # The fix specifically: avoid in advisory, fine in casual
+    assert "avoid contractions" in s.lower()
+    assert "contractions are fine" in s.lower()
+
+
+def test_curator_good_examples_are_labelled_with_structural_moves():
+    """Each Curator GOOD example names which structural move it uses."""
+    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
+    p = SYSTEM_INSTRUCTIONS_CURATOR
+    # The labels were added 2026-05-21 so the model picks moves deliberately
+    assert "GOOD 1 (HOOK" in p
+    assert "KICKER SENTENCE" in p   # at least one example labelled with it
+
+
 @pytest.mark.asyncio
 async def test_generate_post_image_returns_bytes_on_success(monkeypatch):
     """generate_post_image returns raw bytes when _sync_generate_image succeeds."""
