@@ -339,7 +339,7 @@ async def test_generate_content_injects_language_directive(monkeypatch):
     await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
 
     assert "LANGUAGE:" in captured["prompt"]
-    assert any(lang in captured["prompt"] for lang in ["English", "Dutch"])
+    assert "English" in captured["prompt"]
 
 
 @pytest.mark.asyncio

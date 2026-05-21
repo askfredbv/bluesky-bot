@@ -38,7 +38,12 @@ DEFAULT_THREAD_PAUSE_PROFILE: str = "normal"
 HASHTAG_OPTIONAL_MIN_CHARS: int = 110
 MIN_THREAD_POSTS: int = 1
 MAX_THREAD_POSTS: int = 5
-LANGUAGE_OPTIONS: List[str] = ["English", "Dutch"]
+# v4.21 (2026-05-21): Dutch removed. 7 of 25 recent posts shipped in
+# Dutch — random selection, no audience strategy. Watchlist (simonw,
+# xeiaso) is English; tech Bluesky is English-dominant even for Belgian
+# devs. The "I'm Belgian" signal is in the bio already; doesn't need
+# to live in every other post at the cost of halved reach.
+LANGUAGE_OPTIONS: List[str] = ["English"]
 MENTION_SANITIZE_MAX_CHARS: int = 500
 FEED_SUMMARY_MAX_CHARS: int = 500
 
