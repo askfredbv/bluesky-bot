@@ -139,7 +139,7 @@ The main levers are all in `src/config.py`:
 - **`SOURCE_TIERS`** — adjust per-domain relevance weights
 - **`SECONDARY_TOPICS`** — the topic pool for Mentor and Strategist modes
 - **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
-- **`LANGUAGE_OPTIONS`** — list of languages the model picks from per run (default `["English"]`; Dutch removed in v4.21 — no audience benefit at the cost of halved reach)
+- **`LANGUAGE_OPTIONS`** — list of languages the model picks from per run (default `["English"]`; Dutch removed 2026-05-21 — no audience benefit at the cost of halved reach)
 - **`IMAGEN_MODEL`** — Imagen model for post images (default `imagen-3.0-generate-002`)
 - **`IMAGE_GENERATION_PROBABILITY`** — probability of generating an image for Mentor/Strategist runs (default `0.5`)
 - **`MENTION_SANITIZE_MAX_CHARS`** / **`FEED_SUMMARY_MAX_CHARS`** — character caps for mention input and RSS feed summaries (both default 500)

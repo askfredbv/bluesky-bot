@@ -1,6 +1,6 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping at v4.20.1 — the model chain (gemini-2.5-pro primary, gemini-2.5-flash fallback) is producing genuinely sharp Frederik-voice content, the 2026-05-15 batch broadened the RSS diet beyond AI-only, sharpened the Mentor topic pool, and dialled Pioneer to 0.35, and the v4.20.1 patch fixed the bluesky_session_stale revocation loop. Nothing below is urgent.
+Living list of pending work and parked ideas. Bot is shipping at v4.20.1. The v4.20 line broadened the RSS diet (LWN/Krebs/Lobsters/HN), sharpened the Mentor pool, dialled Pioneer to 0.35, and fixed the `bluesky_session_stale` revocation loop. The 2026-05-21 content batch — diagnosed from an honest read of 25 live posts that showed competent-generic output against 26 followers and zero engagement — shipped three content-quality moves (Dutch dropped, Curator rewritten to demand a take, two-register voice anchor). Phase 4b is 5/6 commits in flight (workflows ship dormant; production activation requires manual user steps). Nothing below is urgent.
 
 > **Before working on this project, read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md).** Six weeks of infrastructure landed on top of a hardcoded fallback that was shipping placeholder posts to production the whole time. The retro names the pattern (metrics-as-substitute-for-reading) and the corrective (open the live feed first). Don't repeat it.
 
