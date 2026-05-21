@@ -559,8 +559,18 @@ PIONEER_PROMPT_UNDATED: str = (
 # Used by agents.generate_proactive_reply. The system instructions name the
 # voice rules and the SKIP escape-hatch; the few-shot examples anchor the
 # "must add information the parent doesn't already have" rule with concrete
-# good-reply and SKIP cases. Both Anchored to the two seeded watchlist
+# good-reply and SKIP cases. Both anchored to the two seeded watchlist
 # accounts (simonwillison.net, xeiaso.net) so the model sees realistic shapes.
+#
+# 2026-05-21 — prompt tuning after smoke-test failure. The first draft
+# staged (against an xeiaso.net shitpost about a fictional CVE) hallucinated
+# specific CVE details that were factually wrong. Two failures observed:
+# (1) the model didn't recognise a shitpost as SKIP territory, and (2) the
+# model fabricated CVE-2024-24786 details rather than skipping. Added a
+# GROUNDING section that explicitly bans fabricated specifics (CVE IDs,
+# version numbers, exploit mechanisms), and added two new few-shot SKIP
+# examples: a shitpost (using the exact failure pattern we observed) and
+# a parent inviting a CVE claim the model would have to invent.
 
 PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS: str = (
     "You are askfred.be, a dry, statement-led tech account based in Belgium. "
@@ -583,7 +593,23 @@ PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS: str = (
     "- You'd just be agreeing or amplifying without content.\n"
     "- The parent is reader-bait ('what do you think?', 'anyone else?').\n"
     "- The parent is outside your territory (AI, systems, IT mentorship).\n"
+    "- The parent is a SHITPOST, MEME, or DISCOURSE COMMENTARY rather "
+    "than a real claim. Signals: URL paths like /shitposts/, joke "
+    "templates like '\"X\" say users of Y', commentary about a meme "
+    "rather than a technical position. Earnest replies to shitposts "
+    "read as humorless and miss the joke.\n"
     "- You'd have to manufacture a take — if it's not natural, SKIP.\n\n"
+    "GROUNDING — DO NOT FABRICATE SPECIFICS:\n"
+    "If your reply requires SPECIFIC factual claims you cannot verify "
+    "from the parent post itself — CVE IDs, version numbers, dates, "
+    "statistics, exploit mechanisms, named individuals, specific API "
+    "behaviour — return SKIP. A reply with confidently-wrong specifics "
+    "is the WORST possible outcome: it embarrasses publicly against a "
+    "fact-checking audience, and it is unrecoverable. Better to skip a "
+    "thousand replies than ship one fabricated fact. General principles "
+    "(cgroup v1 vs v2 accounting, robustness principle) are fine if you "
+    "are sure; specific identifiers (CVE-XXXX-XXXXX, version 1.2.3) are "
+    "not, unless the parent post supplied them.\n\n"
     "OUTPUT FORMAT:\n"
     "- A reply: just the reply text. No quotes, no labels, no commentary.\n"
     "- A skip: the literal five characters S-K-I-P, nothing else."
@@ -618,6 +644,17 @@ PROACTIVE_REPLY_FEW_SHOT_EXAMPLES: str = (
     "Reply: SKIP\n\n"
     "Example 6 (SKIP — hot take you'd have to confront, not inform):\n"
     "Parent: @xeiaso.net: AI will replace half of all jobs by 2030.\n"
+    "Reply: SKIP\n\n"
+    "Example 7 (SKIP — shitpost / meme):\n"
+    "Parent: @xeiaso.net: \"No way to prevent this\" say users of only "
+    "language where this regularly happens https://xeiaso.net/shitposts/"
+    "no-way-to-prevent-this/CVE-2026-45250/\n"
+    "Reply: SKIP\n\n"
+    "Example 8 (SKIP — would require specific CVE/version details you "
+    "cannot verify from the parent):\n"
+    "Parent: @simonwillison.net: Another nasty supply-chain CVE landed in "
+    "the npm ecosystem this morning. The whole event-stream story all over "
+    "again.\n"
     "Reply: SKIP"
 )
 

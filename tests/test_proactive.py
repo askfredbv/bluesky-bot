@@ -1105,3 +1105,35 @@ async def test_approve_parent_no_cid_rejects():
 
     assert result is None
     assert state["rejected"][0]["rejected_reason"] == "parent_no_cid"
+
+
+# ===========================================================================
+# Commit 5.5 — prompt tuning after the 2026-05-21 smoke-test failure
+# ===========================================================================
+# These tests don't verify model behaviour (would need real API calls);
+# they verify the design-intent phrases are present in the prompt constants
+# so a future edit can't silently drop them. The actual behaviour change
+# from the prompt tuning is observable only via the next live scan run.
+
+def test_prompt_contains_shitpost_skip_rule():
+    """The 2026-05-21 tuning added shitpost recognition as a SKIP case."""
+    from src.config import PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS, PROACTIVE_REPLY_FEW_SHOT_EXAMPLES
+    instr_lower = PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS.lower()
+    examples_lower = PROACTIVE_REPLY_FEW_SHOT_EXAMPLES.lower()
+    assert "shitpost" in instr_lower
+    assert "shitpost" in examples_lower
+    # The exact failure-case URL pattern from 2026-05-21 — kept in the
+    # examples so the model sees the concrete signal it failed to catch
+    assert "/shitposts/" in examples_lower
+
+
+def test_prompt_contains_fabrication_grounding_rule():
+    """The 2026-05-21 tuning added a 'don't fabricate specifics' section."""
+    from src.config import PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS, PROACTIVE_REPLY_FEW_SHOT_EXAMPLES
+    instr = PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS
+    assert "GROUNDING" in instr
+    # The actual classes of fabricated specifics named in the rule
+    assert "CVE ID" in instr or "CVE IDs" in instr
+    assert "version number" in instr.lower()
+    # A few-shot example covering CVE-fabrication-bait
+    assert "cve" in PROACTIVE_REPLY_FEW_SHOT_EXAMPLES.lower()
