@@ -37,8 +37,16 @@ needs the three-tier fallback).
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
+from src.config import (
+    BANNED_QUESTION_PATTERNS,
+    PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS,
+    PROACTIVE_REPLY_MAX_PARENT_AGE_HOURS,
+    PROACTIVE_REPLY_MIN_PARENT_ENGAGEMENT,
+    PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS,
+)
 from src.logger import SafeLogger
 from src.utils import _load_gist_state, _save_gist_state
 
@@ -112,3 +120,313 @@ def save_pending_replies(state: Dict[str, List[Dict[str, Any]]]) -> bool:
 def new_draft_id() -> str:
     """Generate a fresh UUID4 string for a new draft."""
     return str(uuid.uuid4())
+
+
+# ── Time helpers ────────────────────────────────────────────────────────────
+
+def _parse_iso(ts: str) -> Optional[datetime]:
+    """Parse a Bluesky-style ISO timestamp, returning None on failure.
+
+    Bluesky emits ``2026-05-21T18:00:00.000Z``; ``fromisoformat`` on Python
+    3.11+ handles the trailing Z if we swap it for ``+00:00``. Tolerant of
+    missing milliseconds and whitespace.
+    """
+    if not isinstance(ts, str) or not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+# ── Expiry + cooldown ───────────────────────────────────────────────────────
+
+def expire_old_drafts(
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> int:
+    """Move pending drafts older than ``PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS``
+    to the ``rejected`` bucket with ``rejected_reason=expired``.
+
+    Returns the number of drafts moved. Mutates ``state`` in place; the
+    caller is responsible for ``save_pending_replies`` afterwards.
+
+    Runs at the start of each scan so stale drafts don't linger forever
+    when the human approval gate goes quiet.
+    """
+    cutoff = now - timedelta(hours=PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS)
+    survivors: List[Dict[str, Any]] = []
+    moved = 0
+    for draft in state.get("pending", []):
+        generated = _parse_iso(draft.get("generated_at", ""))
+        if generated is None or generated < cutoff:
+            draft_copy = dict(draft)
+            draft_copy["rejected_at"] = now.isoformat()
+            draft_copy["rejected_reason"] = "expired"
+            state.setdefault("rejected", []).append(draft_copy)
+            moved += 1
+        else:
+            survivors.append(draft)
+    state["pending"] = survivors
+    if moved:
+        SafeLogger.info(
+            "proactive_drafts_expired",
+            "Moved stale pending drafts to rejected",
+            moved=moved,
+            cutoff_hours=PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS,
+        )
+    return moved
+
+
+def is_handle_in_cooldown(
+    handle: str,
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> bool:
+    """Has this handle received an approved reply within the cooldown window?
+
+    Checks the ``posted`` bucket — drafts that were approved and shipped.
+    Pending/rejected drafts don't count (we WANT to be allowed to scan
+    again after a rejection).
+    """
+    cutoff = now - timedelta(days=PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS)
+    for entry in state.get("posted", []):
+        if entry.get("parent_author") != handle:
+            continue
+        posted_at = _parse_iso(entry.get("posted_at", ""))
+        if posted_at is not None and posted_at >= cutoff:
+            return True
+    return False
+
+
+# ── Filter ──────────────────────────────────────────────────────────────────
+
+def _has_quote_embed(record: Any) -> bool:
+    """Detect a quote-post embed without importing atproto's model types.
+
+    Quote-posts carry an embed of type ``app.bsky.embed.record`` (or
+    ``recordWithMedia``). Duck-typed: if the embed has a ``record``
+    attribute pointing somewhere, treat as quote. Tolerates plain dicts
+    too — useful for tests and defensive against SDK shape changes.
+    """
+    embed = getattr(record, "embed", None)
+    if embed is None:
+        return False
+    if hasattr(embed, "record") and getattr(embed, "record", None) is not None:
+        return True
+    if isinstance(embed, dict) and embed.get("record") is not None:
+        return True
+    return False
+
+
+def filter_feed_item(item: Any, now: datetime) -> Tuple[bool, str]:
+    """Decide whether a single feed-view item is a reply candidate.
+
+    Returns ``(passes, reason)`` where ``reason`` is a short tag suitable
+    for structured logging. Designed so every rejection rule can be
+    unit-tested in isolation.
+
+    Rules (first failure wins):
+      - Reposts of others (``item.reason`` set) → ``is_repost``
+      - Reply posts (``post.record.reply`` set) → ``is_reply``
+      - Quote-posts (``post.record.embed.record``) → ``is_quote``
+      - Empty / missing text → ``no_text``
+      - Older than ``PROACTIVE_REPLY_MAX_PARENT_AGE_HOURS`` → ``too_old``
+      - Engagement (replies + reposts) below the floor → ``no_engagement``
+      - Parent text matches ``BANNED_QUESTION_PATTERNS`` → ``reader_bait``
+    """
+    if getattr(item, "reason", None) is not None:
+        return False, "is_repost"
+
+    post = getattr(item, "post", None)
+    if post is None:
+        return False, "no_post"
+
+    record = getattr(post, "record", None)
+    if record is None:
+        return False, "no_record"
+
+    if getattr(record, "reply", None) is not None:
+        return False, "is_reply"
+
+    if _has_quote_embed(record):
+        return False, "is_quote"
+
+    text = getattr(record, "text", "") or ""
+    if not text.strip():
+        return False, "no_text"
+
+    indexed_at = _parse_iso(getattr(post, "indexed_at", "") or "")
+    if indexed_at is None:
+        return False, "no_timestamp"
+    age_hours = (now - indexed_at).total_seconds() / 3600.0
+    if age_hours > PROACTIVE_REPLY_MAX_PARENT_AGE_HOURS:
+        return False, "too_old"
+
+    reposts = int(getattr(post, "repost_count", 0) or 0)
+    replies = int(getattr(post, "reply_count", 0) or 0)
+    if reposts + replies < PROACTIVE_REPLY_MIN_PARENT_ENGAGEMENT:
+        return False, "no_engagement"
+
+    lowered = text.lower()
+    if any(pattern in lowered for pattern in BANNED_QUESTION_PATTERNS):
+        return False, "reader_bait"
+
+    return True, "ok"
+
+
+def _item_to_candidate(item: Any, handle: str) -> Dict[str, Any]:
+    """Project a passing feed item into a candidate dict.
+
+    Candidate shape — internal only, lives in memory between
+    ``scan_watchlist`` and ``stage_draft_reply``. The persisted draft
+    schema is a superset (adds id + draft_reply + timestamps).
+    """
+    post = item.post
+    record = post.record
+    reposts = int(getattr(post, "repost_count", 0) or 0)
+    replies = int(getattr(post, "reply_count", 0) or 0)
+    return {
+        "platform": "bluesky",
+        "parent_author": handle,
+        "parent_post_uri": getattr(post, "uri", ""),
+        "parent_text": getattr(record, "text", "") or "",
+        "engagement": reposts + replies,
+        "indexed_at": getattr(post, "indexed_at", "") or "",
+    }
+
+
+# ── Scan ────────────────────────────────────────────────────────────────────
+
+# Bluesky's `get_author_feed` returns ~20 by default; we ask for the same.
+# All filtering happens client-side from this batch — cheaper than paging.
+_FEED_FETCH_LIMIT: int = 20
+
+
+async def scan_handle(
+    bsky_client: Any,
+    handle: str,
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> List[Dict[str, Any]]:
+    """Fetch + filter posts for one handle, returning passing candidates.
+
+    Short-circuits when the handle is in cooldown — we don't bother
+    fetching the feed in that case. Logs a structured event for each
+    rejection reason so we can spot filter-drift from the Actions
+    output.
+    """
+    if is_handle_in_cooldown(handle, state, now):
+        SafeLogger.info(
+            "proactive_scan_handle_skipped",
+            "Handle in cooldown window; skipping scan",
+            handle=handle,
+            cooldown_days=PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS,
+        )
+        return []
+
+    try:
+        response = await bsky_client.app.bsky.feed.get_author_feed(
+            {"actor": handle, "limit": _FEED_FETCH_LIMIT}
+        )
+    except Exception as e:
+        SafeLogger.warn(
+            "proactive_scan_handle_fetch_failed",
+            "Author-feed fetch failed; skipping handle",
+            handle=handle,
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        return []
+
+    feed = getattr(response, "feed", None) or []
+    candidates: List[Dict[str, Any]] = []
+    rejection_counts: Dict[str, int] = {}
+    for item in feed:
+        passes, reason = filter_feed_item(item, now)
+        if passes:
+            candidates.append(_item_to_candidate(item, handle))
+        else:
+            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    SafeLogger.info(
+        "proactive_scan_handle_completed",
+        "Author-feed scan completed",
+        handle=handle,
+        fetched=len(feed),
+        passed=len(candidates),
+        **{f"rejected_{k}": v for k, v in rejection_counts.items()},
+    )
+    return candidates
+
+
+async def scan_watchlist(
+    bsky_client: Any,
+    watchlist: List[str],
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> List[Dict[str, Any]]:
+    """Orchestrate ``scan_handle`` across the configured watchlist.
+
+    Runs ``expire_old_drafts`` first so stale pending drafts get cleaned
+    up on every scan, then concatenates per-handle candidate lists.
+    Order in the result follows watchlist order; ``pick_reply_candidate``
+    re-sorts by engagement.
+    """
+    expire_old_drafts(state, now)
+    all_candidates: List[Dict[str, Any]] = []
+    for handle in watchlist:
+        all_candidates.extend(await scan_handle(bsky_client, handle, state, now))
+    return all_candidates
+
+
+# ── Pick + stage ────────────────────────────────────────────────────────────
+
+def pick_reply_candidate(
+    candidates: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Pick the highest-engagement candidate from a scan, or None if empty.
+
+    Sort key is ``engagement`` desc (replies + reposts). Ties broken by
+    most-recently-indexed first — fresh posts deserve fresh replies.
+    """
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda c: (int(c.get("engagement", 0) or 0), c.get("indexed_at", "")),
+    )
+
+
+def stage_draft_reply(
+    candidate: Dict[str, Any],
+    draft_reply: str,
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> Dict[str, Any]:
+    """Append a new draft to ``state['pending']`` and return the stored entry.
+
+    Caller is responsible for persisting via ``save_pending_replies``
+    afterwards — staging mutates the in-memory state but does not write
+    to the Gist. Separation matters because the scan loop may stage
+    once per run and we want one Gist write per run, not per stage.
+    """
+    draft: Dict[str, Any] = {
+        "id": new_draft_id(),
+        "platform": candidate.get("platform", "bluesky"),
+        "parent_author": candidate.get("parent_author", ""),
+        "parent_post_uri": candidate.get("parent_post_uri", ""),
+        "parent_text": candidate.get("parent_text", ""),
+        "draft_reply": draft_reply,
+        "generated_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS)).isoformat(),
+    }
+    state.setdefault("pending", []).append(draft)
+    SafeLogger.info(
+        "proactive_draft_staged",
+        "New proactive-reply draft staged",
+        draft_id=draft["id"],
+        parent_author=draft["parent_author"],
+        draft_length=len(draft_reply),
+    )
+    return draft
