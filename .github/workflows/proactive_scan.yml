@@ -1,0 +1,55 @@
+name: Proactive Reply Scan
+
+# Phase 4b daily scan. Triggered externally (cron-job.org or manual)
+# via workflow_dispatch. Stages draft replies into pending_replies.json
+# in the state Gist — NEVER posts a reply. Posting lives in the
+# separate approve_pending_reply.yml workflow (commit 5).
+#
+# Kill-switch: disable this workflow in the Actions UI to stop draft
+# generation entirely. Zero impact on daily_post.yml (the Curator/
+# Mentor pipeline) — they share no code path.
+#
+# Recommended trigger time: ~10:00 UTC, between the morning Curator
+# (07:00 UTC) and afternoon Mentor (14:30 UTC) runs. Reads the
+# watchlist's fresh morning posts; runner stays cheap (~30s).
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: proactive-scan-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run proactive scan
+        env:
+          # Required
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLUESKY_USERNAME: ${{ secrets.BLUESKY_USERNAME }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          # State persistence via private GitHub Gist (same Gist as
+          # daily_post.yml; the proactive scan writes a separate file
+          # pending_replies.json alongside seen_articles.json,
+          # post_metrics.json, etc.)
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: python -m scripts.run_proactive_scan
