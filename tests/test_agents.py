@@ -420,15 +420,22 @@ def test_style_guidelines_contains_anchor_quotes_from_real_posts():
     assert "That's it. I've had it with gravity." in s
 
 
-def test_style_guidelines_names_structural_moves():
-    """The 4 named patterns get explicit framing so the model has handles."""
+def test_style_guidelines_describes_recurring_patterns():
+    """STYLE_GUIDELINES still describes observable patterns — just without my analytical labels.
+
+    Earlier iteration named patterns ("KICKER SENTENCE", "CONCESSION-THEN-PIVOT")
+    that read as my framework rather than Frederik's. Labels removed
+    2026-05-21; the descriptive PATTERNS section remained with verbatim
+    anchor quotes so the model still has shapes to imitate.
+    """
     from src.config import STYLE_GUIDELINES
     s = STYLE_GUIDELINES
-    assert "STRUCTURAL MOVES TO IMITATE" in s
-    assert "KICKER SENTENCE" in s
-    assert "CONCESSION-THEN-PIVOT" in s
-    assert "FALSE-DICHOTOMY-THEN-THIRD-POSITION" in s
-    assert "INVERTED-LIST PIVOT" in s
+    assert "PATTERNS" in s
+    # Verbatim anchor quotes from each named-but-now-unlabelled pattern
+    # remain (these prove the *content* survived, even after labels went).
+    assert "The tool rarely fails. Adoption fails." in s
+    assert "Technology is the easy part of digital transformation" in s
+    assert "Either AI is going to replace professional services" in s
 
 
 def test_style_guidelines_contractions_rule_is_register_dependent():
@@ -439,15 +446,6 @@ def test_style_guidelines_contractions_rule_is_register_dependent():
     # The fix specifically: avoid in advisory, fine in casual
     assert "avoid contractions" in s.lower()
     assert "contractions are fine" in s.lower()
-
-
-def test_curator_good_examples_are_labelled_with_structural_moves():
-    """Each Curator GOOD example names which structural move it uses."""
-    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
-    p = SYSTEM_INSTRUCTIONS_CURATOR
-    # The labels were added 2026-05-21 so the model picks moves deliberately
-    assert "GOOD 1 (HOOK" in p
-    assert "KICKER SENTENCE" in p   # at least one example labelled with it
 
 
 @pytest.mark.asyncio
