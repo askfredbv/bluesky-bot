@@ -342,6 +342,54 @@ async def test_generate_content_injects_language_directive(monkeypatch):
     assert "English" in captured["prompt"]
 
 
+# ---------------------------------------------------------------------------
+# Curator prompt tuning (2026-05-21) — design-intent sanity tests
+# ---------------------------------------------------------------------------
+# The Curator prompt was rewritten after honest reading of 25 live posts
+# showed paper-summary output ("A new paper maps out X. Sobering read.")
+# rather than take-led posts. These tests verify the new design-intent
+# phrases survive future edits — they do NOT verify model behaviour,
+# which is empirical (next live runs are the validator).
+
+
+def test_curator_prompt_contains_three_part_structure_rule():
+    """The 2026-05-21 rewrite added an explicit THREE-PART STRUCTURE rule."""
+    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
+    assert "THREE-PART STRUCTURE" in SYSTEM_INSTRUCTIONS_CURATOR
+    # Each of the three parts must be named explicitly
+    assert "THE HOOK" in SYSTEM_INSTRUCTIONS_CURATOR
+    assert "THE SUBSTANCE" in SYSTEM_INSTRUCTIONS_CURATOR
+    assert "THE LINK" in SYSTEM_INSTRUCTIONS_CURATOR
+
+
+def test_curator_prompt_bans_paper_summary_phrasings():
+    """Specific bot-tell phrasings observed in the live feed must be named in BANNED PHRASES."""
+    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
+    p = SYSTEM_INSTRUCTIONS_CURATOR
+    assert "BANNED PHRASES" in p
+    # The exact failure-case phrasings from 2026-05-21 feed read
+    assert "A new paper" in p
+    assert "A new study" in p
+    assert "A new framework" in p
+    assert "Researchers have announced" in p
+
+
+def test_curator_prompt_bans_editorial_filler_suffixes():
+    """The 'Sobering read.' / 'Worth a read.' tic gets explicitly banned."""
+    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
+    p = SYSTEM_INSTRUCTIONS_CURATOR
+    assert "BANNED SUFFIXES" in p
+    assert "Sobering read" in p
+    assert "Worth a read" in p
+
+
+def test_curator_prompt_makes_first_person_the_default():
+    """'First person when natural' was too soft; now stated as the DEFAULT."""
+    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
+    p = SYSTEM_INSTRUCTIONS_CURATOR
+    assert "FIRST PERSON IS THE DEFAULT" in p
+
+
 @pytest.mark.asyncio
 async def test_generate_post_image_returns_bytes_on_success(monkeypatch):
     """generate_post_image returns raw bytes when _sync_generate_image succeeds."""
