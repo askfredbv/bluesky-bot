@@ -42,7 +42,7 @@ To improve observability of the external trigger path, `.github/workflows/schedu
 
 **Content scoring** uses seven factors: source tier, product-launch signals, a **momentum product bonus** (+4.0) for flagship 2026 models (GPT-5, Claude 4, Llama 4, etc.), technical depth keywords, time decay (0.5 pts/hour), a topic diversity penalty to avoid repetition, and a Consensus Synergy bonus (+1.5 per additional feed) for stories covered by multiple independent sources. arXiv papers get priority injection if they don't survive the scoring on their own.
 
-**Language**: each thread is written entirely in English or Dutch, chosen at random (50/50) per run. The language directive is injected into the Gemini prompt and applies to all posts in the thread.
+**Language**: English. The language directive is injected into the Gemini prompt and applies to all posts in the thread. Dutch was removed 2026-05-21 — the random 50/50 mix it had been on served no audience strategy (tech Bluesky is English-dominant even for Belgian devs) and halved reach on a third of posts; the "I'm Belgian" signal already lives in the bio.
 
 **Images**: Mentor and Strategist threads have a 50% chance of attaching an AI-generated illustration via Imagen 4 (`imagen-4.0-generate-001`). Uses the same `GEMINI_API_KEY` — no extra secrets. Images are capped at 976 KB before upload (Bluesky's 1 MB hard limit). Generation uses a two-step pipeline: Gemini first crafts a bespoke visual prompt from the finished thread content, then Imagen 4 generates the image from that prompt. Falls back to a static template if the prompt-crafting call fails. Curator posts use a link card instead (RSS metadata) — image generation is never triggered for Curator mode.
 
