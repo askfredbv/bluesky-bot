@@ -336,7 +336,7 @@ SECONDARY_TOPICS = [
 
 PIONEER_DIMENSION_ENABLED: bool = True
 PIONEER_FALLBACK_PROBABILITY: float = 0.35  # v4.20: 0.20 → 0.35. 7 afternoon slots × 0.35 ≈ 2.5 undated firings/week, plus dated anniversaries. The Pioneer dimension consistently produces the most distinctive posts in the feed (Lynn Conway, PARIS); user asked to bias toward more of it.
-PIONEER_COOLDOWN_DAYS: int = 30             # don't repeat the same fact within this window
+PIONEER_COOLDOWN_DAYS: int = 60             # 2026-06-04: 30 → 60. User noticed `computer-was-a-job` re-firing exactly 30 days after its previous use. Math: 37 undated entries × 0.35/day fire probability ≈ 21 firings per 60-day window — still leaves ~16 fresh entries available. The audience tolerates 30-day repeats fine; the user (who reads every post) does not.
 
 PIONEER_EVENTS_DATED: List[Dict[str, object]] = [
     {"id": "utf8-placemat", "category": "pioneer",
