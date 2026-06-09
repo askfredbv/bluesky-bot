@@ -4,7 +4,7 @@
 # Core runtime dependencies
 python-dotenv>=1.0,<2
 requests>=2.32,<3
-beautifulsoup4>=4.12,<5
+beautifulsoup4>=4.15.0,<5
 Pillow>=12,<13
 
 # Critical integrations
@@ -21,7 +21,7 @@ pydantic>=2.7,<3
 
 # Test dependencies
 pytest>=9,<10
-pytest-asyncio>=1.3,<2
+pytest-asyncio>=1.4.0,<2
 
 # Lint / dev tooling (runs in CI via tests.yml; not a runtime dep but
 # must be in requirements.in so Dependabot's lockfile regen doesn't
