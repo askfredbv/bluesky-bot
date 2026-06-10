@@ -172,6 +172,14 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
 # expose. If 2.5-pro isn't available for the API key, the chain falls
 # through to 2.5-flash cleanly without code changes.
 GEMINI_MODEL_PRIORITY: List[str] = [
+    # 2026-06-09 TEST: gemini-3.5-flash promoted to primary, ahead of
+    # 2.5-pro. Reachable + GA per the Model Discovery workflow; a full
+    # generation newer, faster, cheaper, and beats 3.1 Pro on Google's
+    # benchmarks. This is a VOICE-QUALITY trial — keep only if it reads
+    # as sharp as 2.5-pro on the live feed. 2.5-pro stays second so any
+    # 3.5-flash failure (incl. a thinking_config rejection) falls back
+    # cleanly and the run still posts. Revert = delete this one line.
+    "gemini-3.5-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     # v4.18 (2026-05-11): gemini-2.0-flash dropped — Google has deprecated

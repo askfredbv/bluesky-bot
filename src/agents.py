@@ -622,6 +622,13 @@ def _thinking_budget_for(model_name: str) -> Optional[int]:
         return 128   # 2.5-pro minimum; cannot fully disable
     if "2.5-flash" in lower:
         return 0     # disable entirely
+    # 2026-06-09: testing gemini-3.5-flash as primary. Flash-tier disables
+    # thinking (budget 0) like 2.5-flash, so the full output budget goes to
+    # content and we avoid the 2026-05-11 empty-output bug. If 3.5 rejects
+    # thinking_config entirely, the call errors and the chain falls back to
+    # 2.5-pro — visible in the log, safe.
+    if "3.5-flash" in lower:
+        return 0
     return None
 
 
