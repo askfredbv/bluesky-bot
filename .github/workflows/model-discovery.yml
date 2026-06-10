@@ -1,0 +1,40 @@
+name: Model Discovery (diagnostic)
+
+# Manual, read-only diagnostic. Runs scripts/discover_models.py with the
+# production GEMINI_API_KEY to report which models the bot can actually
+# reach. Posts nothing, changes nothing.
+#
+# Why a workflow instead of running locally: the GEMINI_API_KEY is
+# application-restricted (the laptop gets 403 on every call; the GitHub
+# runners are allowed). So the only place the probe gives a true answer
+# is here, in the same environment the bot runs in.
+#
+# Use it whenever evaluating a model swap (e.g. is gemini-3.5-flash
+# reachable?). Trigger from the Actions UI → "Run workflow".
+
+on:
+  workflow_dispatch:
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run model discovery
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m scripts.discover_models
