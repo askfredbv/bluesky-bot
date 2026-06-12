@@ -61,7 +61,7 @@ async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(m
     settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
 
     async def fake_generate_content(*args, **kwargs):
-        return ["hello"], "topic"
+        return ["hello"], "topic", None
 
     async def failing_bluesky(*args, **kwargs):
         raise RuntimeError("fail")
@@ -300,7 +300,7 @@ async def test_broadcasting_stage_skips_post_when_generate_returns_empty(monkeyp
     posts_attempted = {"bsky": 0, "mastodon": 0}
 
     async def fake_generate(*args, **kwargs):
-        return [], "exhausted topic"
+        return [], "exhausted topic", None
 
     async def should_not_be_called_bsky(*args, **kwargs):
         posts_attempted["bsky"] += 1
@@ -341,6 +341,67 @@ async def test_broadcasting_stage_skips_post_when_generate_returns_empty(monkeyp
     assert payload.bsky_sent_uris == []
     assert payload.mastodon_sent_ids == []
     assert posts_attempted == {"bsky": 0, "mastodon": 0}
+
+
+@pytest.mark.asyncio
+async def test_broadcasting_stage_curator_link_card_follows_chosen_item(monkeypatch):
+    """v4.21: when the Curator picks a non-top item, broadcasting_stage
+    refetches the link card from the chosen URL and records that item's
+    domain in metrics_context — not the pre-fetched news_items[0] card."""
+    fetched = {}
+    captured_link_meta = {}
+
+    async def fake_generate(*args, **kwargs):
+        return ["a post"], "Chosen Topic", "https://chosen.example.com/article"
+
+    async def fake_get_link_metadata(url):
+        fetched["url"] = url
+        return {"title": "Chosen", "description": "", "image_data": None, "url": url}
+
+    async def fake_post_to_bluesky(client, content_list, link_meta, **kwargs):
+        captured_link_meta["value"] = link_meta
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=client, sent_uris=["at://x"])
+
+    async def fake_post_to_mastodon(*args, **kwargs):
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["1"])
+
+    async def no_delay(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate)
+    monkeypatch.setattr(main, "get_link_metadata", fake_get_link_metadata)
+    monkeypatch.setattr(main, "post_to_bluesky", fake_post_to_bluesky)
+    monkeypatch.setattr(main, "post_to_mastodon", fake_post_to_mastodon)
+    monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
+    monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
+
+    creds = SimpleNamespace(
+        gemini_api_key="g",
+        bluesky_username="u",
+        bluesky_password="p",
+        mastodon_access_token="t",
+        mastodon_api_base_url="https://masto",
+    )
+    settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
+    prep = main.ContentPrepPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[{"title": "Top", "link": "https://top.example.com/article"}],
+        link_meta={"title": "Top", "description": "", "image_data": None, "url": "https://top.example.com/article"},
+        bsky_client="some-client",
+        recent_posts=[],
+        source_domain="top.example.com",
+    )
+
+    payload = await main.broadcasting_stage(prep, settings, creds)
+
+    # Card refetched from the chosen URL, not the pre-fetched top item.
+    assert fetched["url"] == "https://chosen.example.com/article"
+    assert captured_link_meta["value"]["url"] == "https://chosen.example.com/article"
+    # Metrics attribution reflects the chosen item's domain.
+    assert payload.metrics_context["source_domain"] == "chosen.example.com"
 
 
 @pytest.mark.asyncio

@@ -850,7 +850,7 @@ async def generate_content(
     model_priority: Optional[List[str]] = None,
     pioneer_entry: Optional[Dict[str, Any]] = None,
     recent_mode_topics: Optional[List[str]] = None,
-) -> Tuple[List[str], str]:
+) -> Tuple[List[str], str, Optional[str]]:
     """Generates content asynchronously with Rescue logic and Temporal Context.
 
     ``pioneer_entry`` (if supplied) is the result of ``select_pioneer_topic``
@@ -938,14 +938,34 @@ async def generate_content(
             "the thing that's obvious in hindsight but that someone earlier in their career genuinely hasn't heard yet."
         )
 
-    format_instruction = (
-        "OUTPUT FORMAT:\n"
-        "Return ONLY a JSON array of strings, like: [\"post one\"] or [\"post one\", \"post two\"]\n"
-        "- 1 to 3 strings. ONE is the default. Use 2 only if the story genuinely needs a follow-on beat. 3 is rare.\n"
-        f"- Each string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
-        "- Never cut off mid-word or mid-sentence\n"
-        "- No thread numbers, labels, or markdown outside the JSON array"
-    )
+    # v4.21: Curator returns a {"url", "posts"} object instead of a bare
+    # array so the link card can be built from the item the model actually
+    # wrote about. The Curator task invites picking the most interesting
+    # item, not the top-scored one; the URL tells us which it picked.
+    curator_structured = mode == "curator" and bool(news_items)
+    if curator_structured:
+        format_instruction = (
+            "OUTPUT FORMAT:\n"
+            "Return ONLY a JSON object with exactly two keys, like:\n"
+            "  {\"url\": \"https://...\", \"posts\": [\"post one\"]}\n"
+            "- \"url\": the exact URL of the ONE item you wrote about, copied "
+            "verbatim from the ITEMS TO WORK WITH list. It must match one of those "
+            "URLs character-for-character. Do not invent, shorten, or guess a URL.\n"
+            "- \"posts\": a JSON array of 1 to 3 strings. ONE is the default. Use 2 "
+            "only if the story genuinely needs a follow-on beat. 3 is rare.\n"
+            f"- Each post string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
+            "- Never cut off mid-word or mid-sentence\n"
+            "- No thread numbers, labels, or markdown outside the JSON object"
+        )
+    else:
+        format_instruction = (
+            "OUTPUT FORMAT:\n"
+            "Return ONLY a JSON array of strings, like: [\"post one\"] or [\"post one\", \"post two\"]\n"
+            "- 1 to 3 strings. ONE is the default. Use 2 only if the story genuinely needs a follow-on beat. 3 is rare.\n"
+            f"- Each string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
+            "- Never cut off mid-word or mid-sentence\n"
+            "- No thread numbers, labels, or markdown outside the JSON array"
+        )
     # instr = system role; user_task = everything the model acts on
     user_task = f"{task}\n\n{style_constraints}\n\n{format_instruction}"
 
@@ -966,7 +986,22 @@ async def generate_content(
             try:
                 response_text = await asyncio.to_thread(_sync_generate, api_key, instr, user_task, model)
                 clean_text = response_text.replace('```json', '').replace('```', '').strip()
-                content_list = json.loads(clean_text)
+                parsed = json.loads(clean_text)
+
+                # v4.21: Curator emits {"url", "posts"}; everything else emits a
+                # bare array. Pull the posts list out so the shared validators
+                # below operate on a list of strings in both cases.
+                chosen_link = None
+                if curator_structured:
+                    if not isinstance(parsed, dict) or "posts" not in parsed:
+                        raise ValueError(
+                            "Curator output must be a JSON object with 'url' and 'posts'"
+                        )
+                    content_list = parsed.get("posts")
+                    chosen_link = parsed.get("url")
+                else:
+                    content_list = parsed
+
                 is_shape_valid, shape_reason = _validate_thread_shape(content_list)
                 if not is_shape_valid:
                     raise ValueError(shape_reason)
@@ -990,8 +1025,32 @@ async def generate_content(
                     # v4.14: defensive voice trim — strip reader-bait questions,
                     # excess hashtags, and word-boundary-back-up on overflow.
                     content_list = _apply_voice_trim(content_list)
+
+                    # v4.21: resolve the chosen item so both metrics
+                    # attribution (topic / source_domain downstream) and the
+                    # link card follow what was actually written, not the
+                    # top-scored news_items[0]. If the model returned a URL not
+                    # in the offered set (hallucinated or edited), fall back to
+                    # the top item so the run still ships a coherent post.
+                    if curator_structured:
+                        chosen_item = next(
+                            (i for i in news_items if i.get("link") == chosen_link),
+                            None,
+                        )
+                        if chosen_item is None:
+                            SafeLogger.warn(
+                                "curator_chosen_url_unmatched",
+                                "Curator returned a URL not in the offered items; "
+                                "falling back to the top-scored item",
+                                model=model,
+                                returned_url=str(chosen_link)[:200],
+                            )
+                            chosen_item = news_items[0]
+                        topic = chosen_item.get("title", topic)
+                        chosen_link = chosen_item.get("link")
+
                     SafeLogger.info("model_used", "Content generated successfully", model=model)
-                    return content_list, topic
+                    return content_list, topic, chosen_link
                 reason = post_validations[0][1]
                 raise ValueError(reason)
 
@@ -1043,7 +1102,7 @@ async def generate_content(
         mode=mode,
         topic=topic,
     )
-    return [], topic
+    return [], topic, None
 
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""

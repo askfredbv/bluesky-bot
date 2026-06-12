@@ -30,7 +30,7 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
 
     async def fake_generate_content(api_key, recent_posts, mode, news_items, **kwargs):
         calls["recent_posts"] = list(recent_posts)
-        return ["thread post"], "topic"
+        return ["thread post"], "topic", None
 
     async def fake_post_to_bluesky(*args, **kwargs):
         calls["bluesky"] += 1
@@ -95,7 +95,7 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_err
 
     async def fake_generate_content(api_key, recent_posts, mode, news_items, **kwargs):
         calls["recent_posts"] = list(recent_posts)
-        return ["thread post"], "topic"
+        return ["thread post"], "topic", None
 
     async def fake_fetch_news(*args, **kwargs):
         return []
@@ -177,7 +177,7 @@ async def test_partial_broadcast_failure_keeps_successful_bluesky_client(monkeyp
     settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
 
     async def fake_generate_content(*args, **kwargs):
-        return ["thread post"], "topic"
+        return ["thread post"], "topic", None
 
     async def ok_bluesky(*args, **kwargs):
         from src.metrics import BroadcastResult
