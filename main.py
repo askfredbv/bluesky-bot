@@ -174,7 +174,8 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     mode = content_prep.mode
     news_items = content_prep.news_items
     link_meta = content_prep.link_meta
-    content_list, chosen_topic = await generate_content(
+    source_domain = content_prep.source_domain
+    content_list, chosen_topic, chosen_link = await generate_content(
         creds.gemini_api_key,
         content_prep.recent_posts,
         mode=mode,
@@ -207,6 +208,27 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             bsky_broadcast_client=content_prep.bsky_client,
             pioneer_entry=content_prep.pioneer_entry,
         )
+
+    # v4.21: align the link card + attribution with the item the model
+    # actually wrote about. The Curator task invites picking the most
+    # interesting item, not the top-scored one; content_prep pre-fetched
+    # link_meta from news_items[0], so a non-top pick would otherwise ship a
+    # card pointing at a different article. generate_content returns the
+    # chosen URL; only refetch when it differs from the pre-fetched top item.
+    if mode == "curator" and chosen_link:
+        top_link = news_items[0]["link"] if news_items else None
+        if chosen_link != top_link:
+            link_meta = await get_link_metadata(chosen_link)
+            SafeLogger.info(
+                "curator_link_realigned",
+                "Link card aligned to the item the model wrote about",
+                chosen_link=chosen_link,
+            )
+        from urllib.parse import urlparse
+        try:
+            source_domain = urlparse(chosen_link).netloc or None
+        except Exception:
+            source_domain = None
 
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
@@ -291,7 +313,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     metrics_context: Dict[str, Any] = {
         "mode": mode,
         "topic": chosen_topic,
-        "source_domain": content_prep.source_domain,
+        "source_domain": source_domain,
         "pioneer_id": pioneer_id,
         "had_image": image_bytes is not None,
         "had_link_card": link_meta is not None,

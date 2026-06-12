@@ -21,7 +21,7 @@ async def test_generate_content_returns_empty_when_all_models_fail(monkeypatch):
 
     monkeypatch.setattr("src.agents._sync_generate", _always_fail)
 
-    content, topic = await generate_content(
+    content, topic, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="curator",
@@ -77,6 +77,144 @@ async def test_generate_content_includes_persona_variant(monkeypatch):
     )
 
     assert "PERSONA VARIANT (" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_curator_link_follows_chosen_item(monkeypatch):
+    """v4.21: Curator returns {"url", "posts"}; generate_content resolves the
+    chosen URL so topic + chosen_link follow the item the model actually wrote
+    about, not the top-scored news_items[0]. This fixes the text/link-card
+    mismatch where the prompt invites picking a non-top item but the card was
+    locked to the top item."""
+    news_items = [
+        {"title": "Top Scored Item", "description": "d0", "link": "https://example.com/top"},
+        {"title": "The One I Wrote About", "description": "d1", "link": "https://example.com/chosen"},
+    ]
+
+    def _pick_second(_api_key, _system_instr, _task, _model):
+        return (
+            '{"url": "https://example.com/chosen", '
+            '"posts": ["I keep seeing this exact failure mode in production and the '
+            '#AI tooling still does not catch it before it ships."]}'
+        )
+
+    monkeypatch.setattr("src.agents._sync_generate", _pick_second)
+
+    content, topic, chosen_link = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="curator",
+        news_items=news_items,
+    )
+
+    assert len(content) == 1
+    assert topic == "The One I Wrote About"
+    assert chosen_link == "https://example.com/chosen"
+
+
+@pytest.mark.asyncio
+async def test_curator_unmatched_url_falls_back_to_top_item(monkeypatch):
+    """If the model returns a URL not among the offered items (hallucinated or
+    edited), generate_content falls back to the top-scored item so the run
+    still ships a coherent post + card rather than skipping."""
+    news_items = [
+        {"title": "Top Scored Item", "description": "d0", "link": "https://example.com/top"},
+        {"title": "Second", "description": "d1", "link": "https://example.com/second"},
+    ]
+
+    def _hallucinate_url(_api_key, _system_instr, _task, _model):
+        return (
+            '{"url": "https://example.com/not-in-the-list", '
+            '"posts": ["I keep seeing this exact failure mode in production and the '
+            '#AI tooling still does not catch it before it ships."]}'
+        )
+
+    monkeypatch.setattr("src.agents._sync_generate", _hallucinate_url)
+
+    content, topic, chosen_link = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="curator",
+        news_items=news_items,
+    )
+
+    assert len(content) == 1
+    assert topic == "Top Scored Item"
+    assert chosen_link == "https://example.com/top"
+
+
+@pytest.mark.asyncio
+async def test_curator_missing_url_retries_does_not_fall_back(monkeypatch):
+    """A curator response with valid `posts` but NO `url` must NOT be accepted.
+
+    Regression guard for the Codex PR #51 review: a missing url left
+    chosen_link None and silently fell back to news_items[0], re-introducing
+    the text/card mismatch this PR exists to kill. The url is now required, so
+    a response without it raises → retries → (if never supplied) the run skips
+    cleanly per v4.18, rather than shipping a post whose card points at the
+    top-scored item the text may not be about."""
+    news_items = [
+        {"title": "Top Scored Item", "description": "d0", "link": "https://example.com/top"},
+        {"title": "Second", "description": "d1", "link": "https://example.com/second"},
+    ]
+
+    def _posts_without_url(_api_key, _system_instr, _task, _model):
+        return (
+            '{"posts": ["I keep seeing this exact failure mode in production and '
+            'the #AI tooling still does not catch it before it ships."]}'
+        )
+
+    monkeypatch.setattr("src.agents._sync_generate", _posts_without_url)
+
+    content, _topic, chosen_link = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="curator",
+        news_items=news_items,
+    )
+
+    # Skipped, not silently shipped against the top item's card.
+    assert content == []
+    assert chosen_link is None
+
+
+@pytest.mark.asyncio
+async def test_curator_recovers_when_retry_supplies_url(monkeypatch):
+    """If the first attempt omits `url` but a later attempt supplies a valid
+    one, the run recovers and ships against the chosen item — proving the
+    required-url check triggers a retry rather than a hard skip."""
+    news_items = [
+        {"title": "Top Scored Item", "description": "d0", "link": "https://example.com/top"},
+        {"title": "The One I Wrote About", "description": "d1", "link": "https://example.com/chosen"},
+    ]
+    calls = {"n": 0}
+
+    def _no_url_then_url(_api_key, _system_instr, _task, _model):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return (
+                '{"posts": ["I keep seeing this exact failure mode in production '
+                'and the #AI tooling still does not catch it before it ships."]}'
+            )
+        return (
+            '{"url": "https://example.com/chosen", '
+            '"posts": ["I keep seeing this exact failure mode in production and '
+            'the #AI tooling still does not catch it before it ships."]}'
+        )
+
+    monkeypatch.setattr("src.agents._sync_generate", _no_url_then_url)
+
+    content, topic, chosen_link = await generate_content(
+        api_key="fake-key",
+        recent_posts=[],
+        mode="curator",
+        news_items=news_items,
+    )
+
+    assert calls["n"] >= 2  # retried after the missing-url attempt
+    assert len(content) == 1
+    assert topic == "The One I Wrote About"
+    assert chosen_link == "https://example.com/chosen"
 
 
 def test_truncate_for_platform_enforces_limit():
@@ -198,7 +336,7 @@ async def test_generate_content_returns_empty_when_model_always_returns_non_list
     → all fail) and now return [] instead of a hardcoded placeholder string."""
     monkeypatch.setattr("src.agents._sync_generate", lambda *_args, **_kwargs: '{"not":"a list"}')
 
-    content, _ = await generate_content(
+    content, _, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
@@ -265,7 +403,7 @@ async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
 
     monkeypatch.setattr("src.agents._sync_generate", _track_and_fail_primary)
 
-    content, _ = await generate_content(
+    content, _, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
@@ -291,7 +429,7 @@ async def test_model_failover_does_not_advance_on_json_error(monkeypatch):
 
     monkeypatch.setattr("src.agents._sync_generate", _track_and_return_bad_json)
 
-    content, _ = await generate_content(
+    content, _, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
@@ -699,7 +837,7 @@ async def test_pioneer_post_missing_required_url_is_rejected(monkeypatch):
         },
     }
 
-    content, _ = await generate_content(
+    content, _, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
@@ -737,7 +875,7 @@ async def test_pioneer_post_with_required_url_is_accepted(monkeypatch):
         },
     }
 
-    content, _ = await generate_content(
+    content, _, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
@@ -768,7 +906,7 @@ async def test_pioneer_post_without_link_field_skips_url_check(monkeypatch):
         },
     }
 
-    content, _ = await generate_content(
+    content, _, _ = await generate_content(
         api_key="fake-key",
         recent_posts=[],
         mode="mentor",
