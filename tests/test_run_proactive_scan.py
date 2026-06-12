@@ -78,7 +78,7 @@ async def test_no_candidates_does_not_save_when_state_unchanged(monkeypatch):
     _stub_creds(monkeypatch)
     _stub_atproto_and_session(monkeypatch)
 
-    monkeypatch.setattr(proactive, "load_pending_replies", lambda: proactive._empty_state())
+    monkeypatch.setattr(proactive, "load_pending_replies", lambda: (proactive._empty_state(), True))
 
     async def _empty_scan(*_a, **_kw):
         return []
@@ -103,7 +103,7 @@ async def test_no_candidates_does_save_when_expiry_changed_state(monkeypatch):
         "pending": [{"id": "old", "parent_author": "x", "generated_at": "old-ts"}],
         "posted": [], "rejected": [],
     }
-    monkeypatch.setattr(proactive, "load_pending_replies", lambda: initial)
+    monkeypatch.setattr(proactive, "load_pending_replies", lambda: (initial, True))
 
     async def _expire_then_no_candidates(client, watchlist, state, now):
         # Simulate expire_old_drafts having moved the pending entry to rejected
@@ -129,7 +129,7 @@ async def test_model_returns_skip_does_not_stage(monkeypatch):
     _stub_creds(monkeypatch)
     _stub_atproto_and_session(monkeypatch)
 
-    monkeypatch.setattr(proactive, "load_pending_replies", lambda: proactive._empty_state())
+    monkeypatch.setattr(proactive, "load_pending_replies", lambda: (proactive._empty_state(), True))
 
     async def _one_candidate(*_a, **_kw):
         return [_candidate()]
@@ -160,7 +160,7 @@ async def test_happy_path_stages_and_saves(monkeypatch):
     _stub_atproto_and_session(monkeypatch)
 
     state = proactive._empty_state()
-    monkeypatch.setattr(proactive, "load_pending_replies", lambda: state)
+    monkeypatch.setattr(proactive, "load_pending_replies", lambda: (state, True))
 
     async def _two_candidates(*_a, **_kw):
         return [
@@ -186,3 +186,33 @@ async def test_happy_path_stages_and_saves(monkeypatch):
     assert state["pending"][0]["parent_text"] == "higher engagement"
     assert state["pending"][0]["draft_reply"].startswith("cgroup v1")
     assert len(save_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_untrusted_load_skips_run_without_scanning_or_saving(monkeypatch):
+    """Gist read failed (trusted=False) → skip entirely: no scan, no save.
+
+    Regression guard for the Codex 2026-06-12 finding: an untrusted (empty)
+    load must not lead to staging + saving, which would overwrite real
+    pending/posted/rejected history and bypass cooldown.
+    """
+    _stub_creds(monkeypatch)
+    _stub_atproto_and_session(monkeypatch)
+
+    monkeypatch.setattr(proactive, "load_pending_replies",
+                        lambda: (proactive._empty_state(), False))
+
+    scan_calls = []
+    async def _scan(*_a, **_kw):
+        scan_calls.append(1)
+        return [_candidate()]
+    monkeypatch.setattr(proactive, "scan_watchlist", _scan)
+    save_calls = []
+    monkeypatch.setattr(proactive, "save_pending_replies",
+                        lambda s: save_calls.append(s) or True)
+
+    rc = await run_proactive_scan._run()
+
+    assert rc == 0
+    assert scan_calls == []  # never scanned
+    assert save_calls == []  # never saved → real state preserved

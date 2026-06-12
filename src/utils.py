@@ -11,7 +11,7 @@ import functools
 import ipaddress
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable, TypeVar
+from typing import List, Dict, Any, Optional, Callable, TypeVar, Tuple
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -112,11 +112,30 @@ def _save_state_to_store(key: str, data: Any) -> bool:
         SafeLogger.warn("state_store_post_failed", "Remote state POST failed", error_type=type(e).__name__, state_key=key)
         return False
 
-def _load_gist_state(filename: str) -> Optional[Any]:
-    """Load a JSON state file from a private GitHub Gist."""
+def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
+    """Load a JSON state file from a private Gist, distinguishing a
+    TRUSTWORTHY empty from an UNTRUSTED one.
+
+    Returns ``(value, trusted)``:
+      - ``trusted=True``  — the result is safe to act on. Either the file
+        loaded fine (value = parsed JSON), or the read genuinely found no
+        such state (value = None) because no Gist is configured (local dev)
+        or the Gist is reachable but the file has never been written.
+      - ``trusted=False`` — the read itself failed (transport / HTTP / auth /
+        corrupt-content). value = None, but that None means "could not read",
+        NOT "no state exists". Callers must NOT overwrite real state on this.
+
+    Why this matters: ``_load_gist_state`` collapses every failure to ``None``,
+    so a transient Gist read failure is indistinguishable from genuinely-absent
+    state. For append-only / approval state (``pending_replies.json``) that
+    ambiguity is destructive — a save after a failed read overwrites real
+    pending/posted/rejected history. This strict variant lets those callers
+    skip work instead. (Flagged by the Codex review on 2026-06-12; see
+    AGENTS.md "fail loud on critical state".)
+    """
     gist_id = os.environ.get("GIST_ID", "").strip()
     if not gist_id:
-        return None
+        return None, True  # local dev, no Gist configured — empty is legitimate
     token = os.environ.get("GIST_TOKEN", "").strip()
     headers: Dict[str, str] = {"Accept": "application/vnd.github+json"}
     if token:
@@ -128,9 +147,11 @@ def _load_gist_state(filename: str) -> Optional[Any]:
             timeout=STATE_STORE_TIMEOUT_SECONDS,
         )
         resp.raise_for_status()
-        content = resp.json()["files"][filename]["content"]
-        return json.loads(content)
+        payload = resp.json()
     except Exception as e:
+        # Transport / HTTP / auth failure — the Gist itself was unreachable.
+        # This is the untrusted case: state may well exist, we just couldn't
+        # read it. Do NOT let callers treat this as "empty".
         SafeLogger.warn(
             "gist_state_read_failed",
             "Gist state read failed",
@@ -138,7 +159,37 @@ def _load_gist_state(filename: str) -> Optional[Any]:
             error_msg=str(e)[:200],
             state_file=filename,
         )
-        return None
+        return None, False
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, dict) or filename not in files:
+        # Gist reachable, but this file has never been written. Genuinely
+        # absent — trustworthy empty (e.g. the first proactive run).
+        return None, True
+    try:
+        return json.loads(files[filename]["content"]), True
+    except Exception as e:
+        # Stored content is corrupt/unparseable. Treat as untrusted rather
+        # than silently clobbering it with an empty state.
+        SafeLogger.warn(
+            "gist_state_parse_failed",
+            "Gist state content could not be parsed",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+            state_file=filename,
+        )
+        return None, False
+
+
+def _load_gist_state(filename: str) -> Optional[Any]:
+    """Load a JSON state file from a private GitHub Gist.
+
+    Thin wrapper over ``_load_gist_state_strict`` that drops the trust flag —
+    preserves the original "None on any failure or absence" contract for
+    callers (seen_articles, etc.) that have their own multi-tier fallbacks.
+    State that must NOT be overwritten on a failed read should call
+    ``_load_gist_state_strict`` directly and honour ``trusted``.
+    """
+    return _load_gist_state_strict(filename)[0]
 
 
 def _save_gist_state(filename: str, data: Any) -> bool:

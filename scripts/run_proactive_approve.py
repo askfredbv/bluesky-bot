@@ -64,7 +64,19 @@ async def _run() -> int:
         action=action,
     )
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
+    if not trusted:
+        # The Gist read failed — `state` is empty because we couldn't read it,
+        # not because the draft is gone. Proceeding would (a) report the draft
+        # "not found" for the wrong reason and (b) persist an empty state,
+        # destroying real pending/posted/rejected history. Abort without saving.
+        SafeLogger.error(
+            "proactive_approve_state_untrusted",
+            "Pending-replies read failed; aborting without save to avoid destroying state",
+            draft_id=draft_id,
+            action=action,
+        )
+        return 1
     now = datetime.now(timezone.utc)
 
     if action == "reject":

@@ -63,3 +63,85 @@ def test_replied_to_recovers_from_interrupted_write(monkeypatch, tmp_path):
     assert json.loads(primary.read_text()) == loaded
 
 
+# ---------------------------------------------------------------------------
+# _load_gist_state_strict — trustworthy-empty vs untrusted-empty
+# (Codex review 2026-06-12: a failed read must be distinguishable from
+#  genuinely-absent state, so callers don't overwrite real data.)
+# ---------------------------------------------------------------------------
+
+class _FakeResp:
+    def __init__(self, payload=None, raise_exc=None):
+        self._payload = payload
+        self._raise_exc = raise_exc
+
+    def raise_for_status(self):
+        if self._raise_exc is not None:
+            raise self._raise_exc
+
+    def json(self):
+        return self._payload
+
+
+def _patch_gist_env(monkeypatch):
+    monkeypatch.setenv("GIST_ID", "fake-gist-id")
+    monkeypatch.setenv("GIST_TOKEN", "fake-token")
+
+
+def test_strict_no_gist_configured_is_trusted_empty(monkeypatch):
+    monkeypatch.delenv("GIST_ID", raising=False)
+    value, trusted = utils._load_gist_state_strict("pending_replies.json")
+    assert value is None
+    assert trusted is True  # local dev — empty is legitimate
+
+
+def test_strict_transport_failure_is_untrusted(monkeypatch):
+    _patch_gist_env(monkeypatch)
+    monkeypatch.setattr(
+        utils.httpx, "get",
+        lambda *a, **k: _FakeResp(raise_exc=RuntimeError("503 Service Unavailable")),
+    )
+    value, trusted = utils._load_gist_state_strict("pending_replies.json")
+    assert value is None
+    assert trusted is False  # read failed — state may exist, do NOT treat as empty
+
+
+def test_strict_file_absent_is_trusted_empty(monkeypatch):
+    _patch_gist_env(monkeypatch)
+    # Gist reachable, but this file has never been written.
+    monkeypatch.setattr(
+        utils.httpx, "get",
+        lambda *a, **k: _FakeResp(payload={"files": {"other.json": {"content": "{}"}}}),
+    )
+    value, trusted = utils._load_gist_state_strict("pending_replies.json")
+    assert value is None
+    assert trusted is True  # genuinely absent (first run) — safe empty
+
+
+def test_strict_valid_content_is_trusted_value(monkeypatch):
+    _patch_gist_env(monkeypatch)
+    payload = {"files": {"pending_replies.json": {"content": json.dumps({"pending": [1]})}}}
+    monkeypatch.setattr(utils.httpx, "get", lambda *a, **k: _FakeResp(payload=payload))
+    value, trusted = utils._load_gist_state_strict("pending_replies.json")
+    assert value == {"pending": [1]}
+    assert trusted is True
+
+
+def test_strict_corrupt_content_is_untrusted(monkeypatch):
+    _patch_gist_env(monkeypatch)
+    payload = {"files": {"pending_replies.json": {"content": '{"pending": [bad'}}}
+    monkeypatch.setattr(utils.httpx, "get", lambda *a, **k: _FakeResp(payload=payload))
+    value, trusted = utils._load_gist_state_strict("pending_replies.json")
+    assert value is None
+    assert trusted is False  # unparseable — don't clobber with empty
+
+
+def test_load_gist_state_wrapper_still_returns_none_on_failure(monkeypatch):
+    """The thin wrapper preserves the old 'None on any failure' contract."""
+    _patch_gist_env(monkeypatch)
+    monkeypatch.setattr(
+        utils.httpx, "get",
+        lambda *a, **k: _FakeResp(raise_exc=RuntimeError("timeout")),
+    )
+    assert utils._load_gist_state("pending_replies.json") is None
+
+
