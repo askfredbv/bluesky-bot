@@ -1,19 +1,21 @@
-name: Voice Audit (monthly)
+name: Voice Audit (on demand)
 
 # An independent, Pro-tier Gemini critique of the bot's recent posts against
-# Frederik's voice — surfaced as a GitHub issue for human review. NOT an
-# auto-fixer: nothing is applied, the issue is a draft critique to weigh.
-# Deliberately low-cadence (monthly) — voice drift is slow, and the point is
-# a report you actually read, not plat bandwerk.
+# Frederik's voice — surfaced as a GitHub issue. NOT an auto-fixer: nothing is
+# applied, the issue is a draft critique to weigh.
+#
+# MANUAL ONLY (workflow_dispatch). The primary cadence is a periodic evening
+# REMINDER (a scheduled Claude session) that prepares the stronger manual
+# cross-context Gemini audit — running Gemini yourself in a separate context
+# is more independent than this Gemini-audits-near-Gemini auto-version. This
+# workflow stays as the lazy fallback: one click for a quick auto-issue when
+# you don't want to do the manual run. See docs/VOICE_AUDIT.md.
 #
 # The auditor is a Pro-tier model, different from the gemini-3.5-flash writer,
-# so the critic's blind spots differ from the author's. See docs/VOICE_AUDIT.md.
+# so the critic's blind spots differ from the author's.
 
 on:
   workflow_dispatch:
-  schedule:
-    # 07:11 UTC on the 1st of each month (off-:00 to be polite to the API).
-    - cron: "11 7 1 * *"
 
 jobs:
   audit:

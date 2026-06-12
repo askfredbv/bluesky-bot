@@ -19,18 +19,23 @@ across 4 of 12 posts) — which landed as a real fix in commit `7c4b5f1`.
 - Roughly monthly otherwise, or whenever the feed "feels off".
 - Not a gate — a periodic sharpening pass.
 
-## Automated version (monthly issue)
+## Cadence: a reminder, not an auto-run
 
-`.github/workflows/voice-audit.yml` runs `scripts/run_voice_audit.py` on the
-1st of each month (and on manual `workflow_dispatch`). It uses a **Pro-tier
-Gemini auditor** (different from the gemini-3.5-flash writer) and opens a
-GitHub issue titled "Voice audit — <date>" with the critique. The issue is a
-**draft to review** — it leads with "claims to verify, not verdicts", and
-nothing is auto-applied. Deliberately monthly, not daily: voice drift is slow,
-and the point is a report you actually read, not plat bandwerk. The manual
-process below stays available for ad-hoc runs (e.g. right after a prompt
-change) — and is a cleaner cross-context check (you running Gemini yourself is
-more independent than a Gemini model auditing near-Gemini output).
+The primary cadence is a **periodic evening reminder** (a scheduled Claude
+session, ~every 4 weeks, weekday evening) that pulls the recent posts and
+prepares the ready-to-paste Gemini package below, so the **manual** run — the
+stronger, genuinely cross-context check — is frictionless. Each reminder
+session schedules the next. This keeps a human in the loop by design; it is
+not plat bandwerk.
+
+`.github/workflows/voice-audit.yml` is the **lazy fallback**: a manual
+(`workflow_dispatch`) run of `scripts/run_voice_audit.py` that uses a Pro-tier
+Gemini auditor (different from the gemini-3.5-flash writer) and opens a
+"Voice audit — <date>" GitHub issue. One click when you'd rather get a quick
+auto-draft than do the manual run. The issue leads with "claims to verify, not
+verdicts" — nothing is auto-applied. It runs on demand only (no schedule):
+the Gemini-audits-near-Gemini auto-version is weaker independence than you
+running Gemini yourself, so the manual path stays primary.
 
 ## How to run
 
