@@ -528,6 +528,16 @@ def test_curator_prompt_makes_first_person_the_default():
     assert "FIRST PERSON IS THE DEFAULT" in p
 
 
+def test_curator_prompt_warns_against_template_openings():
+    """2026-06-12 Gemini voice audit: external-content posts over-used the
+    'The most interesting bit in this paper' / 'The bit that landed' opener.
+    The prompt now flags template-repetition as the AI tell."""
+    from src.config import SYSTEM_INSTRUCTIONS_CURATOR
+    p = SYSTEM_INSTRUCTIONS_CURATOR
+    assert "VARY THE OPENING" in p
+    assert "the template is the tell" in p.lower()
+
+
 # ---------------------------------------------------------------------------
 # Voice anchor (2026-05-21) — STYLE_GUIDELINES + structural moves
 # ---------------------------------------------------------------------------
