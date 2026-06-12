@@ -19,6 +19,19 @@ across 4 of 12 posts) — which landed as a real fix in commit `7c4b5f1`.
 - Roughly monthly otherwise, or whenever the feed "feels off".
 - Not a gate — a periodic sharpening pass.
 
+## Automated version (monthly issue)
+
+`.github/workflows/voice-audit.yml` runs `scripts/run_voice_audit.py` on the
+1st of each month (and on manual `workflow_dispatch`). It uses a **Pro-tier
+Gemini auditor** (different from the gemini-3.5-flash writer) and opens a
+GitHub issue titled "Voice audit — <date>" with the critique. The issue is a
+**draft to review** — it leads with "claims to verify, not verdicts", and
+nothing is auto-applied. Deliberately monthly, not daily: voice drift is slow,
+and the point is a report you actually read, not plat bandwerk. The manual
+process below stays available for ad-hoc runs (e.g. right after a prompt
+change) — and is a cleaner cross-context check (you running Gemini yourself is
+more independent than a Gemini model auditing near-Gemini output).
+
 ## How to run
 
 1. Pull the last ~12 posts (public API, no auth):
