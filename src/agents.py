@@ -993,9 +993,23 @@ async def generate_content(
                 # below operate on a list of strings in both cases.
                 chosen_link = None
                 if curator_structured:
-                    if not isinstance(parsed, dict) or "posts" not in parsed:
+                    # `url` must be present AND non-empty — not just `posts`.
+                    # A missing/empty url means the model ignored the contract
+                    # this fix depends on; accepting it would leave chosen_link
+                    # None and silently fall back to news_items[0] below,
+                    # re-introducing the exact text/card mismatch this change
+                    # exists to kill. Raise → retry the model for the url
+                    # instead. (A url that IS present but matches no offered
+                    # item is a different case — that keeps the fallback below,
+                    # for hallucinated/edited urls.) Flagged by Codex review on
+                    # PR #51 (2026-06-12).
+                    if (
+                        not isinstance(parsed, dict)
+                        or "posts" not in parsed
+                        or not parsed.get("url")
+                    ):
                         raise ValueError(
-                            "Curator output must be a JSON object with 'url' and 'posts'"
+                            "Curator output must be a JSON object with non-empty 'url' and 'posts'"
                         )
                     content_list = parsed.get("posts")
                     chosen_link = parsed.get("url")
