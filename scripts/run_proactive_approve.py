@@ -117,10 +117,30 @@ async def _run() -> int:
 
     saved = proactive.save_pending_replies(state)
     if not saved:
-        SafeLogger.error(
-            "proactive_approve_state_save_failed",
-            "Action completed but state did not persist — inconsistent",
-        )
+        # An approve that already POSTED but failed to persist is the
+        # dangerous case (Codex review 2026-06-12, finding #2): the reply is
+        # live on Bluesky, but the remote Gist still shows the draft in
+        # `pending`, so a human re-running approval would post it a SECOND
+        # time. Surface that as a distinct, loud incident with the recovery
+        # data and an explicit do-not-rerun instruction. A reject (or a
+        # failed approve that never posted) carries no double-post risk, so
+        # it gets the generic save-failure log.
+        posted_uri = result.get("posted_uri") if isinstance(result, dict) else None
+        if action == "approve" and posted_uri:
+            SafeLogger.error(
+                "proactive_posted_but_not_persisted",
+                "Reply WAS POSTED but state did not persist — DO NOT re-run "
+                "approval until pending_replies.json is repaired, or the reply "
+                "will double-post",
+                draft_id=draft_id,
+                posted_uri=posted_uri,
+                parent_author=result.get("parent_author", ""),
+            )
+        else:
+            SafeLogger.error(
+                "proactive_approve_state_save_failed",
+                "Action completed but state did not persist — inconsistent",
+            )
         return 1
     if result is None:
         return 1
