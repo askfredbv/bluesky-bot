@@ -84,7 +84,17 @@ async def _run() -> int:
         )
         return 0
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
+    if not trusted:
+        # The Gist read failed — `state` is empty because we couldn't read it,
+        # not because there are no drafts. Staging + saving now would overwrite
+        # real pending/posted/rejected history and bypass cooldown (the posted
+        # history that drives it is gone). Skip the run; next scan retries.
+        SafeLogger.error(
+            "proactive_scan_state_untrusted",
+            "Pending-replies read failed; skipping run to avoid overwriting real state",
+        )
+        return 0
     pending_before = len(state.get("pending", []))
     now = datetime.now(timezone.utc)
 

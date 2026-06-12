@@ -89,73 +89,97 @@ class _FakeBskyClient:
 # load_pending_replies
 # ---------------------------------------------------------------------------
 
-def test_load_returns_empty_skeleton_when_gist_absent(monkeypatch):
-    """No state on the Gist → canonical empty skeleton with all three buckets."""
-    monkeypatch.setattr(proactive, "_load_gist_state", lambda _f: None)
+# load_pending_replies returns (state, trusted). The strict loader signals
+# trust: True = safe to act on (loaded, or genuinely absent); False = the
+# read failed and the empty state is "could not read", not "no drafts".
 
-    state = proactive.load_pending_replies()
+def test_load_returns_empty_skeleton_when_gist_absent(monkeypatch):
+    """Genuinely absent (strict loader: None, trusted=True) → empty + trusted."""
+    monkeypatch.setattr(proactive, "_load_gist_state_strict", lambda _f: (None, True))
+
+    state, trusted = proactive.load_pending_replies()
 
     assert state == {"pending": [], "posted": [], "rejected": []}
+    assert trusted is True
 
 
 def test_load_returns_state_when_gist_present(monkeypatch):
-    """Gist has full state → returned verbatim."""
+    """Gist has full state → returned verbatim, trusted."""
     fixture = {
         "pending": [{"id": "abc", "platform": "bluesky", "draft_reply": "hi"}],
         "posted": [{"id": "old", "posted_at": "2026-05-14T10:00:00Z"}],
         "rejected": [{"id": "bad", "rejected_reason": "voice_drift"}],
     }
-    monkeypatch.setattr(proactive, "_load_gist_state", lambda _f: fixture)
+    monkeypatch.setattr(proactive, "_load_gist_state_strict", lambda _f: (fixture, True))
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
 
     assert state == fixture
+    assert trusted is True
 
 
 def test_load_fills_missing_buckets_with_empty_lists(monkeypatch):
     """Partial state (only 'pending' present) → other buckets default to []."""
     monkeypatch.setattr(
-        proactive, "_load_gist_state",
-        lambda _f: {"pending": [{"id": "abc"}]},
+        proactive, "_load_gist_state_strict",
+        lambda _f: ({"pending": [{"id": "abc"}]}, True),
     )
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
 
     assert state["pending"] == [{"id": "abc"}]
     assert state["posted"] == []
     assert state["rejected"] == []
+    assert trusted is True
 
 
 def test_load_ignores_non_list_bucket_values(monkeypatch):
     """Defensive: malformed bucket (string instead of list) → empty list."""
     monkeypatch.setattr(
-        proactive, "_load_gist_state",
-        lambda _f: {"pending": "not-a-list", "posted": [], "rejected": []},
+        proactive, "_load_gist_state_strict",
+        lambda _f: ({"pending": "not-a-list", "posted": [], "rejected": []}, True),
     )
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
 
     assert state == {"pending": [], "posted": [], "rejected": []}
+    assert trusted is True
 
 
 def test_load_handles_non_dict_state(monkeypatch):
-    """Defensive: Gist returns a list (corrupt) → empty skeleton."""
-    monkeypatch.setattr(proactive, "_load_gist_state", lambda _f: ["unexpected"])
+    """Defensive: loader returns a list (corrupt) but trusted → empty skeleton, trusted."""
+    monkeypatch.setattr(proactive, "_load_gist_state_strict", lambda _f: (["unexpected"], True))
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
 
     assert state == {"pending": [], "posted": [], "rejected": []}
+    assert trusted is True
 
 
-def test_load_handles_gist_exception(monkeypatch):
-    """Gist read raises → empty skeleton, no crash."""
+def test_load_untrusted_when_read_failed(monkeypatch):
+    """Strict loader signals trusted=False (read failed) → empty state + trusted=False.
+
+    Regression guard for the Codex 2026-06-12 finding: a failed Gist read must
+    NOT look like 'no drafts' to callers, or a save would clobber real state.
+    """
+    monkeypatch.setattr(proactive, "_load_gist_state_strict", lambda _f: (None, False))
+
+    state, trusted = proactive.load_pending_replies()
+
+    assert state == {"pending": [], "posted": [], "rejected": []}
+    assert trusted is False
+
+
+def test_load_handles_strict_loader_exception(monkeypatch):
+    """If the strict loader itself raises → untrusted (not a silent empty)."""
     def boom(_f):
         raise RuntimeError("Gist unreachable")
-    monkeypatch.setattr(proactive, "_load_gist_state", boom)
+    monkeypatch.setattr(proactive, "_load_gist_state_strict", boom)
 
-    state = proactive.load_pending_replies()
+    state, trusted = proactive.load_pending_replies()
 
     assert state == {"pending": [], "posted": [], "rejected": []}
+    assert trusted is False
 
 
 # ---------------------------------------------------------------------------

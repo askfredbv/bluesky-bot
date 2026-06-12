@@ -48,7 +48,7 @@ from src.config import (
     PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS,
 )
 from src.logger import SafeLogger
-from src.utils import _load_gist_state, _save_gist_state
+from src.utils import _load_gist_state_strict, _save_gist_state
 
 _PENDING_REPLIES_FILENAME = "pending_replies.json"
 
@@ -62,33 +62,43 @@ def _empty_state() -> Dict[str, List[Dict[str, Any]]]:
     return {"pending": [], "posted": [], "rejected": []}
 
 
-def load_pending_replies() -> Dict[str, List[Dict[str, Any]]]:
-    """Load proactive-reply state from the Gist; return empty skeleton if absent.
+def load_pending_replies() -> Tuple[Dict[str, List[Dict[str, Any]]], bool]:
+    """Load proactive-reply state from the Gist.
 
-    Defensive against partial / malformed state: any missing bucket key is
-    filled with an empty list. This keeps callers free of ``.get(..., [])``
-    boilerplate at every read site.
+    Returns ``(state, trusted)``:
+      - ``state`` is the canonical 3-bucket skeleton, with any missing/
+        malformed bucket filled as an empty list (callers stay free of
+        ``.get(..., [])`` boilerplate).
+      - ``trusted`` is ``False`` when the Gist read itself failed — meaning
+        the empty ``state`` is "could not read", NOT "no drafts exist".
+
+    Callers MUST honour ``trusted``: persisting an empty state after an
+    untrusted read overwrites real pending/posted/rejected history. The
+    scan should skip the run; the approval workflow should exit without
+    saving. (Codex review 2026-06-12; AGENTS.md "fail loud on critical
+    state".)
     """
     try:
-        data = _load_gist_state(_PENDING_REPLIES_FILENAME)
+        data, trusted = _load_gist_state_strict(_PENDING_REPLIES_FILENAME)
     except Exception as e:
-        SafeLogger.warn(
+        SafeLogger.error(
             "pending_replies_load_failed",
-            "Could not load pending_replies from Gist; using empty state",
+            "Could not load pending_replies from Gist; treating state as untrusted",
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
         )
-        return _empty_state()
+        return _empty_state(), False
 
-    if not isinstance(data, dict):
-        return _empty_state()
+    if not trusted:
+        return _empty_state(), False
 
     state = _empty_state()
-    for bucket in ("pending", "posted", "rejected"):
-        value = data.get(bucket)
-        if isinstance(value, list):
-            state[bucket] = value
-    return state
+    if isinstance(data, dict):
+        for bucket in ("pending", "posted", "rejected"):
+            value = data.get(bucket)
+            if isinstance(value, list):
+                state[bucket] = value
+    return state, True
 
 
 def save_pending_replies(state: Dict[str, List[Dict[str, Any]]]) -> bool:
