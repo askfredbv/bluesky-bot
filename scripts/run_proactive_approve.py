@@ -127,12 +127,17 @@ async def _run() -> int:
         # it gets the generic save-failure log.
         posted_uri = result.get("posted_uri") if isinstance(result, dict) else None
         if action == "approve" and posted_uri:
+            # Log the RESOLVED draft UUID from the posted entry, not the input
+            # selector — which is "first" by default (the workflow default) and
+            # useless for recovery. The remote pending entry is keyed by UUID;
+            # an operator repairing pending_replies.json needs that id to edit
+            # the right entry. (Codex review 2026-06-12, finding on this PR.)
             SafeLogger.error(
                 "proactive_posted_but_not_persisted",
                 "Reply WAS POSTED but state did not persist — DO NOT re-run "
                 "approval until pending_replies.json is repaired, or the reply "
                 "will double-post",
-                draft_id=draft_id,
+                draft_id=result.get("id", draft_id),
                 posted_uri=posted_uri,
                 parent_author=result.get("parent_author", ""),
             )

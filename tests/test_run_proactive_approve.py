@@ -175,9 +175,12 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
     generic save failure."""
     _stub_creds(monkeypatch)
     monkeypatch.setenv("ACTION", "approve")
-    monkeypatch.setenv("DRAFT_ID", "abc")
+    # Use the workflow default selector "first" — the common path. The
+    # recovery log must carry the RESOLVED draft UUID, not the literal "first".
+    monkeypatch.setenv("DRAFT_ID", "first")
 
-    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    real_uuid = "94eb5ae1-8f06-481d-8743-14e80eead7ce"
+    state = {"pending": [_draft(draft_id=real_uuid)], "posted": [], "rejected": []}
     monkeypatch.setattr(proactive, "load_pending_replies", lambda: (state, True))
 
     import sys
@@ -197,7 +200,8 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
     monkeypatch.setattr(run_proactive_approve, "load_or_login", _noop_login)
 
     async def _fake_approve(draft_id, client, state, now):
-        draft = next(d for d in state["pending"] if d["id"] == draft_id)
+        # Mimic real resolution: "first" → the oldest pending draft.
+        draft = state["pending"][0]
         state["pending"].remove(draft)
         posted = {**draft, "posted_at": now.isoformat(),
                   "posted_uri": "at://did:plc:askfred/app.bsky.feed.post/live"}
@@ -222,7 +226,8 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
     assert "proactive_approve_state_save_failed" not in names  # not the generic one
     fields = next(f for e, f in events if e == "proactive_posted_but_not_persisted")
     assert fields["posted_uri"] == "at://did:plc:askfred/app.bsky.feed.post/live"
-    assert fields["draft_id"] == "abc"
+    # The resolved UUID, NOT the input selector "first" (Codex #54 finding).
+    assert fields["draft_id"] == real_uuid
 
 
 @pytest.mark.asyncio
