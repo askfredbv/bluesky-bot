@@ -305,7 +305,7 @@ Compared to pre-Phase-3 baseline: Curator picks and Mentor topic distribution vi
 
 Plan asks for "2–3 you'd stake a first reply on." The Bluesky-only result clears the lower bound. The plan's "top 5 defensible" framing assumed the seed list survived contact with reality; in practice 4 of 6 seeds were dead/squatted/political and got pruned. Slate is intentionally short until manual discovery adds more.
 
-> **Targeting data scrubbed from the public repo (2026-06-15).** The repo is public; a committed list that names + scores specific people for reply-worthiness is needlessly exposing. So: the watchlist is loaded from the `PROACTIVE_REPLY_WATCHLIST` env var (set as a secret when activating 4b), the candidate-research list lives in the gitignored `scripts/watchlist_candidates.py` (template: `watchlist_candidates.example.py`), and the scored audit table lives in the gitignored `docs/WATCHLIST_AUDIT.md`. The machinery stays public as portfolio; the named targets do not. (Note: this scrubs the working tree, not git history — the names remain in past commits. Type B — illustrative few-shot examples in `config.py` that attribute fabricated posts to real handles — is a separate, still-open decision.)
+> **Targeting data scrubbed from the public repo (2026-06-15).** The repo is public; a committed list that names + scores specific people for reply-worthiness is needlessly exposing. So: the watchlist is loaded from the `PROACTIVE_REPLY_WATCHLIST` env var (set as a secret when activating 4b), the candidate-research list lives in the gitignored `scripts/watchlist_candidates.py` (template: `watchlist_candidates.py.example`), and the scored audit table lives in the gitignored `docs/WATCHLIST_AUDIT.md`. The machinery stays public as portfolio; the named targets do not. (Note: this scrubs the working tree, not git history — the names remain in past commits. Type B — illustrative few-shot examples in `config.py` that attribute fabricated posts to real handles — is a separate, still-open decision.)
 
 **Mastodon coverage: deferred as nice-to-have.** The audit's Mastodon path returns HTML instead of JSON for `account_search` — likely a token-scope or instance-URL mismatch (see `BACKLOG.md §3`). Not a 4a blocker because Bluesky already satisfies the gate; revisit when adding new candidates would benefit from cross-platform scoring.
 
@@ -321,7 +321,7 @@ Plan asks for "2–3 you'd stake a first reply on." The Bluesky-only result clea
 
 Output: ranked markdown table + sample-post appendix so the scores can be eyeballed against reality.
 
-**Candidate seed list:** kept in the gitignored `scripts/watchlist_candidates.py` (template: `watchlist_candidates.example.py`) — independent-practitioner accounts that post substantive observations, plus Dutch/Belgian tech folks via manual discovery. Not listed here (named-targets-out-of-public-repo, see the scrub note above).
+**Candidate seed list:** kept in the gitignored `scripts/watchlist_candidates.py` (template: `watchlist_candidates.py.example`) — independent-practitioner accounts that post substantive observations, plus Dutch/Belgian tech folks via manual discovery. Not listed here (named-targets-out-of-public-repo, see the scrub note above).
 
 **Hard exclusions:** frontier-lab CEOs (ambulance-chasing optics), AI-news aggregators (amplifies noise), political accounts of any stripe, hot-take accounts.
 
