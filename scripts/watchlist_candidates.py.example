@@ -15,6 +15,12 @@ political accounts, hot-take / dunk-tank accounts.
 """
 from __future__ import annotations
 
+# These are the module's public API: audit_watchlist.py imports both by name.
+# Declaring __all__ also keeps CodeQL's py/unused-global-variable quiet — the
+# names are exported, not dead (the placeholder lists below are empty on
+# purpose; the real handles live in the gitignored copy of this file).
+__all__ = ["BLUESKY_CANDIDATES", "MASTODON_CANDIDATES"]
+
 # Bluesky handles — bare handle form, no leading @
 BLUESKY_CANDIDATES: list[str] = [
     # "example-practitioner.bsky.social",
