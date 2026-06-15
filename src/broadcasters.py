@@ -15,6 +15,7 @@ from src.metrics import BroadcastResult
 
 MASTODON_POST_TIMEOUT_SECONDS = 20.0
 _MASTODON_IMAGE_MAX_BYTES = 8 * 1024 * 1024  # Mastodon default cap — 8 MB
+_BLUESKY_IMAGE_MAX_BYTES = 976 * 1024        # 976 KB — safe margin under Bluesky's 1 MB blob limit
 
 
 def _detect_image_mime(data: bytes) -> str:
@@ -26,6 +27,70 @@ def _detect_image_mime(data: bytes) -> str:
                 "gif": "image/gif", "webp": "image/webp"}.get(fmt, "image/png")
     except Exception:
         return "image/png"
+
+
+def _compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, bool]:
+    """Re-encode (and if needed downscale) an image to fit under ``max_bytes``.
+
+    Returns ``(bytes, fits)``. Already-small images pass through unchanged.
+    For the rest: re-encode to JPEG at descending quality, then progressively
+    downscale, until the result is under budget — returning the first that
+    fits. If nothing fits (or Pillow is unavailable), returns the original
+    bytes with ``fits=False`` so the caller can skip the attach.
+
+    Why this exists (2026-06-14): Imagen 4 (imagen-4.0-generate-001) at 1:1
+    returns ~1.0-1.4 MB PNGs — structurally over the 976 KB Bluesky gate that
+    was sized for Imagen 3's smaller output. The broadcaster used to *measure
+    and drop*, so every recent Mentor image was silently discarded (last image
+    on the feed: 2026-06-08). JPEG re-encoding a flat editorial illustration
+    typically shrinks it 3-5x, well under the gate, so the image actually ships.
+    """
+    if len(image_bytes) <= max_bytes:
+        return image_bytes, True
+    try:
+        from PIL import Image
+    except Exception as e:
+        # Pillow should always be present (it's a dependency), but if it ever
+        # isn't, surface WHY — don't let it masquerade as "too large" downstream.
+        SafeLogger.warn(
+            "image_compress_unavailable",
+            "Pillow unavailable; cannot compress oversized image",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        return image_bytes, False
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        # JPEG has no alpha; flatten anything with transparency / palette.
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        for scale in (1.0, 0.85, 0.7, 0.55, 0.4):
+            if scale == 1.0:
+                candidate = img
+            else:
+                w, h = img.size
+                candidate = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+            for quality in (85, 75, 60):
+                buf = io.BytesIO()
+                candidate.save(buf, format="JPEG", quality=quality, optimize=True)
+                data = buf.getvalue()
+                if len(data) <= max_bytes:
+                    return data, True
+        # Genuinely tried everything and nothing fit — a real "too large"; the
+        # caller's image_too_large log is accurate here.
+        return image_bytes, False
+    except Exception as e:
+        # A real compression FAILURE (unsupported format, truncated bytes,
+        # encoder regression) — distinct from "too large". Capture the reason
+        # so an image outage is diagnosable, per the project's error_msg
+        # discipline (Codex review on PR #56). Returns False; the caller skips.
+        SafeLogger.warn(
+            "image_compress_failed",
+            "Could not re-encode oversized image; skipping attach",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        return image_bytes, False
 
 def _enforce_post_length_invariant(content_list: List[str], max_length: int, platform_name: str) -> bool:
     """Hard invariant check — all posts must fit the platform limit.
@@ -114,23 +179,34 @@ async def post_to_bluesky(
             embed = None
             if i == 0:
                 if image_bytes:
-                    # Image embed (Mentor/Strategist) — Bluesky hard limit is 1 MB per image
-                    _BLUESKY_IMAGE_MAX_BYTES = 976 * 1024  # 976 KB — safe margin under 1 MB
-                    if len(image_bytes) > _BLUESKY_IMAGE_MAX_BYTES:
+                    # Image embed (Mentor/Strategist). Imagen 4 output clusters
+                    # around/above Bluesky's 1 MB blob limit, so compress to fit
+                    # rather than drop (2026-06-14 fix — see _compress_image_to_fit).
+                    fitted, fits = _compress_image_to_fit(image_bytes, _BLUESKY_IMAGE_MAX_BYTES)
+                    if not fits:
                         SafeLogger.warn(
                             "image_too_large",
-                            "Generated image exceeds Bluesky 1 MB limit; skipping image attach",
+                            "Image still exceeds Bluesky 1 MB limit after compression; skipping attach",
                             platform="bluesky",
-                            size_bytes=len(image_bytes),
+                            original_bytes=len(image_bytes),
+                            compressed_bytes=len(fitted),
                         )
                     else:
                         try:
-                            upload = await client.upload_blob(image_bytes)
+                            upload = await client.upload_blob(fitted)
                             embed = models.AppBskyEmbedImages.Main(
                                 images=[models.AppBskyEmbedImages.Image(
                                     image=upload.blob,
                                     alt=f"Illustration: {content_list[0][:100]}"
                                 )]
+                            )
+                            SafeLogger.info(
+                                "image_attached",
+                                "Generated image attached to Bluesky post",
+                                platform="bluesky",
+                                original_bytes=len(image_bytes),
+                                final_bytes=len(fitted),
+                                recompressed=fitted is not image_bytes,
                             )
                         except Exception as e:
                             SafeLogger.error(
