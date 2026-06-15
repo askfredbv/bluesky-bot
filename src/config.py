@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import List, Dict
 
@@ -39,8 +40,8 @@ HASHTAG_OPTIONAL_MIN_CHARS: int = 110
 MIN_THREAD_POSTS: int = 1
 MAX_THREAD_POSTS: int = 5
 # v4.21 (2026-05-21): Dutch removed. 7 of 25 recent posts shipped in
-# Dutch — random selection, no audience strategy. Watchlist (simonw,
-# xeiaso) is English; tech Bluesky is English-dominant even for Belgian
+# Dutch — random selection, no audience strategy. The reply watchlist is
+# English; tech Bluesky is English-dominant even for Belgian
 # devs. The "I'm Belgian" signal is in the bio already; doesn't need
 # to live in every other post at the cost of halved reach.
 LANGUAGE_OPTIONS: List[str] = ["English"]
@@ -301,17 +302,21 @@ MENTOR_TOPICS: List[str] = [
 ]
 
 # ── Phase 4b — Proactive replies (scaffolding only, no behaviour yet) ────────
-# v4.21 (2026-05-15) — first commit lands config + state schema only. The
-# scan/generate/approve flow lands in subsequent commits. Nothing in the
-# daily run reads these constants yet, so changing them is risk-free.
+# v4.21 (2026-05-15) — config + state schema. The scan/generate/approve flow
+# is dormant; nothing in the daily run reads these constants yet.
 #
-# Watchlist sourced from the Phase 4a audit (docs/WATCHLIST_AUDIT.md, gitignored)
-# which scored both candidates at voice=100 and reply_opportunity ≥58.
+# 2026-06-15: the watchlist is loaded from the PROACTIVE_REPLY_WATCHLIST env
+# var (a comma-separated list of handles), NOT hard-coded — the repo is public
+# and a committed list publicly "scores"/targets named people. Set it as a
+# GitHub secret when activating Phase 4b; the candidate-research file lives at
+# scripts/watchlist_candidates.py (gitignored, see .example). Empty default is
+# safe while Phase 4b is dormant.
+def _load_watchlist() -> List[str]:
+    raw = os.environ.get("PROACTIVE_REPLY_WATCHLIST", "")
+    return [h.strip() for h in raw.split(",") if h.strip()]
 
-PROACTIVE_REPLY_WATCHLIST: List[str] = [
-    "simonwillison.net",
-    "xeiaso.net",
-]
+
+PROACTIVE_REPLY_WATCHLIST: List[str] = _load_watchlist()
 PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS: int = 7   # max one draft per handle per 7 days
 PROACTIVE_REPLY_MAX_PARENT_AGE_HOURS: int = 12      # parent post must be < this old
 PROACTIVE_REPLY_MIN_PARENT_ENGAGEMENT: int = 1      # parent must have ≥1 reply/repost (alive)

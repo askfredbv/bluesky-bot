@@ -457,7 +457,16 @@ async def _run() -> int:
         print(f"[error] {exc}")
         return 2
 
-    from scripts.watchlist_candidates import BLUESKY_CANDIDATES, MASTODON_CANDIDATES
+    # The real candidates file is gitignored (named handles kept out of the
+    # public repo). Fall back to empty lists so a fresh clone runs cleanly —
+    # it just audits nobody until you copy watchlist_candidates.example.py to
+    # scripts/watchlist_candidates.py and add real handles.
+    try:
+        from scripts.watchlist_candidates import BLUESKY_CANDIDATES, MASTODON_CANDIDATES
+    except ImportError:
+        BLUESKY_CANDIDATES, MASTODON_CANDIDATES = [], []
+        print("[warn] scripts/watchlist_candidates.py not found — auditing nobody. "
+              "Copy scripts/watchlist_candidates.example.py to scripts/watchlist_candidates.py.")
 
     audits: list[HandleAudit] = []
     now = datetime.now(timezone.utc)

@@ -12,3 +12,6 @@ post_metrics.json
 growth.json
 .claude/
 docs/WATCHLIST_AUDIT.md
+
+# Phase 4a watchlist candidates — real handles kept out of the public repo
+scripts/watchlist_candidates.py

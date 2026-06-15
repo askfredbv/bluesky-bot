@@ -18,7 +18,7 @@ Each ``draft`` has the shape:
       "id":               "<uuid4>",
       "platform":         "bluesky",
       "parent_post_uri":  "at://did:plc:.../app.bsky.feed.post/...",
-      "parent_author":    "simonwillison.net",
+      "parent_author":    "example-dev.bsky.social",
       "parent_text":      "...",
       "draft_reply":      "...",
       "generated_at":     "<ISO-8601 UTC>",

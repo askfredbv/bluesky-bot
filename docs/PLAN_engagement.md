@@ -301,14 +301,11 @@ Compared to pre-Phase-3 baseline: Curator picks and Mentor topic distribution vi
 
 **Status 2026-04-28:** ✅ **complete.** `scripts/audit_watchlist.py` + `scripts/watchlist_candidates.py` + `tests/test_audit_watchlist.py` (29 tests, all green). Output destination: `docs/WATCHLIST_AUDIT.md` (gitignored — regenerate locally). Run: `python -m scripts.audit_watchlist` with the bot's env vars.
 
-**4a acceptance gate met:** first audit ranked 6 candidates; pruning landed on **2 defensible Bluesky stake-a-reply matches**:
+**4a acceptance gate met:** first audit ranked 6 candidates; pruning landed on **2 defensible Bluesky stake-a-reply matches** (both scored voice=100, reply-opportunity ≥58, aggregate >60). The named handles + scores live in the gitignored `docs/WATCHLIST_AUDIT.md` and `scripts/watchlist_candidates.py` (kept out of the public repo — see the 2026-06-15 "scrub targeting data" note below); they are not reproduced here on purpose.
 
-| Handle | Aggregate | Voice | Reply opp. | Cadence | Engagement |
-|---|---:|---:|---:|---:|---:|
-| `simonwillison.net` | 69.3 | 100 | 83 | 5.5/wk | 4.09/post |
-| `xeiaso.net` | 62.2 | 100 | 58 | 4.0/wk | 2.88/post |
+Plan asks for "2–3 you'd stake a first reply on." The Bluesky-only result clears the lower bound. The plan's "top 5 defensible" framing assumed the seed list survived contact with reality; in practice 4 of 6 seeds were dead/squatted/political and got pruned. Slate is intentionally short until manual discovery adds more.
 
-Plan asks for "2–3 you'd stake a first reply on." The Bluesky-only result clears the lower bound. The plan's "top 5 defensible" framing assumed the seed list survived contact with reality; in practice 4 of 6 seeds were dead/squatted/political and got pruned (see `scripts/watchlist_candidates.py` history). Slate is intentionally short until manual discovery adds more.
+> **Targeting data scrubbed from the public repo (2026-06-15).** The repo is public; a committed list that names + scores specific people for reply-worthiness is needlessly exposing. So: the watchlist is loaded from the `PROACTIVE_REPLY_WATCHLIST` env var (set as a secret when activating 4b), the candidate-research list lives in the gitignored `scripts/watchlist_candidates.py` (template: `watchlist_candidates.example.py`), and the scored audit table lives in the gitignored `docs/WATCHLIST_AUDIT.md`. The machinery stays public as portfolio; the named targets do not. (Note: this scrubs the working tree, not git history — the names remain in past commits. Type B — illustrative few-shot examples in `config.py` that attribute fabricated posts to real handles — is a separate, still-open decision.)
 
 **Mastodon coverage: deferred as nice-to-have.** The audit's Mastodon path returns HTML instead of JSON for `account_search` — likely a token-scope or instance-URL mismatch (see `BACKLOG.md §3`). Not a 4a blocker because Bluesky already satisfies the gate; revisit when adding new candidates would benefit from cross-platform scoring.
 
@@ -324,9 +321,7 @@ Plan asks for "2–3 you'd stake a first reply on." The Bluesky-only result clea
 
 Output: ranked markdown table + sample-post appendix so the scores can be eyeballed against reality.
 
-**Candidate seed list** (curate freely):
-- *Bluesky*: `simonwillison.net`, `jeremyhoward.bsky.social`, `swyx.io`, `jbhuang.bsky.social`, `pytorch.bsky.social`, `huggingface.bsky.social`, Dutch/Belgian tech journalists (manual discovery)
-- *Mastodon*: `@simon@simonwillison.net`, `@glyph@mastodon.social`, `@inthehands@hachyderm.io`, `@b0rk@jvns.ca`, `@jwildeboer@social.wildeboer.net`, Belgian `mastodon.be` tech folks (manual discovery)
+**Candidate seed list:** kept in the gitignored `scripts/watchlist_candidates.py` (template: `watchlist_candidates.example.py`) — independent-practitioner accounts that post substantive observations, plus Dutch/Belgian tech folks via manual discovery. Not listed here (named-targets-out-of-public-repo, see the scrub note above).
 
 **Hard exclusions:** frontier-lab CEOs (ambulance-chasing optics), AI-news aggregators (amplifies noise), political accounts of any stripe, hot-take accounts.
 
@@ -356,7 +351,7 @@ Top 2–3 handles from 4a, hard-coded as `PROACTIVE_REPLY_WATCHLIST` in config. 
 ```json
 {
   "pending":  [{"id": "uuid", "platform": "bluesky", "parent_post_uri": "at://...",
-                "parent_author": "simonwillison.net", "parent_text": "...",
+                "parent_author": "example-dev.bsky.social", "parent_text": "...",
                 "draft_reply": "...", "generated_at": "...", "expires_at": "+24h"}],
   "posted":   [/* kept 14d for traction analysis */],
   "rejected": [/* kept 14d to spot prompt drift */]
