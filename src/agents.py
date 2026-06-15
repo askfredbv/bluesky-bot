@@ -5,6 +5,7 @@ import re
 from typing import List, Tuple, Dict, Any, Optional
 from datetime import datetime, timezone
 from google import genai
+from google.genai import types
 from src.config import (
     SYSTEM_INSTRUCTIONS_MENTOR, SYSTEM_INSTRUCTIONS_CURATOR,
     MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS, MENTOR_TOPICS,
@@ -14,7 +15,7 @@ from src.config import (
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
-    LANGUAGE_OPTIONS, IMAGEN_MODEL, MAX_OUTPUT_TOKENS,
+    LANGUAGE_OPTIONS, IMAGE_MODEL, MAX_OUTPUT_TOKENS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
@@ -689,21 +690,35 @@ def _sync_generate(api_key: str, system_instr: str, task: str, model: str) -> st
     return response.text
 
 def _sync_generate_image(api_key: str, prompt: str) -> Optional[bytes]:
-    """Synchronous Imagen 3 image generation via the cached genai client."""
+    """Synchronous image generation via gemini-3.1-flash-image.
+
+    Migrated 2026-06-15 from Imagen 4 (generate_images), which Google shuts
+    down 2026-08-17. Gemini image models return the image as an inline-data
+    Part on a generate_content response, so we ask for the IMAGE modality at a
+    1:1 aspect ratio and pull the bytes from the first inline part. Returns
+    None if the response carries no image (e.g. a content-filter refusal that
+    comes back as text only).
+    """
     cache_key = api_key.strip()
     client = _CLIENT_CACHE.get(cache_key)
     if client is None:
         client = genai.Client(api_key=cache_key)
         _CLIENT_CACHE[cache_key] = client
-    result = client.models.generate_images(
-        model=IMAGEN_MODEL,
-        prompt=prompt,
-        config={"number_of_images": 1, "aspect_ratio": "1:1"},
+    result = client.models.generate_content(
+        model=IMAGE_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(aspect_ratio="1:1"),
+        ),
     )
-    images = result.generated_images
-    if not images:
-        return None
-    return images[0].image.image_bytes
+    for candidate in result.candidates or []:
+        content = candidate.content
+        for part in (content.parts if content else None) or []:
+            inline = getattr(part, "inline_data", None)
+            if inline is not None and inline.data:
+                return inline.data
+    return None
 
 
 def _sync_generate_text(api_key: str, system_instr: str, task: str) -> str:
@@ -726,7 +741,7 @@ def _sync_generate_text(api_key: str, system_instr: str, task: str) -> str:
 
 
 async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Optional[str]:
-    """Use Gemini to craft a bespoke Imagen 3 prompt from the thread content.
+    """Use Gemini to craft a bespoke image-generation prompt from the thread content.
 
     Gives the image generator something specific to work with rather than a
     static template. Capped at 10 s — must not block the broadcast path.
@@ -752,7 +767,7 @@ async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Option
     except Exception as exc:
         SafeLogger.info(
             "visual_prompt_craft_failed",
-            "Falling back to static Imagen prompt",
+            "Falling back to static image prompt",
             error_type=type(exc).__name__,
         )
         return None
@@ -761,10 +776,10 @@ async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Option
 async def generate_post_image(
     api_key: str, topic: str, thread_posts: Optional[List[str]] = None
 ) -> Optional[bytes]:
-    """Generate a visual for a thread via Imagen 3 using a two-step pipeline.
+    """Generate a visual for a thread via gemini-3.1-flash-image, two-step.
 
     Step 1: Ask Gemini to craft a bespoke visual prompt from the thread content.
-    Step 2: Feed that prompt to Imagen 3.
+    Step 2: Feed that prompt to the image model.
 
     Falls back to the static template if step 1 fails. Returns None on
     step 2 failure so the caller posts without an image rather than crashing.
@@ -786,7 +801,7 @@ async def generate_post_image(
         # 2026-04-29 Step 2 KeyError lesson: capture the message text.
         SafeLogger.warn(
             "image_generation_failed",
-            "Imagen 3 image generation failed; posting without image",
+            "Image generation failed; posting without image",
             error_type=type(exc).__name__,
             error_msg=str(exc)[:200],
             topic=topic,
