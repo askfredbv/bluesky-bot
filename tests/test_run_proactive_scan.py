@@ -216,3 +216,18 @@ async def test_untrusted_load_skips_run_without_scanning_or_saving(monkeypatch):
     assert rc == 0
     assert scan_calls == []  # never scanned
     assert save_calls == []  # never saved → real state preserved
+
+
+def test_load_watchlist_reads_env_at_call_time(monkeypatch):
+    """Regression: the watchlist must be read at call time, not frozen at
+    import. main() loads dotenv after importing src.config, so an import-time
+    constant would freeze to [] for a local .env-only run and the scan would
+    silently iterate over no handles.
+    """
+    from src import config
+
+    monkeypatch.delenv("PROACTIVE_REPLY_WATCHLIST", raising=False)
+    assert config.load_watchlist() == []
+
+    monkeypatch.setenv("PROACTIVE_REPLY_WATCHLIST", " a.bsky.social , b.bsky.social ,")
+    assert config.load_watchlist() == ["a.bsky.social", "b.bsky.social"]

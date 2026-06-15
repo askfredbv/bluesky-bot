@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from src import proactive
 from src.agents import generate_proactive_reply
 from src.bluesky_session import load_or_login
-from src.config import GEMINI_MODEL_PRIORITY, PROACTIVE_REPLY_WATCHLIST
+from src.config import GEMINI_MODEL_PRIORITY, load_watchlist
 from src.logger import SafeLogger
 
 
@@ -98,8 +98,10 @@ async def _run() -> int:
     pending_before = len(state.get("pending", []))
     now = datetime.now(timezone.utc)
 
+    # Read the watchlist here (not at import): main() loads dotenv before
+    # calling _run(), so a local .env-only watchlist is visible by now.
     candidates = await proactive.scan_watchlist(
-        bsky, PROACTIVE_REPLY_WATCHLIST, state, now,
+        bsky, load_watchlist(), state, now,
     )
     expiry_mutated = len(state.get("pending", [])) != pending_before
 

@@ -463,7 +463,13 @@ async def _run() -> int:
     # scripts/watchlist_candidates.py and add real handles.
     try:
         from scripts.watchlist_candidates import BLUESKY_CANDIDATES, MASTODON_CANDIDATES
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        # Only swallow the genuinely-absent case (fresh clone). A broken local
+        # file — bad inner import, or missing BLUESKY_CANDIDATES/
+        # MASTODON_CANDIDATES export (that raises ImportError, not
+        # ModuleNotFoundError) — must surface, not silently audit nobody.
+        if exc.name != "scripts.watchlist_candidates":
+            raise
         BLUESKY_CANDIDATES, MASTODON_CANDIDATES = [], []
         print("[warn] scripts/watchlist_candidates.py not found — auditing nobody. "
               "Copy scripts/watchlist_candidates.py.example to scripts/watchlist_candidates.py.")
