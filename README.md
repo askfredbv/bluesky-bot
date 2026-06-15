@@ -97,7 +97,7 @@ The main levers are in `src/config.py`:
 - **`SECONDARY_TOPICS`** / **`MENTOR_TOPICS`** — topic pools for Mentor and Strategist modes
 - **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
 - **`LANGUAGE_OPTIONS`** — languages the model may pick from (default `["English"]`)
-- **`IMAGEN_MODEL`** — image model (default `imagen-4.0-generate-001`)
+- **`IMAGE_MODEL`** — image model (default `gemini-3.1-flash-image`)
 - **`IMAGE_GENERATION_PROBABILITY`** — chance of an image on Mentor/Strategist runs (default `0.5`)
 - **`GEMINI_MODEL_PRIORITY`** — ordered model failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
 - **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; edited quarterly

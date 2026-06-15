@@ -199,12 +199,13 @@ GEMINI_MODEL_PRIORITY: List[str] = [
 
 # Image generation
 IMAGE_GENERATION_PROBABILITY: float = 0.5
-# v4.18: was imagen-3.0-generate-002 — shut down per Google docs.
-# imagen-4.0-generate-001 is the standard drop-in successor (also
-# available: imagen-4.0-ultra / imagen-4.0-fast). Diagnostic message
-# from 2026-05-07 14:30 confirmed the 404:
-#   "models/imagen-3.0-generate-002 is not found for API version v1beta"
-IMAGEN_MODEL: str = "imagen-4.0-generate-001"
+# 2026-06-15: migrated off Imagen. Google discontinues the imagen-4.0-* family
+# (standard/ultra/fast) on 2026-08-17 — calls 404 after that. The recommended
+# successor is gemini-3.1-flash-image, which generates images via
+# generate_content (image-modality Part), NOT the generate_images API. Same
+# cost per Google's notice. History: imagen-3.0-generate-002 (shut down
+# 2026-05-07) -> imagen-4.0-generate-001 (v4.18) -> here.
+IMAGE_MODEL: str = "gemini-3.1-flash-image"
 
 TOPIC_MAP: Dict[str, List[str]] = {
     "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],

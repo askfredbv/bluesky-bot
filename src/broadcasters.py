@@ -38,12 +38,14 @@ def _compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, b
     fits. If nothing fits (or Pillow is unavailable), returns the original
     bytes with ``fits=False`` so the caller can skip the attach.
 
-    Why this exists (2026-06-14): Imagen 4 (imagen-4.0-generate-001) at 1:1
-    returns ~1.0-1.4 MB PNGs — structurally over the 976 KB Bluesky gate that
-    was sized for Imagen 3's smaller output. The broadcaster used to *measure
-    and drop*, so every recent Mentor image was silently discarded (last image
-    on the feed: 2026-06-08). JPEG re-encoding a flat editorial illustration
-    typically shrinks it 3-5x, well under the gate, so the image actually ships.
+    Why this exists (2026-06-14): the image model returns 1:1 PNGs that cluster
+    around/above the 976 KB Bluesky blob gate (Imagen 4 ran ~1.0-1.4 MB; the
+    gemini-3.1-flash-image successor is in the same ballpark). The broadcaster
+    used to *measure and drop*, so every recent Mentor image was silently
+    discarded (last image on the feed: 2026-06-08). JPEG re-encoding a flat
+    editorial illustration typically shrinks it 3-5x, well under the gate, so
+    the image actually ships. Format-agnostic: it re-encodes whatever bytes the
+    image model returns, so the 2026-06-15 Imagen->Gemini swap needs no change here.
     """
     if len(image_bytes) <= max_bytes:
         return image_bytes, True
@@ -179,9 +181,10 @@ async def post_to_bluesky(
             embed = None
             if i == 0:
                 if image_bytes:
-                    # Image embed (Mentor/Strategist). Imagen 4 output clusters
-                    # around/above Bluesky's 1 MB blob limit, so compress to fit
-                    # rather than drop (2026-06-14 fix — see _compress_image_to_fit).
+                    # Image embed (Mentor/Strategist). The image model's output
+                    # clusters around/above Bluesky's 1 MB blob limit, so
+                    # compress to fit rather than drop (2026-06-14 fix — see
+                    # _compress_image_to_fit).
                     fitted, fits = _compress_image_to_fit(image_bytes, _BLUESKY_IMAGE_MAX_BYTES)
                     if not fits:
                         SafeLogger.warn(

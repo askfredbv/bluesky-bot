@@ -84,7 +84,7 @@ def _is_text_model(name: str) -> bool:
     n = name.lower()
     if not (n.startswith("gemini") or n.startswith("gemma")):
         return False
-    return not any(x in n for x in ("embedding", "embed", "aqa", "imagen", "-tts", "image-generation"))
+    return not any(x in n for x in ("embedding", "embed", "aqa", "imagen", "-tts", "image-generation", "-image"))
 
 
 def _generation(name: str):

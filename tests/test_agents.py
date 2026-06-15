@@ -621,7 +621,7 @@ async def test_generate_post_image_returns_none_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_post_image_uses_crafted_prompt(monkeypatch):
-    """When _craft_visual_prompt returns a prompt, that prompt is passed to Imagen."""
+    """When _craft_visual_prompt returns a prompt, that prompt is passed to the image model."""
     captured_prompt = {}
 
     monkeypatch.setattr(agents, "_sync_generate_text", lambda k, s, t: "intersecting geometric rings")
@@ -653,9 +653,61 @@ async def test_generate_post_image_falls_back_to_static_prompt_on_craft_failure(
     monkeypatch.setattr(agents, "_sync_generate_image", capture_image)
     await generate_post_image("fake-key", "leadership", thread_posts=["Post one"])
 
-    # Fallback prompt includes the topic name
+    # Fallback prompt includes the topic name and the static template wording
     assert "leadership" in captured_prompt["value"]
     assert "illustration" in captured_prompt["value"]
+
+
+def _fake_image_response(image_bytes: bytes = b"PNG", *, text_only: bool = False):
+    """Duck-typed stand-in for a genai generate_content image response."""
+    from types import SimpleNamespace
+
+    if text_only:
+        part = SimpleNamespace(inline_data=None, text="refused")
+    else:
+        part = SimpleNamespace(
+            inline_data=SimpleNamespace(data=image_bytes, mime_type="image/png"),
+            text=None,
+        )
+    content = SimpleNamespace(parts=[part])
+    return SimpleNamespace(candidates=[SimpleNamespace(content=content)])
+
+
+class _FakeImageClient:
+    def __init__(self, response):
+        self._response = response
+        self.calls = []
+        self.models = self  # so client.models.generate_content resolves here
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._response
+
+
+def test_sync_generate_image_extracts_inline_bytes(monkeypatch):
+    """Migration guard (2026-06-15): pull image bytes from the inline-data Part
+    of a gemini-3.1-flash-image generate_content response, not generate_images.
+    """
+    from src.agents import _sync_generate_image
+
+    client = _FakeImageClient(_fake_image_response(b"\x89PNG-real-bytes"))
+    monkeypatch.setitem(agents._CLIENT_CACHE, "img-key", client)
+
+    out = _sync_generate_image("img-key", "a flat editorial illustration")
+
+    assert out == b"\x89PNG-real-bytes"
+    assert client.calls, "generate_content was not called"
+    assert client.calls[0]["model"] == agents.IMAGE_MODEL
+
+
+def test_sync_generate_image_returns_none_when_no_image_part(monkeypatch):
+    """A text-only response (e.g. a content-filter refusal) yields None, not a crash."""
+    from src.agents import _sync_generate_image
+
+    client = _FakeImageClient(_fake_image_response(text_only=True))
+    monkeypatch.setitem(agents._CLIENT_CACHE, "img-key2", client)
+
+    assert _sync_generate_image("img-key2", "prompt") is None
 
 
 # ---------------------------------------------------------------------------
