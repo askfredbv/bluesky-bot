@@ -49,7 +49,15 @@ def _compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, b
         return image_bytes, True
     try:
         from PIL import Image
-    except Exception:
+    except Exception as e:
+        # Pillow should always be present (it's a dependency), but if it ever
+        # isn't, surface WHY — don't let it masquerade as "too large" downstream.
+        SafeLogger.warn(
+            "image_compress_unavailable",
+            "Pillow unavailable; cannot compress oversized image",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
         return image_bytes, False
     try:
         img = Image.open(io.BytesIO(image_bytes))
@@ -68,8 +76,20 @@ def _compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, b
                 data = buf.getvalue()
                 if len(data) <= max_bytes:
                     return data, True
+        # Genuinely tried everything and nothing fit — a real "too large"; the
+        # caller's image_too_large log is accurate here.
         return image_bytes, False
-    except Exception:
+    except Exception as e:
+        # A real compression FAILURE (unsupported format, truncated bytes,
+        # encoder regression) — distinct from "too large". Capture the reason
+        # so an image outage is diagnosable, per the project's error_msg
+        # discipline (Codex review on PR #56). Returns False; the caller skips.
+        SafeLogger.warn(
+            "image_compress_failed",
+            "Could not re-encode oversized image; skipping attach",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
         return image_bytes, False
 
 def _enforce_post_length_invariant(content_list: List[str], max_length: int, platform_name: str) -> bool:

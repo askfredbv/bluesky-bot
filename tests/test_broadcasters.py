@@ -206,6 +206,26 @@ def test_compress_returns_false_when_no_budget_can_fit():
     assert out is png  # nothing usable produced; caller will skip the attach
 
 
+def test_compress_failure_logs_reason_distinctly(monkeypatch):
+    """A real compression FAILURE (un-openable bytes) logs image_compress_failed
+    with error_msg — distinct from a genuine 'too large'. Codex PR #56 finding:
+    don't let a processing error masquerade as a size problem and swallow the
+    exception the repo relies on for diagnosing image outages."""
+    events = []
+    monkeypatch.setattr(broadcasters.SafeLogger, "warn",
+                        lambda event, message="", **fields: events.append((event, fields)))
+
+    garbage = b"this is not a valid image " * 100  # > budget, but Pillow can't open it
+    out, fits = broadcasters._compress_image_to_fit(garbage, 100)
+
+    assert fits is False
+    assert out is garbage
+    names = [e for e, _ in events]
+    assert "image_compress_failed" in names
+    fields = next(f for e, f in events if e == "image_compress_failed")
+    assert "error_msg" in fields and fields["error_msg"]  # the real reason is captured
+
+
 @pytest.mark.asyncio
 async def test_post_to_bluesky_compresses_oversized_image_instead_of_dropping(monkeypatch):
     """An over-the-gate image is compressed to fit and ATTACHED — not silently
