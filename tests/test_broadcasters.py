@@ -165,6 +165,84 @@ async def test_post_to_bluesky_uses_image_embed_when_image_bytes_provided(monkey
     assert isinstance(send_post_calls[0]["embed"], models.AppBskyEmbedImages.Main)
 
 
+# ---------------------------------------------------------------------------
+# Image compression (2026-06-14 fix): Imagen 4 output clusters around/above
+# the 976 KB Bluesky gate, so compress-to-fit instead of measure-and-drop.
+# ---------------------------------------------------------------------------
+
+def _make_oversized_png(side: int = 600) -> bytes:
+    """A noise RGB PNG that mimics Imagen-4 output: large as PNG (~1 MB,
+    over the 976 KB gate), much smaller as JPEG. Noise is incompressible for
+    PNG but lossy-JPEG shrinks it ~4x — the same shape as the real bug."""
+    import io as _io
+    import os as _os
+    from PIL import Image
+    img = Image.frombytes("RGB", (side, side), _os.urandom(side * side * 3))
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_compress_passthrough_when_already_small():
+    data = b"tiny-image-bytes"
+    out, fits = broadcasters._compress_image_to_fit(data, 1024)
+    assert out is data
+    assert fits is True
+
+
+def test_compress_reencodes_oversized_image_under_the_real_gate():
+    png = _make_oversized_png(600)
+    assert len(png) > broadcasters._BLUESKY_IMAGE_MAX_BYTES  # over the real gate
+    out, fits = broadcasters._compress_image_to_fit(png, broadcasters._BLUESKY_IMAGE_MAX_BYTES)
+    assert fits is True
+    assert len(out) <= broadcasters._BLUESKY_IMAGE_MAX_BYTES
+    assert out is not png  # actually re-encoded, not passed through
+
+
+def test_compress_returns_false_when_no_budget_can_fit():
+    png = _make_oversized_png(200)
+    out, fits = broadcasters._compress_image_to_fit(png, 10)
+    assert fits is False
+    assert out is png  # nothing usable produced; caller will skip the attach
+
+
+@pytest.mark.asyncio
+async def test_post_to_bluesky_compresses_oversized_image_instead_of_dropping(monkeypatch):
+    """An over-the-gate image is compressed to fit and ATTACHED — not silently
+    dropped as before. Regression guard for the 2026-06-14 image-drought bug.
+    Uses the REAL 976 KB gate with a ~1 MB image, exactly like production."""
+    png = _make_oversized_png(600)
+    assert len(png) > broadcasters._BLUESKY_IMAGE_MAX_BYTES
+
+    uploaded = {}
+    fake_blob = models.blob_ref.BlobRef(ref={"link": "bafkreiaa"}, mime_type="image/jpeg", size=3)
+
+    class FakeUploadResult:
+        blob = fake_blob
+
+    class DummyAsyncClient:
+        async def upload_blob(self, data):
+            uploaded["bytes"] = data
+            return FakeUploadResult()
+
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
+            class FakePost:
+                cid = "cid-1"
+                uri = "at://post/1"
+            return FakePost()
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", lambda _: None)
+    info_events = []
+    monkeypatch.setattr(broadcasters.SafeLogger, "info",
+                        lambda event, message="", **fields: info_events.append(event))
+
+    await broadcasters.post_to_bluesky(DummyAsyncClient(), ["Post text"], image_bytes=png)
+
+    assert "bytes" in uploaded  # image was uploaded, not dropped
+    assert len(uploaded["bytes"]) <= broadcasters._BLUESKY_IMAGE_MAX_BYTES
+    assert "image_attached" in info_events
+
+
 @pytest.mark.asyncio
 async def test_post_to_bluesky_uses_link_card_when_no_image_bytes(monkeypatch):
     """When only link_meta is supplied (no image_bytes), an AppBskyEmbedExternal.Main embed is attached."""
