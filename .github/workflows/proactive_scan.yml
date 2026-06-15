@@ -46,6 +46,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BLUESKY_USERNAME: ${{ secrets.BLUESKY_USERNAME }}
           BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          # The reply watchlist (comma-separated handles) is loaded from this
+          # env var — handles are kept out of the public repo (2026-06-15).
+          # GitHub secrets are not injected unless referenced here, so without
+          # this line _load_watchlist() returns [] and the scan stages nothing
+          # even when the secret is set. Set the secret when activating 4b.
+          PROACTIVE_REPLY_WATCHLIST: ${{ secrets.PROACTIVE_REPLY_WATCHLIST }}
           # State persistence via private GitHub Gist (same Gist as
           # daily_post.yml; the proactive scan writes a separate file
           # pending_replies.json alongside seen_articles.json,
