@@ -380,7 +380,7 @@ PIONEER_EVENTS_DATED: List[Dict[str, object]] = [
 ]
 
 PIONEER_FACTS_UNDATED: List[Dict[str, object]] = [
-    # ── Pioneers (11) ────────────────────────────────────────────────────────
+    # ── Pioneers (12) ────────────────────────────────────────────────────────
     {"id": "sparck-jones-idf", "category": "pioneer",
      "title": "Karen Spärck Jones invented IDF in 1972",
      "detail": "Inverse Document Frequency. Every search engine on Earth still uses her formula. She was largely uncredited until the 2000s and resisted being called a pioneer.",
@@ -413,6 +413,10 @@ PIONEER_FACTS_UNDATED: List[Dict[str, object]] = [
      "title": "Apollo's memory was hand-woven by women",
      "detail": "Core rope memory. Each bit was a wire physically threaded through (or around) a tiny ferrite core. Raytheon called the workers LOL ROM — Little Old Lady ROM. One mistake meant rewinding the entire program.",
      "link_required": False},
+    {"id": "hamilton-software-engineering", "category": "pioneer",
+     "title": "Margaret Hamilton coined 'software engineering'",
+     "detail": "She led the MIT team that wrote the flight software for the Apollo missions, and coined the term 'software engineering' to get code taken as seriously as the hardware. The famous photo of her beside a tower of printouts is that source listing.",
+     "link": "https://science.nasa.gov/people/margaret-hamilton/"},
     {"id": "guido-monty-python", "category": "pioneer",
      "title": "Python is named after Monty Python",
      "detail": "Not the snake. Guido was reading Monty Python scripts the week he started. The community kept the in-jokes — 'spam', 'eggs', 'parrot', 'shrubbery' all show up in tutorials.",
