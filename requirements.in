@@ -15,12 +15,12 @@ httpx>=0.28,<0.29
 feedparser>=6.0.11,<7
 
 # Transitive constraints for critical integrations
-anyio>=4.4,<5
+anyio>=4.14.0,<5
 httpcore>=1.0.5,<2
 pydantic>=2.7,<3
 
 # Test dependencies
-pytest>=9,<10
+pytest>=9.1.1,<10
 pytest-asyncio>=1.4.0,<2
 
 # Lint / dev tooling (runs in CI via tests.yml; not a runtime dep but
