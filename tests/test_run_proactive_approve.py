@@ -22,7 +22,7 @@ def _draft(draft_id="abc"):
     return {
         "id": draft_id,
         "platform": "bluesky",
-        "parent_author": "simonwillison.net",
+        "parent_author": "a-tooling-dev.invalid",
         "parent_post_uri": "at://parent/x",
         "parent_text": "A parent post.",
         "draft_reply": "A draft reply.",

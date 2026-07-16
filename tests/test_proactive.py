@@ -376,7 +376,7 @@ async def test_generate_returns_clean_reply_on_happy_path(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="xeiaso.net",
+        parent_author="a-systems-dev.invalid",
         parent_text="My pod kept OOMKilling at 1.5GB despite a 2GB limit.",
         model_priority=["gemini-2.5-pro"],
     )
@@ -393,7 +393,7 @@ async def test_generate_returns_none_on_skip_literal(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="simonwillison.net",
+        parent_author="a-tooling-dev.invalid",
         parent_text="Excited to announce we're hiring.",
         model_priority=["gemini-2.5-pro"],
     )
@@ -413,7 +413,7 @@ async def test_generate_strips_quote_artifacts(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="simonwillison.net",
+        parent_author="a-tooling-dev.invalid",
         parent_text="Built an HTML→CSV tool.",
         model_priority=["gemini-2.5-pro"],
     )
@@ -434,7 +434,7 @@ async def test_generate_strips_reply_prefix_artifact(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="simonwillison.net",
+        parent_author="a-tooling-dev.invalid",
         parent_text="Built an HTML→CSV tool.",
         model_priority=["gemini-2.5-pro"],
     )
@@ -453,7 +453,7 @@ async def test_generate_returns_none_when_all_attempts_fail_validation(monkeypat
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="xeiaso.net",
+        parent_author="a-systems-dev.invalid",
         parent_text="Some technical observation.",
         model_priority=["gemini-2.5-pro", "gemini-2.5-flash"],
     )
@@ -470,7 +470,7 @@ async def test_generate_returns_none_when_model_chain_exhausts(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="simonwillison.net",
+        parent_author="a-tooling-dev.invalid",
         parent_text="A post.",
         model_priority=["gemini-2.5-pro", "gemini-2.5-flash"],
     )
@@ -493,7 +493,7 @@ async def test_generate_retries_within_model_on_validation_failure(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="xeiaso.net",
+        parent_author="a-systems-dev.invalid",
         parent_text="OOMKill at 1.5GB.",
         model_priority=["gemini-2.5-pro"],
     )
@@ -517,7 +517,7 @@ async def test_generate_falls_through_to_next_model_on_api_error(monkeypatch):
 
     result = await generate_proactive_reply(
         api_key="fake-key",
-        parent_author="simonwillison.net",
+        parent_author="a-tooling-dev.invalid",
         parent_text="Notes on email server config.",
         model_priority=["gemini-2.5-pro", "gemini-2.5-flash"],
     )
@@ -539,7 +539,7 @@ def test_expire_moves_drafts_older_than_24h_to_rejected():
     """A pending draft older than the expiry threshold → rejected with reason 'expired'."""
     old_ts = (_NOW - timedelta(hours=30)).isoformat()
     state = {
-        "pending": [{"id": "old", "parent_author": "simonwillison.net", "generated_at": old_ts}],
+        "pending": [{"id": "old", "parent_author": "a-tooling-dev.invalid", "generated_at": old_ts}],
         "posted": [],
         "rejected": [],
     }
@@ -557,7 +557,7 @@ def test_expire_leaves_fresh_drafts_alone():
     """Pending drafts within the expiry window stay in pending."""
     fresh_ts = (_NOW - timedelta(hours=5)).isoformat()
     state = {
-        "pending": [{"id": "fresh", "parent_author": "xeiaso.net", "generated_at": fresh_ts}],
+        "pending": [{"id": "fresh", "parent_author": "a-systems-dev.invalid", "generated_at": fresh_ts}],
         "posted": [],
         "rejected": [],
     }
@@ -592,12 +592,12 @@ def test_cooldown_true_when_recent_posted_entry_for_handle():
     state = {
         "pending": [], "rejected": [],
         "posted": [{
-            "parent_author": "simonwillison.net",
+            "parent_author": "a-tooling-dev.invalid",
             "posted_at": (_NOW - timedelta(days=2)).isoformat(),
         }],
     }
 
-    assert proactive.is_handle_in_cooldown("simonwillison.net", state, _NOW) is True
+    assert proactive.is_handle_in_cooldown("a-tooling-dev.invalid", state, _NOW) is True
 
 
 def test_cooldown_false_when_posted_entry_outside_window():
@@ -605,12 +605,12 @@ def test_cooldown_false_when_posted_entry_outside_window():
     state = {
         "pending": [], "rejected": [],
         "posted": [{
-            "parent_author": "simonwillison.net",
+            "parent_author": "a-tooling-dev.invalid",
             "posted_at": (_NOW - timedelta(days=14)).isoformat(),
         }],
     }
 
-    assert proactive.is_handle_in_cooldown("simonwillison.net", state, _NOW) is False
+    assert proactive.is_handle_in_cooldown("a-tooling-dev.invalid", state, _NOW) is False
 
 
 def test_cooldown_false_for_different_handle():
@@ -618,24 +618,24 @@ def test_cooldown_false_for_different_handle():
     state = {
         "pending": [], "rejected": [],
         "posted": [{
-            "parent_author": "simonwillison.net",
+            "parent_author": "a-tooling-dev.invalid",
             "posted_at": (_NOW - timedelta(days=1)).isoformat(),
         }],
     }
 
-    assert proactive.is_handle_in_cooldown("xeiaso.net", state, _NOW) is False
+    assert proactive.is_handle_in_cooldown("a-systems-dev.invalid", state, _NOW) is False
 
 
 def test_cooldown_ignores_pending_and_rejected_drafts():
     """Only ``posted`` counts — pending/rejected don't lock the handle."""
     recent = (_NOW - timedelta(hours=1)).isoformat()
     state = {
-        "pending":  [{"parent_author": "simonwillison.net", "generated_at": recent}],
-        "rejected": [{"parent_author": "simonwillison.net", "rejected_at": recent}],
+        "pending":  [{"parent_author": "a-tooling-dev.invalid", "generated_at": recent}],
+        "rejected": [{"parent_author": "a-tooling-dev.invalid", "rejected_at": recent}],
         "posted":   [],
     }
 
-    assert proactive.is_handle_in_cooldown("simonwillison.net", state, _NOW) is False
+    assert proactive.is_handle_in_cooldown("a-tooling-dev.invalid", state, _NOW) is False
 
 
 # ---------------------------------------------------------------------------
@@ -756,14 +756,14 @@ def test_pick_breaks_engagement_ties_by_newest_indexed():
 async def test_scan_handle_returns_passing_candidates():
     """Feed with one passing item → one candidate; field projection correct."""
     item = _make_feed_item(text="A post worth replying to.", reposts=2, replies=3)
-    client = _FakeBskyClient({"simonwillison.net": [item]})
+    client = _FakeBskyClient({"a-tooling-dev.invalid": [item]})
     state = proactive._empty_state()
 
-    candidates = await proactive.scan_handle(client, "simonwillison.net", state, _NOW)
+    candidates = await proactive.scan_handle(client, "a-tooling-dev.invalid", state, _NOW)
 
     assert len(candidates) == 1
     c = candidates[0]
-    assert c["parent_author"] == "simonwillison.net"
+    assert c["parent_author"] == "a-tooling-dev.invalid"
     assert c["platform"] == "bluesky"
     assert c["engagement"] == 5  # reposts + replies
     assert c["parent_text"] == "A post worth replying to."
@@ -775,13 +775,13 @@ async def test_scan_handle_short_circuits_when_in_cooldown():
     state = {
         "pending": [], "rejected": [],
         "posted": [{
-            "parent_author": "simonwillison.net",
+            "parent_author": "a-tooling-dev.invalid",
             "posted_at": (_NOW - timedelta(days=2)).isoformat(),
         }],
     }
-    client = _FakeBskyClient({"simonwillison.net": [_make_feed_item()]})
+    client = _FakeBskyClient({"a-tooling-dev.invalid": [_make_feed_item()]})
 
-    candidates = await proactive.scan_handle(client, "simonwillison.net", state, _NOW)
+    candidates = await proactive.scan_handle(client, "a-tooling-dev.invalid", state, _NOW)
 
     assert candidates == []
     assert client.calls == []  # short-circuited before fetch
@@ -797,10 +797,10 @@ async def test_scan_handle_filters_out_rejections():
         _make_feed_item(text="passes 2", reposts=3),
         _make_feed_item(replies=0, reposts=0),           # rejected
     ]
-    client = _FakeBskyClient({"xeiaso.net": items})
+    client = _FakeBskyClient({"a-systems-dev.invalid": items})
     state = proactive._empty_state()
 
-    candidates = await proactive.scan_handle(client, "xeiaso.net", state, _NOW)
+    candidates = await proactive.scan_handle(client, "a-systems-dev.invalid", state, _NOW)
 
     assert len(candidates) == 2
     assert {c["parent_text"] for c in candidates} == {"passes 1", "passes 2"}
@@ -809,10 +809,10 @@ async def test_scan_handle_filters_out_rejections():
 @pytest.mark.asyncio
 async def test_scan_handle_returns_empty_on_fetch_error():
     """Fetch raises → log + return empty, don't propagate."""
-    client = _FakeBskyClient(raises_for={"simonwillison.net"})
+    client = _FakeBskyClient(raises_for={"a-tooling-dev.invalid"})
     state = proactive._empty_state()
 
-    candidates = await proactive.scan_handle(client, "simonwillison.net", state, _NOW)
+    candidates = await proactive.scan_handle(client, "a-tooling-dev.invalid", state, _NOW)
 
     assert candidates == []
 
@@ -824,11 +824,11 @@ async def test_scan_handle_returns_empty_on_fetch_error():
 @pytest.mark.asyncio
 async def test_scan_watchlist_aggregates_per_handle():
     """Multi-handle scan → concatenated candidate list, expiry runs first."""
-    feed_simonw = [_make_feed_item(text="from simon", reposts=2)]
-    feed_xeiaso = [_make_feed_item(text="from xeiaso", reposts=4)]
+    feed_tooling = [_make_feed_item(text="from tooling", reposts=2)]
+    feed_systems = [_make_feed_item(text="from systems", reposts=4)]
     client = _FakeBskyClient({
-        "simonwillison.net": feed_simonw,
-        "xeiaso.net": feed_xeiaso,
+        "a-tooling-dev.invalid": feed_tooling,
+        "a-systems-dev.invalid": feed_systems,
     })
     # One expired pending draft to verify expiry runs as part of scan
     old_ts = (_NOW - timedelta(hours=30)).isoformat()
@@ -838,11 +838,11 @@ async def test_scan_watchlist_aggregates_per_handle():
     }
 
     candidates = await proactive.scan_watchlist(
-        client, ["simonwillison.net", "xeiaso.net"], state, _NOW,
+        client, ["a-tooling-dev.invalid", "a-systems-dev.invalid"], state, _NOW,
     )
 
     assert len(candidates) == 2
-    assert {c["parent_text"] for c in candidates} == {"from simon", "from xeiaso"}
+    assert {c["parent_text"] for c in candidates} == {"from tooling", "from systems"}
     # Expiry ran:
     assert state["pending"] == []
     assert len(state["rejected"]) == 1
@@ -855,7 +855,7 @@ async def test_scan_watchlist_aggregates_per_handle():
 def test_stage_appends_draft_with_uuid_and_expiry():
     candidate = {
         "platform": "bluesky",
-        "parent_author": "xeiaso.net",
+        "parent_author": "a-systems-dev.invalid",
         "parent_post_uri": "at://did:plc:abc/app.bsky.feed.post/xyz",
         "parent_text": "OOMKilling at 1.5GB.",
         "engagement": 5,
@@ -871,7 +871,7 @@ def test_stage_appends_draft_with_uuid_and_expiry():
     assert state["pending"][0] is draft
     assert len(draft["id"]) == 36  # UUID4 canonical length
     assert draft["draft_reply"].startswith("cgroup v1")
-    assert draft["parent_author"] == "xeiaso.net"
+    assert draft["parent_author"] == "a-systems-dev.invalid"
     # Expiry = generated_at + DRAFT_EXPIRY_HOURS
     generated = datetime.fromisoformat(draft["generated_at"])
     expires = datetime.fromisoformat(draft["expires_at"])
@@ -882,7 +882,7 @@ def test_stage_preserves_existing_pending_drafts():
     """Staging is additive — earlier pending entries don't get overwritten."""
     candidate = {
         "platform": "bluesky",
-        "parent_author": "simonwillison.net",
+        "parent_author": "a-tooling-dev.invalid",
         "parent_post_uri": "at://1",
         "parent_text": "post text",
         "engagement": 3,
@@ -901,7 +901,7 @@ def test_stage_preserves_existing_pending_drafts():
 # Commit 5 — find / reject / approve
 # ===========================================================================
 
-def _draft(*, draft_id="abc", author="simonwillison.net", uri="at://parent/x",
+def _draft(*, draft_id="abc", author="a-tooling-dev.invalid", uri="at://parent/x",
            text="A parent post.", reply="A draft reply.", generated_hours_ago=2):
     """Build a pending-draft dict for approval-flow tests."""
     return {
