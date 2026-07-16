@@ -19,7 +19,7 @@ _NOW = datetime(2026, 5, 21, 18, 0, tzinfo=timezone.utc)
 
 def _candidate(
     *,
-    handle="simonwillison.net",
+    handle="a-tooling-dev.invalid",
     text="A clean post worth replying to.",
     engagement=5,
     uri="at://did:plc:abc/app.bsky.feed.post/xyz",
