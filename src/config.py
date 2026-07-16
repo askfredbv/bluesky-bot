@@ -576,7 +576,7 @@ PIONEER_FACTS_UNDATED: List[Dict[str, object]] = [
      "link": "https://www.cs.vu.nl/~ast/intel/"},
     {"id": "hopper-nanoseconds", "category": "pioneer",
      "title": "Grace Hopper handed out nanoseconds",
-     "detail": "To show admirals why a satellite link lags, she gave them 30 cm wires — the distance light travels in a billionth of a second. A 300-metre coil was her microsecond. She also wrote an early compiler and coined the word.",
+     "detail": "To show admirals why a satellite link lags, she gave them 30 cm wires — the distance light travels in a billionth of a second. A 300-metre coil was her microsecond. She also wrote an early compiler and coined the term 'compiler'.",
      "link": "https://americanhistory.si.edu/collections/object/nmah_692464"},
     {"id": "eliza-weizenbaum", "category": "pioneer",
      "title": "ELIZA's creator turned against it",
