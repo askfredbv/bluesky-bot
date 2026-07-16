@@ -591,11 +591,13 @@ PIONEER_PROMPT_UNDATED: str = (
 # Used by agents.generate_proactive_reply. The system instructions name the
 # voice rules and the SKIP escape-hatch; the few-shot examples anchor the
 # "must add information the parent doesn't already have" rule with concrete
-# good-reply and SKIP cases. Both anchored to the two seeded watchlist
-# accounts (simonwillison.net, xeiaso.net) so the model sees realistic shapes.
+# good-reply and SKIP cases. Both use generic placeholder handles (a tooling
+# dev, a systems dev) so the model sees realistic post shapes without putting
+# fabricated posts in the mouths of real, named accounts (2026-07-16 scrub —
+# same principle as the Type A watchlist scrub; see docs/PLAN_engagement.md).
 #
 # 2026-05-21 — prompt tuning after smoke-test failure. The first draft
-# staged (against an xeiaso.net shitpost about a fictional CVE) hallucinated
+# staged (against a shitpost about a fictional CVE) hallucinated
 # specific CVE details that were factually wrong. Two failures observed:
 # (1) the model didn't recognise a shitpost as SKIP territory, and (2) the
 # model fabricated CVE-2024-24786 details rather than skipping. Added a
@@ -649,42 +651,42 @@ PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS: str = (
 
 PROACTIVE_REPLY_FEW_SHOT_EXAMPLES: str = (
     "Example 1:\n"
-    "Parent: @simonwillison.net: Spent the morning extracting fields from messy "
+    "Parent: @a-tooling-dev.bsky.social: Spent the morning extracting fields from messy "
     "invoices using structured output via tool-calling. Even small models handle "
     "this well.\n"
     "Reply: Anthropic's tool-call schema enforces enum constraints at the SDK "
     "level, which catches half the hallucinated-field cases before they reach "
     "your validator. Worth a comparison.\n\n"
     "Example 2:\n"
-    "Parent: @xeiaso.net: Debugging why my Kubernetes pod kept OOMKilling at "
+    "Parent: @a-systems-dev.bsky.social: Debugging why my Kubernetes pod kept OOMKilling at "
     "1.5GB even though the limit was 2GB. Three hours in.\n"
     "Reply: cgroup v1 counts page cache against the memory limit; v2 separates "
     "them. If the host is still on v1, that 500MB gap is page cache the kernel "
     "won't evict under pressure.\n\n"
     "Example 3:\n"
-    "Parent: @simonwillison.net: Built a tool to convert HTML tables to CSV. "
+    "Parent: @a-tooling-dev.bsky.social: Built a tool to convert HTML tables to CSV. "
     "~150 lines of Python.\n"
     "Reply: pandas.read_html does this in one line but trips on rowspan/colspan "
     "— flagging that in the README would help. It's the actual reason most "
     "people abandon read_html.\n\n"
     "Example 4 (SKIP — reader-bait):\n"
-    "Parent: @xeiaso.net: Why are Mondays like this?\n"
+    "Parent: @a-systems-dev.bsky.social: Why are Mondays like this?\n"
     "Reply: SKIP\n\n"
     "Example 5 (SKIP — announcement):\n"
-    "Parent: @simonwillison.net: Excited to announce we're hiring for an ML "
+    "Parent: @a-tooling-dev.bsky.social: Excited to announce we're hiring for an ML "
     "infra role. DM me if interested.\n"
     "Reply: SKIP\n\n"
     "Example 6 (SKIP — hot take you'd have to confront, not inform):\n"
-    "Parent: @xeiaso.net: AI will replace half of all jobs by 2030.\n"
+    "Parent: @a-systems-dev.bsky.social: AI will replace half of all jobs by 2030.\n"
     "Reply: SKIP\n\n"
     "Example 7 (SKIP — shitpost / meme):\n"
-    "Parent: @xeiaso.net: \"No way to prevent this\" say users of only "
-    "language where this regularly happens https://xeiaso.net/shitposts/"
+    "Parent: @a-systems-dev.bsky.social: \"No way to prevent this\" say users of only "
+    "language where this regularly happens https://example.com/shitposts/"
     "no-way-to-prevent-this/CVE-2026-45250/\n"
     "Reply: SKIP\n\n"
     "Example 8 (SKIP — would require specific CVE/version details you "
     "cannot verify from the parent):\n"
-    "Parent: @simonwillison.net: Another nasty supply-chain CVE landed in "
+    "Parent: @a-tooling-dev.bsky.social: Another nasty supply-chain CVE landed in "
     "the npm ecosystem this morning. The whole event-stream story all over "
     "again.\n"
     "Reply: SKIP"
