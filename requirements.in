@@ -26,4 +26,4 @@ pytest-asyncio>=1.4.0,<2
 # Lint / dev tooling (runs in CI via tests.yml; not a runtime dep but
 # must be in requirements.in so Dependabot's lockfile regen doesn't
 # silently drop it from requirements.txt — surfaced 2026-05-20 by PR #47)
-ruff>=0.15,<1
+ruff>=0.16.0,<1
