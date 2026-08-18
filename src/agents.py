@@ -621,14 +621,14 @@ def _thinking_budget_for(model_name: str) -> Optional[int]:
     lower = model_name.lower()
     if "2.5-pro" in lower:
         return 128   # 2.5-pro minimum; cannot fully disable
-    if "2.5-flash" in lower:
-        return 0     # disable entirely
-    # 2026-06-09: testing gemini-3.5-flash as primary. Flash-tier disables
-    # thinking (budget 0) like 2.5-flash, so the full output budget goes to
-    # content and we avoid the 2026-05-11 empty-output bug. If 3.5 rejects
-    # thinking_config entirely, the call errors and the chain falls back to
-    # 2.5-pro — visible in the log, safe.
-    if "3.5-flash" in lower:
+    # 2.5-flash and the whole Gemini 3.x Flash line (3.5, 3.7, …) run thinking
+    # by default and accept budget 0 to disable it, so the full output budget
+    # goes to content and we avoid the 2026-05-11 empty-output bug. Matching the
+    # 3.x family by regex means a new 3.x-flash primary needs no code change.
+    # NOTE: 1.5-flash has no thinking mode — sending thinking_config errors —
+    # so it must NOT match here; it falls through to None. (The regex excludes
+    # it by requiring the "3." / "2.5-" prefix.)
+    if "2.5-flash" in lower or re.search(r"gemini-3(\.\d+)?-flash", lower):
         return 0
     return None
 

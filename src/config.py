@@ -159,28 +159,32 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
 
 # AI Model Priority (failover order on quota/availability errors).
 #
-# Current primary: gemini-3.5-flash (promoted 2026-06-09, voice trial KEPT
-# 2026-06-12) — see the inline note on the list below for the rationale.
-# History: v4.18.1 had made gemini-2.5-pro primary over 2.5-flash; 2.5-pro is
-# now the fallback. At ~4 inference calls per day the flash/pro cost delta is
-# ~$0.90/month — negligible — so the ordering is driven by voice quality, not
-# price. See docs/RETRO_2026-05-08.md for the framing: "the bot was using
-# flash as if it had to handle hundreds of runs an hour; it runs twice a day."
+# Current primary: gemini-3.7-flash (trial from 2026-08-18) — see the inline
+# note on the list below. gemini-3.5-flash (the 2026-06-12 KEEP) sits directly
+# below as the known-good fallback while the new primary's voice is validated.
+# History: v4.18.1 had made gemini-2.5-pro primary over 2.5-flash; 3.5-flash
+# then took over 2026-06-09. At ~4 inference calls per day the cost delta is
+# negligible — the ordering is driven by voice quality, not price. See
+# docs/RETRO_2026-05-08.md for the framing: "the bot was using flash as if it
+# had to handle hundreds of runs an hour; it runs twice a day."
 #
 # filter_available_models() at startup prunes any model the API doesn't
 # expose. If the primary isn't available for the API key, the chain falls
 # through to the next model cleanly without code changes.
 GEMINI_MODEL_PRIORITY: List[str] = [
-    # gemini-3.5-flash — PRIMARY. Voice-quality trial KEPT 2026-06-12.
-    # Promoted 2026-06-09 ahead of 2.5-pro: reachable + GA per the Model
-    # Discovery workflow, a full generation newer, faster + cheaper, beats
-    # 3.1 Pro on Google's benchmarks. The Friday 2026-06-12 checkpoint read
-    # 5 live posts against the two-register voice anchor and confirmed it
-    # holds the voice (as sharp/terse/first-person as 2.5-pro); the earlier
-    # n=1 "more florid" signal was an outlier, not a pattern. 2.5-pro stays
-    # second so any 3.5-flash failure (incl. a thinking_config rejection)
-    # falls back cleanly and the run still posts. Thinking budget is pinned
-    # to 0 in _thinking_budget_for() (agents.py), so no empty-output risk.
+    # gemini-3.7-flash — PRIMARY (trial from 2026-08-18). Reachable + GA per the
+    # Model Discovery workflow, two generations newer than 3.5-flash, Flash-tier
+    # (the deliberate choice — Pro is overkill here) and cheaper on output. The
+    # announcement benchmarks are coding/agentic only, so voice is validated
+    # empirically: read the next Curator + Mentor runs and revert this one line
+    # if it reads flatter or more florid than 3.5-flash. Thinking is pinned to 0
+    # in _thinking_budget_for() (agents.py) for the whole 3.x-flash line, so no
+    # empty-output risk. 3.5-flash sits directly below as the known-good
+    # fallback — if 3.7 fails or Google pulls it, the run still posts.
+    "gemini-3.7-flash",
+    # gemini-3.5-flash — prior primary, KEPT after the 2026-06-12 voice trial;
+    # now the immediate fallback. Held the two-register voice as sharp/terse/
+    # first-person as 2.5-pro while it was primary (2026-06-09 → 2026-08-18).
     "gemini-3.5-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
