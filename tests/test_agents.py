@@ -389,15 +389,15 @@ def test_sync_generate_invalid_key_raises_clear_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
     """An API-level exception on the primary model should cause the next
-    model to be tried. 2026-06-09 promoted gemini-3.5-flash to primary for
-    a voice-quality trial; this test now fails on the primary (3.5-flash)
-    and succeeds on the next-tier fallback (gemini-2.5-pro) to verify the
-    failover still works after the re-ordering."""
+    model to be tried. 2026-08-18 promoted gemini-3.7-flash to primary (voice
+    trial); this test fails on the primary (3.7-flash) and succeeds on the
+    immediate fallback (gemini-3.5-flash) to verify the failover still works
+    after the re-ordering."""
     models_tried = []
 
     def _track_and_fail_primary(api_key, system_instr, task, model):
         models_tried.append(model)
-        if model == "gemini-3.5-flash":
+        if model == "gemini-3.7-flash":
             raise ConnectionError("quota exceeded")
         return '["This is a long enough post that covers #AI and passes all validation checks."]'
 
@@ -409,11 +409,31 @@ async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
         mode="mentor",
     )
 
+    assert "gemini-3.7-flash" in models_tried
     assert "gemini-3.5-flash" in models_tried
-    assert "gemini-2.5-pro" in models_tried
     assert isinstance(content, list)
     assert len(content) >= 1
     assert "quota exceeded" not in content[0]
+
+
+def test_thinking_budget_for_covers_model_families():
+    """Guards the empty-output protection (the 2026-05-11 bug): 2.5-pro and the
+    whole 2.5 / 3.x-flash line must pin a thinking budget, while 1.5-flash —
+    which has no thinking mode — must stay None (sending thinking_config would
+    error and break that fallback). The failover test stubs _sync_generate, so
+    this is the only place the regex branch is actually exercised."""
+    from src.agents import _thinking_budget_for as budget
+
+    # The Gemini 3.x flash line (matched by regex) all disable thinking.
+    assert budget("gemini-3.7-flash") == 0
+    assert budget("gemini-3.6-flash") == 0
+    assert budget("gemini-3.5-flash") == 0
+    # 2.5 family: flash disables, pro pins to its minimum (cannot fully disable).
+    assert budget("gemini-2.5-flash") == 0
+    assert budget("gemini-2.5-pro") == 128
+    # No thinking mode → must NOT send thinking_config (return None).
+    assert budget("gemini-1.5-flash-latest") is None
+    assert budget("gemma-3-27b-it") is None
 
 
 @pytest.mark.asyncio
