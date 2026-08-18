@@ -188,15 +188,13 @@ GEMINI_MODEL_PRIORITY: List[str] = [
     "gemini-3.5-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    # v4.18 (2026-05-11): gemini-2.0-flash dropped — Google has deprecated
-    # it for new users (the error_msg diagnostic surfaced the 404 message:
-    # "models/gemini-2.0-flash is no longer available to new users").
-    # Same pattern as Imagen 3 deprecation a week earlier. Leaving 1.5 and
-    # gemma in the list as vestigial — they get pruned at startup anyway,
-    # and if Google ever re-enables them for this account, no code change
-    # is needed.
-    "gemini-1.5-flash-latest",
-    "gemma-3-27b-it",
+    # v4.18 (2026-05-11): gemini-2.0-flash dropped (deprecated for new users).
+    # 2026-08-18: gemini-1.5-flash-latest and gemma-3-27b-it removed too — the
+    # Model Discovery workflow confirmed the key can no longer reach either, so
+    # filter_available_models() was pruning them every run anyway. The reachable
+    # chain (3.7-flash -> 3.5-flash -> 2.5-pro -> 2.5-flash) has ample fallback
+    # depth. Re-add a model here if Google re-enables it for this account.
+    # (The Gemma prompt-inlining path in agents.py stays — harmless if unused.)
 ]
 
 # Image generation
