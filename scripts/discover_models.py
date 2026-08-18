@@ -45,17 +45,17 @@ except Exception:
 # was "rolling out next month" (so possibly live by 2026-06). API id strings
 # weren't published verbatim, so a few naming variants are probed per model.
 PROBE_CANDIDATES = [
-    # Controls — should be present (the bot uses these today)
+    # Controls — should be present (the bot's current chain uses these)
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    # 3.5 — the real upgrade targets (Flash is GA, Pro imminent/maybe live)
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-preview",
+    # Newer Flash generations — the next upgrade targets
+    "gemini-3.6-flash",
+    # Pro-tier probes (auditor / possible future primary)
     "gemini-3.5-pro",
     "gemini-3.5-pro-preview",
-    # Older 3.x — present per the benchmark table; fallbacks if 3.5 absent
     "gemini-3.1-pro",
-    "gemini-3-flash",
 ]
 
 
