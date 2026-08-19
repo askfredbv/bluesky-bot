@@ -79,3 +79,33 @@ async def test_filter_never_returns_empty_list(monkeypatch):
     result = await filter_available_models("testkey", priority)
 
     assert result == priority
+
+
+def test_upgrade_candidates_excludes_current_chain_and_older(monkeypatch, capsys):
+    """_print_upgrade_candidates flags ONLY models newer than the current
+    primary — never the primary itself, its in-chain fallbacks, older siblings,
+    or Flash-Lite. Guards the probe/report path Codex flagged on PR #69."""
+    from scripts import discover_models as dm
+
+    monkeypatch.setattr(
+        dm, "GEMINI_MODEL_PRIORITY",
+        ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-pro"],
+    )
+
+    available = {
+        "gemini-3.7-flash",       # current primary — not an upgrade
+        "gemini-3.5-flash",       # in-chain fallback — not an upgrade
+        "gemini-3.6-flash",       # older than the primary — not an upgrade
+        "gemini-3.5-flash-lite",  # lower tier — never an upgrade
+        "gemini-2.5-flash",       # older generation — not an upgrade
+        "gemini-4.0-flash",       # genuinely newer — IS an upgrade
+    }
+    dm._print_upgrade_candidates(available)
+    out = capsys.readouterr().out
+
+    assert "CANDIDATE: gemini-4.0-flash" in out
+    for not_a_candidate in (
+        "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.6-flash",
+        "gemini-3.5-flash-lite", "gemini-2.5-flash",
+    ):
+        assert f"CANDIDATE: {not_a_candidate}" not in out
