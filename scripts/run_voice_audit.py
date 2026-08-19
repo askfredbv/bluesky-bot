@@ -1,8 +1,8 @@
 """Monthly voice-audit entry point — an independent critic, not an auto-fixer.
 
 Pulls the bot's recent posts and asks a Pro-tier Gemini model (a DIFFERENT,
-more-capable model than the gemini-3.5-flash writer, for genuine independence)
-to critique them against Frederik's voice. Prints a markdown report that the
+more-capable model than the bot's own Flash-tier writer, for genuine
+independence) to critique them against Frederik's voice. Prints a markdown report that the
 voice-audit workflow turns into a GitHub issue for human review.
 
 Deliberately NOT plat bandwerk: this surfaces a draft critique for judgement.
@@ -24,7 +24,7 @@ import os
 import httpx
 
 # Auditor models, newest-capable first. ALL are Pro-tier and DIFFERENT from
-# the gemini-3.5-flash writer — the independence is the point. Tried in order;
+# the bot's Flash-tier writer — the independence is the point. Tried in order;
 # the first that responds is used. 3.5-pro may not be GA to every key yet
 # (it was rolling out 2026-06), so 3.x Pro previews are the fallbacks.
 _AUDITOR_MODELS = [

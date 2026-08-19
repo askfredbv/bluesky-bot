@@ -45,17 +45,17 @@ except Exception:
 # was "rolling out next month" (so possibly live by 2026-06). API id strings
 # weren't published verbatim, so a few naming variants are probed per model.
 PROBE_CANDIDATES = [
-    # Controls — should be present (the bot uses these today)
+    # Controls — should be present (the bot's current chain uses these)
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    # 3.5 — the real upgrade targets (Flash is GA, Pro imminent/maybe live)
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-preview",
+    # Newer Flash generations — the next upgrade targets
+    "gemini-3.6-flash",
+    # Pro-tier probes (auditor / possible future primary)
     "gemini-3.5-pro",
     "gemini-3.5-pro-preview",
-    # Older 3.x — present per the benchmark table; fallbacks if 3.5 absent
     "gemini-3.1-pro",
-    "gemini-3-flash",
 ]
 
 
@@ -134,12 +134,18 @@ def _print_chain_status(available_names: set) -> None:
 
 
 def _print_upgrade_candidates(available_names: set) -> None:
-    print("\n-- Upgrade candidates (generation newer than 2.5, Pro/Flash tier, NOT Flash-Lite) --")
-    # Flash-Lite is a LOWER tier than our current 2.5-pro, so it is never an
-    # upgrade for us, regardless of generation.
+    primary = GEMINI_MODEL_PRIORITY[0] if GEMINI_MODEL_PRIORITY else ""
+    primary_gen = _generation(primary)
+    print(f"\n-- Upgrade candidates (newer generation than the current primary "
+          f"{primary}, Pro/Flash tier, NOT Flash-Lite) --")
+    # An upgrade must be a NEWER generation than the model we already run as
+    # primary — this excludes the whole current chain by construction (nothing
+    # in it is newer than the primary) and also drops older siblings like a
+    # lingering 3.6 once we are on 3.7. Flash-Lite is a lower tier, never an
+    # upgrade.
     pro_flash = sorted(
         (n for n in available_names
-         if _generation(n) > (2, 5)
+         if _generation(n) > primary_gen
          and ("pro" in n or "flash" in n)
          and "flash-lite" not in n),
         key=_generation_key,
@@ -148,12 +154,13 @@ def _print_upgrade_candidates(available_names: set) -> None:
         for c in pro_flash:
             print(f"  CANDIDATE: {c}")
         print("\n  Next step: put ONE candidate first in GEMINI_MODEL_PRIORITY, run once,")
-        print("  and READ the feed output vs 2.5-pro. Also pin its thinking budget in")
-        print("  agents.py _thinking_budget_for() — a 3.x model currently falls through")
-        print("  to None and may hit the 2026-05-11 empty-output bug.")
+        print("  and READ the feed output vs the current primary. If it is NOT a 3.x Flash")
+        print("  model (the only shape agents.py _thinking_budget_for() covers by regex),")
+        print("  pin its thinking budget there first or it may hit the 2026-05-11")
+        print("  empty-output bug.")
     else:
-        print("  None reachable above 2.5-pro tier. Staying on gemini-2.5-pro is the")
-        print("  correct call — no quality upgrade is available to this key today.")
+        print(f"  Nothing newer than {primary} reachable at Pro/Flash tier — the current")
+        print("  primary is the best this key can reach today.")
 
 
 def main() -> int:
