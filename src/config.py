@@ -159,9 +159,9 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
 
 # AI Model Priority (failover order on quota/availability errors).
 #
-# Current primary: gemini-3.7-flash (trial from 2026-08-18) — see the inline
-# note on the list below. gemini-3.5-flash (the 2026-06-12 KEEP) sits directly
-# below as the known-good fallback while the new primary's voice is validated.
+# Current primary: gemini-3.7-flash (KEPT 2026-08-19 after the voice trial) —
+# see the inline note on the list below. gemini-3.5-flash (the 2026-06-12 KEEP)
+# sits directly below as the known-good fallback.
 # History: v4.18.1 had made gemini-2.5-pro primary over 2.5-flash; 3.5-flash
 # then took over 2026-06-09. At ~4 inference calls per day the cost delta is
 # negligible — the ordering is driven by voice quality, not price. See
@@ -172,15 +172,14 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
 # expose. If the primary isn't available for the API key, the chain falls
 # through to the next model cleanly without code changes.
 GEMINI_MODEL_PRIORITY: List[str] = [
-    # gemini-3.7-flash — PRIMARY (trial from 2026-08-18). Reachable + GA per the
-    # Model Discovery workflow, two generations newer than 3.5-flash, Flash-tier
-    # (the deliberate choice — Pro is overkill here) and cheaper on output. The
-    # announcement benchmarks are coding/agentic only, so voice is validated
-    # empirically: read the next Curator + Mentor runs and revert this one line
-    # if it reads flatter or more florid than 3.5-flash. Thinking is pinned to 0
-    # in _thinking_budget_for() (agents.py) for the whole 3.x-flash line, so no
-    # empty-output risk. 3.5-flash sits directly below as the known-good
-    # fallback — if 3.7 fails or Google pulls it, the run still posts.
+    # gemini-3.7-flash — PRIMARY, KEPT after the 2026-08-19 voice trial (promoted
+    # 2026-08-18, #68). Reachable + GA per the Model Discovery workflow, two
+    # generations newer than 3.5-flash, Flash-tier (the deliberate choice — Pro
+    # is overkill here) and cheaper on output. Benchmarks are coding/agentic
+    # only, so the voice was validated on the live feed, not the benchmark.
+    # Thinking is pinned to 0 in _thinking_budget_for() (agents.py) for the whole
+    # 3.x-flash line, so no empty-output risk. 3.5-flash sits directly below as
+    # the known-good fallback — if 3.7 fails or Google pulls it, the run still posts.
     "gemini-3.7-flash",
     # gemini-3.5-flash — prior primary, KEPT after the 2026-06-12 voice trial;
     # now the immediate fallback. Held the two-register voice as sharp/terse/
