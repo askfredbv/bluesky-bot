@@ -1,5 +1,7 @@
 # Plan: Engagement — measure, observe, act, participate
 
+> **Status — 2026-08-19.** Phase 1 (capture) and Phase 4a (recon) are **shipped**; Phase 4b (proactive replies) is **code-complete but dormant** (human-gated, activated manually); Phases 2 (digest), 3 (scoring), and 4c (expansion) remain **parked** by choice. Current primary model is **`gemini-3.7-flash`** — the `gemini-2.5-pro` in the 2026-05-08 snapshot below is historical. Shipped-phase detail has been trimmed to a summary; the full original spec is in git history + `BACKLOG.md`.
+
 > **Read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md) before executing further on this plan.** The phase ordering below (capture → digest → act → participate) was followed through 2026-04 / 2026-05 and shipped a coherent Phase 1, but the retro documents why the implicit assumption ("an audience exists to engage with the content") was wrong from the start. Phase 4 (proactive replies) is the only path in this plan that creates an audience; running 1→2→3 before 4 measured a feed that had no readers. Question whether the plan's phase order still matches the project's goal before adding work on top.
 
 ---
@@ -11,7 +13,7 @@ The project's explicit goal is now **Option 1: build a following.** Real audienc
 | Phase | Original ordering | New priority under Option 1 |
 |---|---|---|
 | 4b. MVP proactive replies | "After 4a produces ranked watchlist" (data-gated) | **First in line.** Only audience-acquisition lever in this plan. Watchlist exists. Stop waiting for Phase 1 data — that gate was conservative-by-default. |
-| Content-quality fixes (Curator template rewrite, Mentor topic pool, model swap to gemini-2.5-pro) | Not in plan; ad-hoc work | **Second priority.** Phase 4b will expose the feed to wider readership; output should be as good as we can make it cheaply before that lands. Model swap shipped 2026-05-08 (8c99378) and is under production validation. |
+| Content-quality fixes (Curator template rewrite, Mentor topic pool, model swap to gemini-2.5-pro) | Not in plan; ad-hoc work | **Second priority.** Phase 4b will expose the feed to wider readership; output should be as good as we can make it cheaply before that lands. Model swap shipped 2026-05-08 (8c99378); the primary has since moved through gemini-3.5-flash to gemini-3.7-flash (see the status note at the top). |
 | 1. Capture telemetry (Steps 1–5) | First | ✅ Shipped, production-confirmed v4.17.0. Still useful — informs Phase 2 + Track A formatting features feed it. Lower priority for new work now. |
 | 4a. Recon (audit_watchlist) | "Anytime after Phase 1 ships" | ✅ Shipped, 2 stake-able candidates. |
 | 2. Weekly digest | "After Phase 1 has run 2+ weeks" | **Lower priority under Option 1.** Useful when there's an audience to digest engagement from; less useful right now. Can still ship around ~2026-05-19 trigger, but not urgent. |
@@ -43,197 +45,11 @@ Four phases, executed in order. **Each phase has a hard gate before the next sta
 
 ---
 
-## Phase 1 — Capture (~5h, no behaviour change)
+## Phase 1 — Capture ✅ SHIPPED (v4.17.0, 2026-05)
 
-Goal: every post writes a row to a metrics file; every feed fetch records its outcome; partial thread deliveries stop being silent. Zero change to what the bot posts.
+Telemetry + delivery-safety, with zero change to what the bot posts. Every post writes a row to `post_metrics.json` (engagement + formatting features, refreshed ~daily, pruned >30d); every feed fetch records into `feed_health.json`; follower counts snapshot to `growth.json`. Partial thread deliveries stopped being silent — `@retry_with_backoff` was dropped from the broadcasters in favour of per-post retry with a per-thread shared budget and a `BroadcastResult` / `*_partial_delivery` contract. Landed as six shippable commits (retry-helper split → `FeedFetchResult`/feed_health → `BroadcastResult` → drop the decorator → metrics_context plumbing → refresh+prune), production-confirmed across three runs on 2026-05-04/05. Code lives in `src/metrics.py` plus `capture_post_metrics_stage` + `capture_follower_snapshot_stage` in `main.py`.
 
-### 1a. Broadcaster signature change
-
-Currently `post_to_bluesky` returns `client` (used by `handle_interactions` downstream); `post_to_mastodon` returns nothing. Both wrap the entire thread in `@retry_with_backoff`, which causes silent re-sends on mid-thread failure.
-
-Replace with:
-
-```python
-@dataclass(frozen=True)
-class BroadcastResult:
-    client: Any                    # Bluesky: AsyncClient; Mastodon: None
-    sent_uris: List[str]           # at://… for Bluesky; status IDs for Mastodon
-    error: Optional[Exception]     # None on clean delivery; populated on partial
-```
-
-Drop `@retry_with_backoff` from both broadcasters. Move retry decisions inside, at per-post granularity. Posts already on the wire stay there; failures stop the thread cleanly with `bluesky_partial_delivery` / `mastodon_partial_delivery` (event names symmetric, both already prefixed by platform). `BroadcastResult.sent_uris` is populated whether delivery completed or stopped early.
-
-**Retry budget is per-thread, not per-post** — the budget counters (rate-limit and transient) are initialised once when the broadcaster starts and shared across all posts in the thread. Otherwise a 5-post thread × 3 rate-limit retries = up to 45 min of sleeps on a sustained 429. Budget exhaustion stops the thread cleanly; the next run picks up where this one left off (seen-article state already handles idempotency at the article level).
-
-### 1b. Retry helper split
-
-Today `retry_with_backoff` mixes 429 logic and transient-error logic in one decorator. Extract into focused helpers callable from per-post loops:
-
-```python
-def classify_retry(e: Exception) -> Literal["rate_limit", "transient"]:
-    """Duck-type inspect e.response.status_code."""
-
-async def sleep_for_rate_limit(attempt, exception):
-    """Honour header hints from either platform; fall back to
-    RATE_LIMIT_BASE_WAIT_SECONDS * attempt. Raises if attempt > RATE_LIMIT_MAX_RETRIES.
-
-    Header normalisation (both shapes handled):
-    - Bluesky: `Retry-After` (seconds, integer)
-    - Mastodon: `X-RateLimit-Reset` (unix timestamp, ISO-8601) — convert to delay-from-now
-    """
-
-async def sleep_for_transient(attempt):
-    """BACKOFF_FACTOR ** attempt + jitter. Raises if attempt > MAX_API_RETRIES."""
-```
-
-`retry_with_backoff` stays as a thin decorator using these helpers — existing call sites (`get_link_metadata`, `update_profile_bio`, `mastodon.media_post`) keep their semantics. Mastodon's existing `_status_post_with_timeout_and_retry` swaps its hand-rolled `min(2^n, 5)` sleep for `sleep_for_rate_limit` / `sleep_for_transient` — gains 429 awareness it doesn't have today.
-
-Also fix the existing strict/non-strict off-by-one between the two retry budgets. Current code mixes `> RATE_LIMIT_MAX_RETRIES` (rate-limit path allows 4 attempts) and `>= MAX_API_RETRIES` (transient path allows 3). **Pick strict-greater everywhere** → both paths get 4 attempts (1 initial + `MAX_..._RETRIES` retries), matching the constant naming.
-
-### 1c. Post metrics
-
-New Gist file `post_metrics.json`. Capped at 100 entries × 2 platforms; pruned by age (drop > 30 days), not count.
-
-```json
-{
-  "posts": [
-    {
-      "post_id": "at://did:plc:.../app.bsky.feed.post/...",
-      "platform": "bluesky",
-      "mode": "curator",
-      "language": "English",
-      "posted_at": "2026-04-19T09:03:11Z",
-      "content_preview": "first 80 chars...",
-      "topic": "LLMs",
-      "source_domain": "openai.com",
-      "pioneer_id": null,
-      "had_image": false,
-      "had_link_card": true,
-      "thread_position": 0,
-      "metrics": {
-        "likes": 0, "reposts": 0, "replies": 0,
-        "fetched_at": "2026-04-20T09:00:00Z"
-      }
-    }
-  ]
-}
-```
-
-New `src/metrics.py`: `load_post_metrics()`, `save_post_metrics()`, `record_post_metric()`, `refresh_stale_metrics(bsky_client, mastodon_client)`, `prune_old_metrics()`. Same Gist-fallback pattern as `seen_articles`. New stage `capture_post_metrics_stage` in `main.py`, runs after `broadcasting_stage`, consumes `BroadcastResult.sent_uris`.
-
-**Refresh policy:** `refresh_stale_metrics` runs once per run (clients warm) — only hits API for rows where `posted_at > 2h AND fetched_at > 20h AND posted_at < 30d`. The 2h floor skips hour-old posts (nothing interesting to measure yet); the 20h stale threshold means every post is refreshed once per day even with 2 runs/day. Steady-state ~10–20 API calls per run. Intentional dead zone: 0–2h engagement data is never captured (acceptable — Phase 2 digest is a 7-day view).
-
-**BroadcastPayload gains `metrics_context: Dict[str, Any]`**, populated upstream (`content_prep_stage` + `broadcasting_stage`) with the keys the capture stage needs — none of which are currently plumbed end-to-end:
-
-| Key | Source |
-|---|---|
-| `mode` | already on `BroadcastPayload` |
-| `language` | `Settings.platform.language` (already available) |
-| `topic` | `chosen_topic` — already on `BroadcastPayload` |
-| `source_domain` | derived from `news_items[0]['link']` in `content_prep_stage` |
-| `pioneer_id` | `pioneer_entry['id']` — already on `BroadcastPayload` |
-| `had_image` | `image_bytes is not None` — **currently a local var in `broadcasting_stage`**; promote to `BroadcastPayload` or compute a bool upstream |
-| `had_link_card` | `link_meta is not None` — **currently dropped between `ContentPrepPayload` and `BroadcastPayload`**; plumb through |
-
-`content_preview`, `posted_at`, `thread_position`, `post_id` derive from the broadcast loop itself — no upstream plumbing needed.
-
-Platform APIs:
-- Bluesky: `client.app.bsky.feed.get_posts({"uris": [...]})` returns `likeCount` / `repostCount` / `replyCount` per post. Batch up to 25 URIs per call.
-- Mastodon: `mastodon.status(id)` returns `favourites_count` / `reblogs_count` / `replies_count`. One call per post — fine at <100 posts.
-
-### 1d. Feed health
-
-`fetch_single_feed` in `src/utils.py` returns a structured result instead of just a list:
-
-```python
-@dataclass
-class FeedFetchResult:
-    url: str
-    ok: bool                           # request succeeded (regardless of content)
-    entries_total: int                 # raw entries in the feed
-    entries_accepted: int              # survived lookback + normalisation
-    error_type: Optional[str] = None   # e.g. "ReadTimeout", "SAXParseException"
-```
-
-`fetch_news` aggregates these into `feed_health.json` (same Gist, same pattern as `post_metrics.json`):
-
-```json
-{
-  "feeds": {
-    "https://...": {
-      "last_fetch_at": "...",
-      "last_ok_at": "...",
-      "last_accepted_at": "...",
-      "recent_attempts": [
-        {"at": "...", "ok": true, "accepted": 3, "error": null}
-      ]
-    }
-  }
-}
-```
-
-`recent_attempts` rolls at 28 entries (~2 weeks at 2 runs/day).
-
-### 1e. Files & tests
-
-| File | Change |
-|---|---|
-| `src/utils.py` | Extract `classify_retry`, `sleep_for_rate_limit`, `sleep_for_transient`; refactor `retry_with_backoff`; `fetch_single_feed` returns `FeedFetchResult`; `fetch_news` aggregates feed-health |
-| `src/broadcasters.py` | Drop `@retry_with_backoff`; per-post retry loops; return `BroadcastResult`; emit `*_partial_delivery` |
-| `src/metrics.py` — **new** | Post-metrics + feed-health: load/save/record/refresh/prune |
-| `main.py` | New `capture_post_metrics_stage`; `BroadcastPayload` gains `bsky_sent_uris`, `mastodon_sent_ids`; unpacks `BroadcastResult` |
-| `tests/test_retry.py` | Existing 5 tests stay valid (now testing helpers); add `classify_retry` boundary cases |
-| `tests/test_broadcasters_partial.py` — **new** | Mid-thread failure on both platforms; verify earlier posts not re-sent and `*_partial_delivery` is logged |
-| `tests/test_metrics.py` — **new** | post_metrics + feed_health: shape tests, refresh, prune |
-
-### 1f. Execution order — six shippable commits
-
-Each step is a single commit that leaves main green. Ordered by dependency and risk — 3b is the only step with real behavioural change, and it's deliberately isolated so the preceding work de-risks it.
-
-| # | Step | Scope | Time | Risk |
-|---|---|---|---|---|
-| 1 | **Retry helper split** (pure refactor) | `src/utils.py`, `tests/test_retry.py` | 45m | low |
-| 2 | **FeedFetchResult + feed_health.json** | `src/utils.py`, `src/metrics.py` (new), `main.py`, `tests/test_metrics.py` (new) | 1h | low |
-| 3a | **BroadcastResult return type** (keep `@retry_with_backoff`) | `src/broadcasters.py`, `main.py`, `tests/test_broadcasters.py` | 45m | low |
-| 3b | **Drop `@retry_with_backoff` + per-post retry** | `src/broadcasters.py`, tests extended | 1.5h | **HIGH** |
-| 4 | **metrics_context plumbing + record-on-broadcast** | `main.py`, `src/metrics.py` extended, `tests/test_metrics.py` | 1h | low |
-| 5 | **Refresh stale metrics + prune** | `src/metrics.py` extended, `main.py`, `tests/test_metrics.py` | 45m | low |
-
-**Checkpoint after 3b.** Stop and wait for at least one live production run before starting Step 4. 3b is the only step that changes what the bot actually does on the wire (retry semantics, partial-delivery handling) — every subsequent step builds on its return contract, so a regression caught after Step 5 is far more expensive to debug than one caught after 3b.
-
-**Step-level acceptance:**
-1. `pytest` green. No dispatch needed — existing callers get identical semantics (minus the off-by-one fix).
-2. `pytest` green. After next run, `feed_health.json` shows entries for all 25 feeds. No behaviour change to posts.
-3a. `pytest` green + one manual `workflow_dispatch` to confirm the unpack threads cleanly through `main.py`. `sent_uris` populated on success only at this step.
-3b. `pytest` green + one manual `workflow_dispatch`. Watch log for unexpected `*_partial_delivery`. **Pause here.**
-4. `pytest` green. After next run, `post_metrics.json` shows rows with zero `metrics` sub-objects (refresh hasn't run yet).
-5. `pytest` green. After 2 runs ~12h apart, previous day's rows show non-zero live like/repost counts.
-
-**Why 3a/3b split:** the `BroadcastResult` type change (3a) is mechanical — signature and unpack sites only. Dropping the decorator and writing per-thread retry state (3b) is where wire behaviour changes. Separating them means if a bug surfaces, git-bisect lands on the right commit immediately.
-
-**Cumulative time:** ~5h45m, natural split across two sessions with the 3b checkpoint as the boundary.
-
-### Progress — as of 2026-05-02
-
-| # | Status | Commit | Notes |
-|---|---|---|---|
-| 1 | ✅ | `6d581fe` | Retry helpers extracted (`classify_retry`, `sleep_for_rate_limit`, `sleep_for_transient`) |
-| 2 | ✅ | `7eb02e9` + `5f8e2e2` | `FeedFetchResult` + `feed_health.json`. Original `7eb02e9` shipped a latent KeyError: `_load_gist_state` passed `filename=` as a logging kwarg, which collides with Python's reserved `LogRecord.filename`. The except's own log call raised, propagating past load_feed_health → fetch_news → `feed_health_record_failed`. Identified via the 2026-04-29 diagnostic patch (`9b12bbe`); fixed `5f8e2e2` with both narrow rename (`state_file=`) and a wide guard in `SafeLogger._emit` that auto-prefixes any reserved-name kwargs with `x_`. Acceptance confirms tomorrow's Curator run. |
-| 3a | ✅ | `0afa0b4` | `BroadcastResult` return type; decorator still in place |
-| 3b | ✅ | `185aad4` | Dropped `@retry_with_backoff`; per-thread shared retry budget; `*_partial_delivery` on exhaustion. Two `workflow_dispatch` runs clean. Natural runs since: clean. |
-| — | **CHECKPOINT cleared** | — | The 2026-04-29 morning Curator run cleared the broadcast-path checkpoint (no `*_partial_delivery`, no `rate_limit_hit`). Step 2's separate KeyError bug surfaced on the same run and was fixed in `5f8e2e2`. |
-| 4 | ✅ | `ff00aa6` + `27cf504` | metrics_context plumbing + record-on-broadcast. `post_metrics.json` schema (post_id, platform, mode, posted_at, content_preview, topic, source_domain, pioneer_id, had_image, had_link_card, thread_position, zeroed metrics sub-object). New `capture_post_metrics_stage`. Test isolation fix (`27cf504`) gitignored state files and added a noop monkeypatch in the e2e tests so the new stage no longer leaks state to disk during pytest. **2026-05-04 Curator run:** acceptance gate clear, no `post_metrics_record_failed`. |
-| 5 | ✅ | `59d45ea` | Refresh stale metrics + prune. `should_refresh` (pure: 2h floor, 20h staleness, 30d cap), `prune_old_metrics`, `refresh_stale_metrics` (Bluesky `get_posts` batched ≤25, Mastodon `status` per-row in a thread). `capture_post_metrics_stage` extended to do load → record → refresh → prune → save in one I/O cycle. Per-platform errors don't block the other platform. **Acceptance: confirmed 2026-05-05.** Three consecutive runs all logged `post_metrics_refreshed` cleanly with zero errors: Mentor 14:30 UTC 05-04 (`bluesky=3, mastodon=3, skipped=2`), Curator 07:00 UTC 05-05 (`bluesky=1, mastodon=1, skipped=8` — correctly skipping the recently-fetched ones), Mentor 14:30 UTC 05-05 (`bluesky=4, mastodon=4, skipped=4`). |
-
-Tests: 250 passing. **Phase 1 capture pipeline complete and production-confirmed.** Released as v4.17.0.
-
-### Phase 1 success criteria (gate to Phase 2)
-
-After two runs:
-- `post_metrics.json` has rows for all 4 posts (2 Bluesky + 2 Mastodon) with non-null metrics
-- `feed_health.json` has entries for all 25 RSS feeds
-- A simulated mid-thread failure (test only) does not re-send earlier posts and logs `*_partial_delivery`
-- Zero behaviour change in production output
+_The original ~190-line implementation spec + per-commit progress table lived here through 2026-08-19; it is preserved in git history and summarised in `BACKLOG.md`._
 
 ---
 
