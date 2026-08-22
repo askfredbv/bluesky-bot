@@ -1,9 +1,9 @@
 # Voice audit — independent critic via Gemini
 
 A periodic, human-run check on whether the bot's posts still hold Frederik's
-voice or drift to generic AI prose. Run with **Gemini** (a different model
-family than the one that writes the posts — gemini-3.5-flash), so the critic's
-blind spots differ from the author's. This is the content-side equivalent of
+voice or drift to generic AI prose. Run it with a **Pro-tier Gemini** — a
+more capable model than the Flash-tier one that writes the posts — so the
+critic's blind spots differ from the author's. This is the content-side equivalent of
 `AGENTS.md` (which briefs Codex for code review).
 
 **Why Gemini, not Claude:** independence is the value. A critic from a
@@ -30,7 +30,7 @@ not plat bandwerk.
 
 `.github/workflows/voice-audit.yml` is the **lazy fallback**: a manual
 (`workflow_dispatch`) run of `scripts/run_voice_audit.py` that uses a Pro-tier
-Gemini auditor (different from the gemini-3.5-flash writer) and opens a
+Gemini auditor (different from the bot's Flash-tier writer) and opens a
 "Voice audit — <date>" GitHub issue. One click when you'd rather get a quick
 auto-draft than do the manual run. The issue leads with "claims to verify, not
 verdicts" — nothing is auto-applied. It runs on demand only (no schedule):
