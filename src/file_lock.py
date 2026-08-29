@@ -1,34 +1,37 @@
-import os
+import sys
 from pathlib import Path
 from typing import BinaryIO
 
-if os.name == "nt":
+# Define only the backend for the current platform. Guarding on sys.platform
+# (which mypy evaluates statically and prunes) lets the checker skip the other
+# branch as dead code — it cannot type msvcrt on POSIX or fcntl on Windows — so
+# the module type-checks cleanly on both platforms.
+if sys.platform == "win32":
     import msvcrt
+
+    class WindowsLockBackend:
+        _LOCK_REGION_SIZE = 1
+
+        def acquire(self, handle: BinaryIO) -> None:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, self._LOCK_REGION_SIZE)
+
+        def release(self, handle: BinaryIO) -> None:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, self._LOCK_REGION_SIZE)
+
+    _BACKEND = WindowsLockBackend()
 else:
     import fcntl
 
+    class PosixLockBackend:
+        def acquire(self, handle: BinaryIO) -> None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
 
-class PosixLockBackend:
-    def acquire(self, handle: BinaryIO) -> None:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        def release(self, handle: BinaryIO) -> None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    def release(self, handle: BinaryIO) -> None:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
-class WindowsLockBackend:
-    _LOCK_REGION_SIZE = 1
-
-    def acquire(self, handle: BinaryIO) -> None:
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, self._LOCK_REGION_SIZE)
-
-    def release(self, handle: BinaryIO) -> None:
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, self._LOCK_REGION_SIZE)
-
-
-_BACKEND = WindowsLockBackend() if os.name == "nt" else PosixLockBackend()
+    _BACKEND = PosixLockBackend()
 
 
 class FileLock:

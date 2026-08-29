@@ -38,7 +38,7 @@ class ModeSelectionPayload:
 @dataclass(frozen=True)
 class ContentPrepPayload:
     mode: Mode
-    seen_data: Dict[str, List[str]]
+    seen_data: Dict[str, Any]
     news_items: List[Dict[str, Any]]
     link_meta: Optional[Dict[str, Any]]
     bsky_client: Any
@@ -50,7 +50,7 @@ class ContentPrepPayload:
 @dataclass(frozen=True)
 class BroadcastPayload:
     mode: Mode
-    seen_data: Dict[str, List[str]]
+    seen_data: Dict[str, Any]
     news_items: List[Dict[str, Any]]
     content_list: List[str]
     chosen_topic: str
@@ -65,7 +65,7 @@ class BroadcastPayload:
 @dataclass(frozen=True)
 class AutomationPayload:
     mode: Mode
-    seen_data: Dict[str, List[str]]
+    seen_data: Dict[str, Any]
     news_items: List[Dict[str, Any]]
     pioneer_entry: Optional[Dict[str, Any]] = None
     chosen_topic: Optional[str] = None
@@ -288,14 +288,18 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Mastodon. Missing Bluesky task shifts Mastodon to index 0.
     bsky_result = None
     mastodon_result = None
+    # gather(return_exceptions=True) yields BaseException instances (e.g. a
+    # CancelledError, which is not an Exception subclass), so guard on
+    # BaseException — a bare Exception check would let one through to the
+    # .client/.sent_uris access below.
     if bsky_client is not None:
         bsky_raw = results[0]
-        if not isinstance(bsky_raw, Exception):
+        if not isinstance(bsky_raw, BaseException):
             bsky_result = bsky_raw
         mastodon_raw = results[1] if len(results) > 1 else None
     else:
         mastodon_raw = results[0] if results else None
-    if mastodon_raw is not None and not isinstance(mastodon_raw, Exception):
+    if mastodon_raw is not None and not isinstance(mastodon_raw, BaseException):
         mastodon_result = mastodon_raw
 
     bsky_broadcast_client = (
