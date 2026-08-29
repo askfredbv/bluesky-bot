@@ -1,5 +1,6 @@
 annotated-types==0.7.0
 anyio==4.14.1
+ast-serialize==0.8.0
 atproto==0.0.71
 beautifulsoup4==4.15.0
 certifi==2026.2.25
@@ -19,8 +20,12 @@ httpx==0.28.1
 idna==3.15
 iniconfig==2.3.0
 libipld==3.3.2
+librt==0.15.0
 mastodon-py==2.2.1
+mypy==2.3.1
+mypy-extensions==1.1.0
 packaging==25.0
+pathspec==1.1.1
 pillow==12.3.0
 pluggy==1.6.0
 pyasn1==0.6.4

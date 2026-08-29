@@ -114,24 +114,33 @@ def test_momentum_product_bonus_case_insensitive():
     assert score_match == pytest.approx(score_no_match + MOMENTUM_PRODUCT_BONUS)
 
 
-def test_fetch_news_merges_source_feeds_on_duplicate_link():
-    """Items with the same link from different feeds should be merged into one item with both feeds listed."""
+def test_fetch_news_merges_source_feeds_on_duplicate_link(monkeypatch):
+    """Same link from different feeds must merge into one item carrying both
+    feeds. Exercises the real fetch_news dedup path (not a reimplementation)."""
+    import asyncio
 
-    item_a = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': datetime.now(timezone.utc)}
-    item_b = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-b.com/rss'], 'pub_date': datetime.now(timezone.utc)}
-    item_c = {'title': 'Unique Story', 'description': 'Details', 'link': 'https://example.com/other', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': datetime.now(timezone.utc)}
+    from src import news
+    from src.metrics import FeedFetchResult
 
-    all_raw = [item_a, item_b, item_c]
+    now = datetime.now(timezone.utc)
+    item_a = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': now}
+    item_b = {'title': 'Shared Story', 'description': 'Details', 'link': 'https://example.com/story', 'source_feeds': ['https://feed-b.com/rss'], 'pub_date': now}
+    item_c = {'title': 'Unique Story', 'description': 'Details', 'link': 'https://example.com/other', 'source_feeds': ['https://feed-a.com/rss'], 'pub_date': now}
 
-    seen: dict = {}
-    for item in all_raw:
-        link = item['link']
-        if link in seen:
-            seen[link]['source_feeds'] = list(set(seen[link]['source_feeds'] + item['source_feeds']))
-        else:
-            seen[link] = item
-    deduped = list(seen.values())
+    async def _fake_fetch_single_feed(client, url, *, timeout=None):
+        return FeedFetchResult(url=url, ok=True, entries_total=3,
+                               entries_accepted=3, entries=[item_a, item_b, item_c])
 
-    assert len(deduped) == 2
-    shared = next(i for i in deduped if i['link'] == 'https://example.com/story')
+    # one feed so the mock's items are collected once; keep the test offline
+    monkeypatch.setattr(news, "RSS_FEEDS", ["https://feed-a.com/rss"])
+    monkeypatch.setattr(news, "fetch_single_feed", _fake_fetch_single_feed)
+    monkeypatch.setattr(news, "load_feed_health", lambda: {})
+    monkeypatch.setattr(news, "record_feed_attempt", lambda *a, **k: None)
+    monkeypatch.setattr(news, "save_feed_health", lambda *a, **k: None)
+
+    result = asyncio.run(news.fetch_news(seen_links=[], recent_topics=[]))
+
+    links = {i['link'] for i in result}
+    assert links == {'https://example.com/story', 'https://example.com/other'}
+    shared = next(i for i in result if i['link'] == 'https://example.com/story')
     assert set(shared['source_feeds']) == {'https://feed-a.com/rss', 'https://feed-b.com/rss'}
