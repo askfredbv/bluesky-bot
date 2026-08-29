@@ -930,6 +930,71 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
         SafeLogger.error("metadata_extraction_failed", "Metadata extraction failed", exception=e, url=url)
         return fallback
 
+# ── Cross-publisher story clustering (fuzzy consensus) ───────────────────────
+# Exact-URL dedup (canonical_url) only catches the same link across feeds. When
+# OpenAI, The Verge and TechCrunch all cover "gpt-5 launched" under three
+# different URLs, that is a stronger consensus signal than one URL in two feeds,
+# yet exact matching misses it. We cluster items by title-token overlap across
+# distinct publisher domains and feed the cluster size into the consensus bonus
+# — additively, without merging or dropping any item (the Curator still picks
+# the single best; near-duplicates competing is fine). Idea from
+# strike007-3000/BluBot; here it is a scoring signal, not a merge.
+_TITLE_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "from", "this", "that", "its", "are", "was",
+    "were", "new", "how", "why", "what", "you", "your", "our", "will", "can",
+    "has", "have", "into", "over", "out", "about", "just", "now", "not", "but",
+})
+_CROSS_PUBLISHER_MULTIPLIER_CAP = 4  # widely-covered is strong, not infinite
+
+
+def _publisher_domain(url: str) -> str:
+    """Bare registrable-ish host for a link (lowercased, no leading www.)."""
+    try:
+        netloc = urlparse(url).netloc.lower()
+    except Exception:
+        return ""
+    return netloc[4:] if netloc.startswith("www.") else netloc
+
+
+def _title_tokens(title: str) -> frozenset:
+    """Significant lowercased tokens of a headline (drops short words + stopwords)."""
+    words = re.findall(r"[a-z0-9]+", (title or "").lower())
+    return frozenset(w for w in words if len(w) >= 3 and w not in _TITLE_STOPWORDS)
+
+
+def _titles_cluster(a: frozenset, b: frozenset,
+                    min_shared: int = 3, min_jaccard: float = 0.5) -> bool:
+    """True if two token sets plausibly describe the same story. Conservative on
+    purpose: a false cluster wrongly boosts an item, so require both a real
+    shared-token count and a high Jaccard ratio."""
+    if len(a) < min_shared or len(b) < min_shared:
+        return False
+    shared = len(a & b)
+    if shared < min_shared:
+        return False
+    union = len(a | b)
+    return union > 0 and (shared / union) >= min_jaccard
+
+
+def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
+    """Set item['cross_publisher_domains']: how many DISTINCT publisher domains
+    (including the item's own) carry a title-similar story. Mutates in place.
+    Same-domain near-duplicates never inflate the count — only independent
+    publishers do."""
+    profiles = [(_title_tokens(it.get("title", "")), _publisher_domain(it.get("link", "")))
+                for it in items]
+    for i, item in enumerate(items):
+        tokens_i, domain_i = profiles[i]
+        domains = {domain_i} if domain_i else set()
+        if len(tokens_i) >= 3:
+            for j, (tokens_j, domain_j) in enumerate(profiles):
+                if j == i or not domain_j or domain_j == domain_i:
+                    continue
+                if _titles_cluster(tokens_i, tokens_j):
+                    domains.add(domain_j)
+        item["cross_publisher_domains"] = max(1, len(domains))
+
+
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
     score = 0.0
@@ -966,10 +1031,17 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     if item_topic in recent_topics:
         score -= 12.0 # Heavy "Discernment" penalty for repetition
 
-    # 6. Consensus Synergy: reward stories covered by multiple independent feeds
+    # 6. Consensus Synergy: reward stories covered by multiple independent
+    # sources. feed_count = the same URL across feeds; cross_publisher_domains =
+    # the same story across distinct publisher domains (fuzzy title match, set by
+    # annotate_cross_publisher_consensus). Take the stronger of the two signals,
+    # capped so a very widely-covered story does not dominate the ranking.
     feed_count = len(item.get('source_feeds', []))
-    if feed_count > 1:
-        score += CONSENSUS_SYNERGY_BONUS * (feed_count - 1)
+    publisher_count = item.get('cross_publisher_domains', 1)
+    consensus_sources = min(max(feed_count, publisher_count),
+                            _CROSS_PUBLISHER_MULTIPLIER_CAP + 1)
+    if consensus_sources > 1:
+        score += CONSENSUS_SYNERGY_BONUS * (consensus_sources - 1)
 
     item['detected_topic'] = item_topic
     return score
@@ -1110,7 +1182,11 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
             seen[key] = item
     seen_canonical = {canonical_url(link) for link in seen_links}
     unique_unseen = [i for i in seen.values() if canonical_url(i['link']) not in seen_canonical]
-    
+
+    # Cross-publisher consensus: mark stories that multiple distinct publishers
+    # cover under different URLs, before scoring reads the signal.
+    annotate_cross_publisher_consensus(unique_unseen)
+
     # Apply Sage Scoring
     for item in unique_unseen:
         item['score'] = calculate_relevance_score(item, item['pub_date'], recent_topics)
