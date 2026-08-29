@@ -117,13 +117,13 @@ def test_record_feed_attempt_trims_recent_attempts_to_limit():
 
 def test_load_feed_health_returns_default_when_no_gist_or_file(monkeypatch, tmp_path):
     monkeypatch.setattr("src.metrics.FEED_HEALTH_FILE", tmp_path / "missing.json")
-    monkeypatch.setattr("src.utils._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.state_store._load_gist_state", lambda *_: None)
     assert metrics.load_feed_health() == {"feeds": {}}
 
 
 def test_load_feed_health_prefers_gist(monkeypatch):
     payload = {"feeds": {"https://a": {"last_fetch_at": "2026-01-01T00:00:00+00:00"}}}
-    monkeypatch.setattr("src.utils._load_gist_state", lambda name: payload if name == "feed_health.json" else None)
+    monkeypatch.setattr("src.state_store._load_gist_state", lambda name: payload if name == "feed_health.json" else None)
     assert metrics.load_feed_health() == payload
 
 
@@ -134,13 +134,13 @@ def test_save_feed_health_uses_gist_when_available(monkeypatch):
         calls["gist"] = (name, data)
         return True
 
-    monkeypatch.setattr("src.utils._save_gist_state", fake_save_gist)
+    monkeypatch.setattr("src.state_store._save_gist_state", fake_save_gist)
     metrics.save_feed_health({"feeds": {}})
     assert calls["gist"] == ("feed_health.json", {"feeds": {}})
 
 
 def test_save_feed_health_falls_back_to_local_file(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.utils._save_gist_state", lambda *_: False)
+    monkeypatch.setattr("src.state_store._save_gist_state", lambda *_: False)
     target = tmp_path / "feed_health.json"
     monkeypatch.setattr("src.metrics.FEED_HEALTH_FILE", target)
 
@@ -361,7 +361,7 @@ def test_record_post_metric_time_of_day_handles_unparseable():
 # ---------------------------------------------------------------------------
 
 def test_load_post_metrics_returns_default_shape_when_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.utils._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.state_store._load_gist_state", lambda *_: None)
     monkeypatch.setattr("src.metrics.POST_METRICS_FILE", tmp_path / "post_metrics.json")
     assert metrics.load_post_metrics() == {"posts": []}
 
@@ -369,14 +369,14 @@ def test_load_post_metrics_returns_default_shape_when_missing(monkeypatch, tmp_p
 def test_load_post_metrics_uses_gist_data_when_available(monkeypatch):
     payload = {"posts": [{"post_id": "at://x"}]}
     monkeypatch.setattr(
-        "src.utils._load_gist_state",
+        "src.state_store._load_gist_state",
         lambda name: payload if name == "post_metrics.json" else None,
     )
     assert metrics.load_post_metrics() == payload
 
 
 def test_save_post_metrics_falls_back_to_local_file(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.utils._save_gist_state", lambda *_: False)
+    monkeypatch.setattr("src.state_store._save_gist_state", lambda *_: False)
     target = tmp_path / "post_metrics.json"
     monkeypatch.setattr("src.metrics.POST_METRICS_FILE", target)
 
@@ -733,7 +733,7 @@ def test_record_follower_snapshot_appends_to_existing():
 
 
 def test_load_growth_returns_default_shape_when_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.utils._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.state_store._load_gist_state", lambda *_: None)
     monkeypatch.setattr("src.metrics.GROWTH_FILE", tmp_path / "growth.json")
     assert metrics.load_growth() == {"snapshots": []}
 
@@ -741,14 +741,14 @@ def test_load_growth_returns_default_shape_when_missing(monkeypatch, tmp_path):
 def test_load_growth_uses_gist_data_when_available(monkeypatch):
     payload = {"snapshots": [{"at": "x", "platform": "bluesky", "followers": 99}]}
     monkeypatch.setattr(
-        "src.utils._load_gist_state",
+        "src.state_store._load_gist_state",
         lambda name: payload if name == "growth.json" else None,
     )
     assert metrics.load_growth() == payload
 
 
 def test_save_growth_falls_back_to_local_file(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.utils._save_gist_state", lambda *_: False)
+    monkeypatch.setattr("src.state_store._save_gist_state", lambda *_: False)
     target = tmp_path / "growth.json"
     monkeypatch.setattr("src.metrics.GROWTH_FILE", target)
 

@@ -144,7 +144,7 @@ def test_handles_missing_pioneer_recent_key(patched_pools):
 # ── prune_pioneer_recent ─────────────────────────────────────────────────────
 
 def test_prune_drops_entries_older_than_cooldown(monkeypatch):
-    monkeypatch.setattr("src.utils.PIONEER_COOLDOWN_DAYS", 30)
+    monkeypatch.setattr("src.state_store.PIONEER_COOLDOWN_DAYS", 30)
     now = datetime.now(timezone.utc)
     entries = [
         {"id": "fresh", "posted_at": (now - timedelta(days=5)).isoformat()},
