@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 import httpx
 import pytest
 
+from src import net_safety
 from src.utils import get_with_safe_redirects
 from src.utils import is_safe_public_url
 
@@ -42,7 +43,7 @@ async def test_get_with_safe_redirects_blocks_dns_rebinding_on_same_hop(monkeypa
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
 
-    async def fake_get(url, **kwargs):
+    async def fake_capped(client, url, **kwargs):
         host = urlparse(url).hostname
         socket.getaddrinfo(host, None)
         return httpx.Response(200, request=httpx.Request("GET", url))
@@ -50,7 +51,7 @@ async def test_get_with_safe_redirects_blocks_dns_rebinding_on_same_hop(monkeypa
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
 
     async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "get", fake_get)
+        monkeypatch.setattr(net_safety, "_capped_stream_get", fake_capped)
         response = await get_with_safe_redirects(client, "https://example.com/path")
 
     assert response is None
@@ -67,7 +68,7 @@ async def test_get_with_safe_redirects_validates_each_redirect_hop(monkeypatch):
 
     requests_made = []
 
-    async def fake_get(url, **kwargs):
+    async def fake_capped(client, url, **kwargs):
         requests_made.append(url)
         if url == "https://first.example/start":
             return httpx.Response(
@@ -80,7 +81,7 @@ async def test_get_with_safe_redirects_validates_each_redirect_hop(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
 
     async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "get", fake_get)
+        monkeypatch.setattr(net_safety, "_capped_stream_get", fake_capped)
         response = await get_with_safe_redirects(client, "https://first.example/start")
 
     assert response is None
@@ -92,7 +93,7 @@ async def test_get_with_safe_redirects_allows_allowlisted_domain(monkeypatch):
     def mock_getaddrinfo(host, *args, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
-    async def fake_get(url, **kwargs):
+    async def fake_capped(client, url, **kwargs):
         return httpx.Response(200, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
@@ -100,7 +101,7 @@ async def test_get_with_safe_redirects_allows_allowlisted_domain(monkeypatch):
     monkeypatch.setattr("src.net_safety.METADATA_FETCH_BLOCKED_DOMAINS", [])
 
     async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "get", fake_get)
+        monkeypatch.setattr(net_safety, "_capped_stream_get", fake_capped)
         response = await get_with_safe_redirects(client, "https://allowed.example/article")
 
     assert response is not None
@@ -112,7 +113,7 @@ async def test_get_with_safe_redirects_blocks_non_allowlisted_domain(monkeypatch
     def mock_getaddrinfo(host, *args, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
-    async def fake_get(url, **kwargs):
+    async def fake_capped(client, url, **kwargs):
         raise AssertionError("request should not execute when domain policy blocks")
 
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
@@ -120,7 +121,7 @@ async def test_get_with_safe_redirects_blocks_non_allowlisted_domain(monkeypatch
     monkeypatch.setattr("src.net_safety.METADATA_FETCH_BLOCKED_DOMAINS", [])
 
     async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "get", fake_get)
+        monkeypatch.setattr(net_safety, "_capped_stream_get", fake_capped)
         response = await get_with_safe_redirects(client, "https://disallowed.example/article")
 
     assert response is None
@@ -133,7 +134,7 @@ async def test_get_with_safe_redirects_blocks_redirect_to_non_allowlisted_domain
 
     requests_made = []
 
-    async def fake_get(url, **kwargs):
+    async def fake_capped(client, url, **kwargs):
         requests_made.append(url)
         if url == "https://allowed.example/start":
             return httpx.Response(
@@ -148,7 +149,7 @@ async def test_get_with_safe_redirects_blocks_redirect_to_non_allowlisted_domain
     monkeypatch.setattr("src.net_safety.METADATA_FETCH_BLOCKED_DOMAINS", [])
 
     async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "get", fake_get)
+        monkeypatch.setattr(net_safety, "_capped_stream_get", fake_capped)
         response = await get_with_safe_redirects(client, "https://allowed.example/start")
 
     assert response is None
@@ -178,3 +179,63 @@ def test_compress_image_survives_decompression_bomb(monkeypatch):
     monkeypatch.setattr("src.utils.Image.open", _boom)
     original = b"not-a-real-image-but-that-is-fine"
     assert compress_image(original) == original
+
+
+# --- response size cap (_capped_stream_get) -------------------------------
+
+class _FakeStreamResponse:
+    def __init__(self, chunks, *, is_redirect=False, headers=None, status_code=200):
+        self.is_redirect = is_redirect
+        self.headers = headers or {}
+        self.status_code = status_code
+        self.request = httpx.Request("GET", "https://example.com/x")
+        self._chunks = chunks
+
+    async def aiter_bytes(self):
+        for c in self._chunks:
+            yield c
+
+
+class _FakeStreamCtx:
+    def __init__(self, resp):
+        self._resp = resp
+
+    async def __aenter__(self):
+        return self._resp
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _client_streaming(resp):
+    class _C:
+        def stream(self, method, url, **kwargs):
+            return _FakeStreamCtx(resp)
+    return _C()
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_aborts_on_streamed_oversize():
+    resp = _FakeStreamResponse([b"x" * 1000, b"x" * 1000, b"x" * 1000])  # 3000 B
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=1500)
+    assert out is None  # streamed past the cap
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_rejects_declared_oversize():
+    resp = _FakeStreamResponse([b"x"], headers={"content-length": "9999999"})
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=1500)
+    assert out is None  # declared Content-Length over the cap
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_returns_body_under_cap():
+    resp = _FakeStreamResponse([b"hello ", b"world"])
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=1500)
+    assert out is not None and out.content == b"hello world"

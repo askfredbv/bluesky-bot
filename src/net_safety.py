@@ -207,6 +207,52 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
         yield
     finally:
         socket.getaddrinfo = original_getaddrinfo
+
+
+# Hard cap on any single fetched body. Feeds are typically <1 MB, article HTML
+# <2 MB, and OG images are separately capped below 1 MB, so 5 MB is generous for
+# legitimate content while stopping a compromised source from OOM-ing the runner
+# with a multi-GB body (the size check used to happen only AFTER the full read).
+MAX_FETCH_BYTES = 5_000_000
+
+
+async def _capped_stream_get(client: httpx.AsyncClient, url: str, *,
+                             headers: Optional[Dict[str, str]], timeout: float,
+                             max_bytes: int) -> Optional[httpx.Response]:
+    """GET with redirects disabled that aborts if the body exceeds ``max_bytes``.
+
+    Streams the response instead of buffering it whole: a redirect is returned
+    unread (only its headers are needed), a final response is read up to the cap
+    and returned as a fully-read Response, and anything that declares or streams
+    past the cap returns None (logged). Callers see the same Response surface.
+    """
+    async with client.stream("GET", url, headers=headers, timeout=timeout,
+                             follow_redirects=False) as response:
+        if response.is_redirect:
+            return response
+        declared = response.headers.get("content-length")
+        if declared is not None:
+            try:
+                if int(declared) > max_bytes:
+                    SafeLogger.warn("response_too_large",
+                                    "Response exceeds size cap (declared Content-Length)",
+                                    url=url, cap_bytes=max_bytes)
+                    return None
+            except ValueError:
+                pass
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body += chunk
+            if len(body) > max_bytes:
+                SafeLogger.warn("response_too_large",
+                                "Response exceeds size cap (streamed)",
+                                url=url, cap_bytes=max_bytes)
+                return None
+        return httpx.Response(status_code=response.status_code,
+                              headers=response.headers, content=bytes(body),
+                              request=response.request)
+
+
 async def get_with_safe_redirects(
     client: httpx.AsyncClient,
     url: str,
@@ -214,7 +260,8 @@ async def get_with_safe_redirects(
     headers: Optional[Dict[str, str]] = None,
     timeout: float = 10.0,
     max_redirects: int = 5,
-    enforce_metadata_policy: bool = True
+    enforce_metadata_policy: bool = True,
+    max_bytes: int = MAX_FETCH_BYTES
 ) -> Optional[httpx.Response]:
     """
     Fetch a URL while validating each redirect target and disallowing scheme changes.
@@ -249,14 +296,16 @@ async def get_with_safe_redirects(
             # the await rather than only around the getaddrinfo swap.
             async with _resolver_pin_lock():
                 with _resolver_pinned_to_ips(hostname, candidate_ips):
-                    response = await client.get(
-                        current_url,
-                        headers=headers,
-                        timeout=timeout,
-                        follow_redirects=False
+                    response = await _capped_stream_get(
+                        client, current_url,
+                        headers=headers, timeout=timeout, max_bytes=max_bytes,
                     )
         except Exception as e:
             SafeLogger.warn("dns_validated_request_blocked", "Blocked URL request after DNS validation", url=current_url, error_type=type(e).__name__)
+            return None
+
+        # None => blocked by the size cap (logged in _capped_stream_get).
+        if response is None:
             return None
 
         if response.is_redirect:
