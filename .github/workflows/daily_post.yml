@@ -119,7 +119,23 @@ jobs:
               timeout=15,
           )
           resp.raise_for_status()
+          # ALLOWLIST — snapshot only non-sensitive state. This artifact is
+          # PUBLIC (public repo => any GitHub user can download it for 90 days),
+          # so pending_replies.json (drafted replies + the proactive watchlist
+          # of named people, kept secret via the PROACTIVE_REPLY_WATCHLIST
+          # secret) must NEVER be included. Anything not listed here is excluded
+          # by default, so a future sensitive state file cannot silently leak.
+          SAFE_TO_SNAPSHOT = {
+              "seen_articles.json",
+              "replied_to.json",
+              "feed_health.json",
+              "post_metrics.json",
+              "growth.json",
+          }
           for name, f in resp.json()["files"].items():
+              if name not in SAFE_TO_SNAPSHOT:
+                  print(f"snapshot: skipping non-allowlisted file {name!r}")
+                  continue
               with open(f"backup/{name}", "w", encoding="utf-8") as out:
                   out.write(f["content"])
           PY
