@@ -974,11 +974,14 @@ def _titles_cluster(a: frozenset, b: frozenset,
     shared-token count and a high Jaccard ratio."""
     if len(a) < min_shared or len(b) < min_shared:
         return False
-    # Distinct numeric qualifiers => distinct story (GPT-4 vs GPT-5, Pixel 8 vs
-    # Pixel 9). Only blocks when BOTH carry numbers and they don't overlap.
-    nums_a = {w for w in a if any(c.isdigit() for c in w)}
-    nums_b = {w for w in b if any(c.isdigit() for c in w)}
-    if nums_a and nums_b and nums_a.isdisjoint(nums_b):
+    # Distinct version numbers => distinct story (GPT-4 vs GPT-5, Claude 3 vs 4).
+    # Restrict the veto to single-digit integer tokens: model/product versions
+    # are low integers, whereas funding amounts or years ("$40bn", "40 billion",
+    # "2024") must NOT veto an otherwise-strong match. Only blocks when BOTH
+    # titles carry a version digit and they don't overlap.
+    vers_a = {w for w in a if len(w) == 1 and w.isdigit()}
+    vers_b = {w for w in b if len(w) == 1 and w.isdigit()}
+    if vers_a and vers_b and vers_a.isdisjoint(vers_b):
         return False
     shared = len(a & b)
     if shared < min_shared:

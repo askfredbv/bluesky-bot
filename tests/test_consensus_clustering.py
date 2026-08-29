@@ -40,6 +40,14 @@ def test_version_numbers_survive_tokenisation_and_prevent_false_cluster():
     assert _titles_cluster(a, b) is False  # different model versions, different story
 
 
+def test_alternate_number_formatting_still_clusters():
+    # "$40 billion" vs "$40bn": same story, different number formatting — the
+    # version-veto must NOT fire on funding amounts (only on version digits).
+    a = _title_tokens("OpenAI raises $40 billion in landmark funding round")
+    b = _title_tokens("OpenAI raises $40bn in landmark funding round")
+    assert _titles_cluster(a, b) is True
+
+
 def _item(title, link):
     return {"title": title, "description": "", "link": link, "source_feeds": [link]}
 
