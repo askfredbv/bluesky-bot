@@ -217,7 +217,7 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
 MAX_FETCH_BYTES = 5_000_000
 
 
-def _inflate_capped(raw: bytes, wbits: int, cap: int) -> Optional[bytes]:
+def _inflate_capped(raw: bytes, wbits: int, cap: int, url: str) -> Optional[bytes]:
     """Decompress ``raw`` but stop and return None if the output exceeds ``cap``
     — so a compression bomb (small compressed, huge decompressed) cannot allocate
     unbounded memory. Returns None on any decompression error too."""
@@ -230,11 +230,25 @@ def _inflate_capped(raw: bytes, wbits: int, cap: int) -> Optional[bytes]:
         # unconsumed input unbounded, re-introducing the bomb. If we are already
         # over the cap (compressed tail still pending), refuse now.
         if len(out) > cap:
+            _log_over_cap(url, cap)
             return None
         out += d.flush()  # unconsumed_tail is empty here -> bounded output
-    except zlib.error:
+    except zlib.error as e:
+        # A malformed gzip body is a different failure than an oversize one —
+        # keep the zlib message so feed-health can tell them apart.
+        SafeLogger.warn("gzip_decode_failed", "Malformed gzip response",
+                        url=url, error_msg=str(e)[:200])
         return None
-    return None if len(out) > cap else bytes(out)
+    if len(out) > cap:
+        _log_over_cap(url, cap)
+        return None
+    return bytes(out)
+
+
+def _log_over_cap(url: str, cap: int) -> None:
+    SafeLogger.warn("response_too_large",
+                    "gzip content exceeds size cap (decompressed / compression bomb)",
+                    url=url, cap_bytes=cap)
 
 
 # gzip (and x-gzip) use a zlib stream with a gzip header: wbits = 31.
@@ -287,11 +301,9 @@ async def _capped_stream_get(client: httpx.AsyncClient, url: str, *,
         if encoding in ("", "identity"):
             content: Optional[bytes] = bytes(raw)
         elif encoding in ("gzip", "x-gzip"):
-            content = _inflate_capped(bytes(raw), _GZIP_WBITS, max_bytes)
+            # _inflate_capped logs the specific reason (decode error vs oversize).
+            content = _inflate_capped(bytes(raw), _GZIP_WBITS, max_bytes, url)
             if content is None:
-                SafeLogger.warn("response_too_large",
-                                "Response exceeds size cap (decompressed) or is a compression bomb",
-                                url=url, cap_bytes=max_bytes)
                 return None
         else:
             # We asked for identity; a server forcing br/zstd/deflate anyway is

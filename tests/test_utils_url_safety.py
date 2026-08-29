@@ -273,3 +273,13 @@ async def test_capped_stream_get_refuses_unbounded_encoding():
         _client_streaming(resp), "https://example.com/x",
         headers=None, timeout=1.0, max_bytes=1500)
     assert out is None  # br is not bounded here -> fail safe
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_handles_malformed_gzip():
+    resp = _FakeStreamResponse([b"not-actually-gzip"],
+                               headers={"content-encoding": "gzip"})
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=1500)
+    assert out is None  # malformed gzip -> refused (logged as gzip_decode_failed)
