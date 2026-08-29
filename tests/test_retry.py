@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src import utils
+from src import retry, utils
 from src.config import RATE_LIMIT_BASE_WAIT_SECONDS, RATE_LIMIT_MAX_RETRIES, MAX_API_RETRIES
 
 
@@ -184,7 +184,7 @@ def test_parse_retry_after_accepts_http_date(monkeypatch):
         def now(cls, tz=None):
             return pinned_now
 
-    monkeypatch.setattr(utils, "datetime", FakeDatetime)
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
     result = utils._parse_retry_after_header("Wed, 22 Apr 2026 12:01:00 GMT")
     assert result is not None
     assert 59.0 <= result <= 61.0
@@ -202,7 +202,7 @@ def test_parse_retry_after_clamps_past_date_to_zero(monkeypatch):
         def now(cls, tz=None):
             return pinned_now
 
-    monkeypatch.setattr(utils, "datetime", FakeDatetime)
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
     assert utils._parse_retry_after_header("Wed, 22 Apr 2026 11:59:00 GMT") == 0.0
 
 
@@ -217,7 +217,7 @@ def test_parse_ratelimit_reset_accepts_unix_timestamp(monkeypatch):
         def fromisoformat(cls, s):
             return datetime.fromisoformat(s)
 
-    monkeypatch.setattr(utils, "datetime", FakeDatetime)
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
     reset = pinned_now.timestamp() + 120
     assert utils._parse_ratelimit_reset_header(str(reset)) == pytest.approx(120.0, abs=1.0)
 
@@ -233,7 +233,7 @@ def test_parse_ratelimit_reset_accepts_iso8601(monkeypatch):
         def fromisoformat(cls, s):
             return datetime.fromisoformat(s)
 
-    monkeypatch.setattr(utils, "datetime", FakeDatetime)
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
     result = utils._parse_ratelimit_reset_header("2026-04-22T12:02:00+00:00")
     assert result == pytest.approx(120.0, abs=1.0)
 
@@ -260,7 +260,7 @@ def test_extract_rate_limit_wait_falls_back_to_x_ratelimit_reset(monkeypatch):
         def fromisoformat(cls, s):
             return datetime.fromisoformat(s)
 
-    monkeypatch.setattr(utils, "datetime", FakeDatetime)
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
 
     class FakeResponse:
         headers = {"x-ratelimit-reset": str(pinned_now.timestamp() + 30)}
@@ -294,7 +294,7 @@ async def test_retry_429_uses_x_ratelimit_reset_header(monkeypatch):
         def fromisoformat(cls, s):
             return datetime.fromisoformat(s)
 
-    monkeypatch.setattr(utils, "datetime", FakeDatetime)
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
 
     class FakeResponse:
         status_code = 429
