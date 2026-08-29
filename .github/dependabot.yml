@@ -4,23 +4,14 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    # Skip patch updates — the manual lockfile regen (Dependabot can't
-    # run pip-compile, so every PR fails the lockfile-check workflow)
-    # isn't worth it for x.y.Z bumps we usually don't touch directly.
-    # Security advisories bypass this filter and still come through.
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-patch"]
-      # google-genai 2.x parked per BACKLOG §3 (2026-05-15) — no
-      # forcing function until one of three named triggers fires
-      # (1.x SDK bug, CVE, or a planned feature needing 2.x-only
-      # capability). PR #46 was closed for this reason on 2026-05-18.
-      # Belt-and-suspenders with the `<2` ceiling in pyproject.toml.
-      - dependency-name: "google-genai"
-        update-types: ["version-update:semver-major"]
-    # Bundle minor/major bumps into a single weekly PR so we regenerate
-    # requirements.txt once per week, not once per dependency.
-    groups:
-      python-minor-and-major:
-        update-types: ["minor", "major"]
+    # Security-updates only. `open-pull-requests-limit: 0` disables routine
+    # version-update PRs; security-advisory PRs are exempt from the limit and
+    # still come through (this is the documented mechanism for "security only").
+    #
+    # Why: Dependabot can't run pip-compile, so it bumps a single (often
+    # transitive) pin without resolving the full dependency graph — every
+    # routine PR then fails lockfile-check / tests. Example: #96 (2026-08-29)
+    # bumped pydantic-core standalone, which pydantic pins, → ResolutionImpossible.
+    # Routine minor/major bumps are done by regenerating the pyproject lockfiles
+    # (requirements.txt + requirements-dev.txt) by hand when we actually need them.
+    open-pull-requests-limit: 0
