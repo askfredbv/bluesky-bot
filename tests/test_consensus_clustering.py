@@ -32,6 +32,14 @@ def test_titles_cluster_matches_same_story_not_distinct():
     assert _titles_cluster(_title_tokens("gpt5 out"), b) is False
 
 
+def test_version_numbers_survive_tokenisation_and_prevent_false_cluster():
+    # single-digit version tokens must be kept, or GPT-4 and GPT-5 collapse
+    assert "5" in _title_tokens("OpenAI launches GPT-5 reasoning model")
+    a = _title_tokens("OpenAI launches GPT-4 reasoning model")
+    b = _title_tokens("OpenAI launches GPT-5 reasoning model")
+    assert _titles_cluster(a, b) is False  # different model versions, different story
+
+
 def _item(title, link):
     return {"title": title, "description": "", "link": link, "source_feeds": [link]}
 

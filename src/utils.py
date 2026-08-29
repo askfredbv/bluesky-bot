@@ -957,9 +957,14 @@ def _publisher_domain(url: str) -> str:
 
 
 def _title_tokens(title: str) -> frozenset:
-    """Significant lowercased tokens of a headline (drops short words + stopwords)."""
+    """Significant lowercased tokens of a headline: words >= 3 chars, plus any
+    token containing a digit (version numbers like "5" in GPT-5, "4o", "3.7") so
+    distinct model versions do not collapse to the same token set and cluster."""
     words = re.findall(r"[a-z0-9]+", (title or "").lower())
-    return frozenset(w for w in words if len(w) >= 3 and w not in _TITLE_STOPWORDS)
+    return frozenset(
+        w for w in words
+        if w not in _TITLE_STOPWORDS and (len(w) >= 3 or any(c.isdigit() for c in w))
+    )
 
 
 def _titles_cluster(a: frozenset, b: frozenset,
@@ -968,6 +973,12 @@ def _titles_cluster(a: frozenset, b: frozenset,
     purpose: a false cluster wrongly boosts an item, so require both a real
     shared-token count and a high Jaccard ratio."""
     if len(a) < min_shared or len(b) < min_shared:
+        return False
+    # Distinct numeric qualifiers => distinct story (GPT-4 vs GPT-5, Pixel 8 vs
+    # Pixel 9). Only blocks when BOTH carry numbers and they don't overlap.
+    nums_a = {w for w in a if any(c.isdigit() for c in w)}
+    nums_b = {w for w in b if any(c.isdigit() for c in w)}
+    if nums_a and nums_b and nums_a.isdisjoint(nums_b):
         return False
     shared = len(a & b)
     if shared < min_shared:
