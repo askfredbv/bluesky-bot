@@ -72,7 +72,7 @@ def load_feed_health() -> Dict[str, Any]:
     Imports are local to avoid a circular dependency with `src.utils`
     (utils imports from this module for `FeedFetchResult`).
     """
-    from src.utils import _atomic_write_json, _load_gist_state, _load_json_with_repair
+    from src.state_store import _atomic_write_json, _load_gist_state, _load_json_with_repair
 
     default: Dict[str, Any] = {"feeds": {}}
 
@@ -99,7 +99,7 @@ def load_feed_health() -> Dict[str, Any]:
 
 def save_feed_health(data: Dict[str, Any]) -> None:
     """Persist feed_health.json; Gist first, local file as fallback."""
-    from src.utils import _atomic_write_json, _save_gist_state
+    from src.state_store import _atomic_write_json, _save_gist_state
 
     if _save_gist_state("feed_health.json", data):
         return
@@ -157,7 +157,7 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
 
 def load_post_metrics() -> Dict[str, Any]:
     """Same Gist-first, local-fallback pattern as load_feed_health."""
-    from src.utils import _atomic_write_json, _load_gist_state, _load_json_with_repair
+    from src.state_store import _atomic_write_json, _load_gist_state, _load_json_with_repair
 
     default: Dict[str, Any] = {"posts": []}
 
@@ -182,7 +182,7 @@ def load_post_metrics() -> Dict[str, Any]:
 
 def save_post_metrics(data: Dict[str, Any]) -> None:
     """Persist post_metrics.json; Gist first, local file as fallback."""
-    from src.utils import _atomic_write_json, _save_gist_state
+    from src.state_store import _atomic_write_json, _save_gist_state
 
     if _save_gist_state("post_metrics.json", data):
         return
@@ -506,7 +506,7 @@ async def refresh_stale_metrics(
 
 def load_growth() -> Dict[str, Any]:
     """Load growth.json via the same Gist/local pattern as feed_health."""
-    from src.utils import _atomic_write_json, _load_gist_state, _load_json_with_repair
+    from src.state_store import _atomic_write_json, _load_gist_state, _load_json_with_repair
 
     default: Dict[str, Any] = {"snapshots": []}
 
@@ -531,7 +531,7 @@ def load_growth() -> Dict[str, Any]:
 
 def save_growth(data: Dict[str, Any]) -> None:
     """Persist growth.json; Gist first, local file as fallback."""
-    from src.utils import _atomic_write_json, _save_gist_state
+    from src.state_store import _atomic_write_json, _save_gist_state
 
     if _save_gist_state("growth.json", data):
         return
