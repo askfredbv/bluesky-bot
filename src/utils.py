@@ -57,6 +57,26 @@ Image.MAX_IMAGE_PIXELS = 10_000_000
 T = TypeVar("T")
 STATE_STORE_TIMEOUT_SECONDS = 10.0
 
+# _resolver_pinned_to_ips swaps the PROCESS-GLOBAL socket.getaddrinfo for the
+# duration of a pinned request. That is not safe under concurrency: fetch_news
+# runs feeds in parallel, and overlapping pins would clobber each other's global
+# resolver — silently disabling the SSRF guard for the overlapping fetch. The
+# lock below serialises the pinned section so only one pinned request is in
+# flight at a time (feeds run twice a day, so the latency cost is irrelevant).
+# It is created lazily per running loop: a module-level asyncio.Lock() would
+# bind to the first loop and break across multiple asyncio.run() calls.
+_RESOLVER_PIN_LOCK: Optional[asyncio.Lock] = None
+_RESOLVER_PIN_LOCK_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _resolver_pin_lock() -> asyncio.Lock:
+    global _RESOLVER_PIN_LOCK, _RESOLVER_PIN_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _RESOLVER_PIN_LOCK is None or _RESOLVER_PIN_LOCK_LOOP is not loop:
+        _RESOLVER_PIN_LOCK = asyncio.Lock()
+        _RESOLVER_PIN_LOCK_LOOP = loop
+    return _RESOLVER_PIN_LOCK
+
 def _state_store_url_for_key(key: str) -> Optional[str]:
     base_url = os.environ.get("STATE_STORE_URL", "").strip()
     if not base_url:
@@ -817,16 +837,23 @@ async def get_with_safe_redirects(
     *,
     headers: Optional[Dict[str, str]] = None,
     timeout: float = 10.0,
-    max_redirects: int = 5
+    max_redirects: int = 5,
+    enforce_metadata_policy: bool = True
 ) -> Optional[httpx.Response]:
     """
     Fetch a URL while validating each redirect target and disallowing scheme changes.
+
+    ``enforce_metadata_policy`` toggles the METADATA_FETCH allow/block domain
+    list (the extra restriction for scraping arbitrary article URLs). RSS feed
+    fetches pass ``False`` — they are a fixed, trusted source list, so the
+    domain allowlist does not apply — but they still get the full public-IP
+    validation, DNS pinning, and per-hop redirect checks (the SSRF guard).
     """
     current_url = url
     initial_scheme = urlparse(url).scheme
 
     for _ in range(max_redirects + 1):
-        if not is_allowed_metadata_fetch_url(current_url):
+        if enforce_metadata_policy and not is_allowed_metadata_fetch_url(current_url):
             return None
 
         parsed_current = urlparse(current_url)
@@ -841,13 +868,17 @@ async def get_with_safe_redirects(
             return None
 
         try:
-            with _resolver_pinned_to_ips(hostname, candidate_ips):
-                response = await client.get(
-                    current_url,
-                    headers=headers,
-                    timeout=timeout,
-                    follow_redirects=False
-                )
+            # Serialise the global-resolver pin (see _resolver_pin_lock): the
+            # pin must stay valid for the whole request, so hold the lock across
+            # the await rather than only around the getaddrinfo swap.
+            async with _resolver_pin_lock():
+                with _resolver_pinned_to_ips(hostname, candidate_ips):
+                    response = await client.get(
+                        current_url,
+                        headers=headers,
+                        timeout=timeout,
+                        follow_redirects=False
+                    )
         except Exception as e:
             SafeLogger.warn("dns_validated_request_blocked", "Blocked URL request after DNS validation", url=current_url, error_type=type(e).__name__)
             return None
@@ -863,7 +894,7 @@ async def get_with_safe_redirects(
                 SafeLogger.warn("cross_scheme_redirect_blocked", "Blocked cross-scheme redirect", from_url=current_url, to_url=next_url)
                 return None
 
-            if not is_allowed_metadata_fetch_url(next_url):
+            if enforce_metadata_policy and not is_allowed_metadata_fetch_url(next_url):
                 return None
 
             if not is_safe_public_url(next_url):
@@ -1077,7 +1108,21 @@ async def fetch_single_feed(
     from src.metrics import FeedFetchResult
 
     try:
-        response = await client.get(url, timeout=timeout)
+        # SSRF guard: feeds go through the same public-IP validation, DNS
+        # pinning, and per-hop redirect checks as the metadata scraper, but
+        # skip the metadata domain allowlist (feeds are their own trusted list).
+        # A compromised feed origin that 302s to an internal address is blocked.
+        response = await get_with_safe_redirects(
+            client, url, timeout=timeout, enforce_metadata_policy=False)
+        if response is None:
+            # get_with_safe_redirects returns None for BOTH a security block and
+            # an ordinary transport failure (timeout/TLS/connection), logging the
+            # real cause itself. Use a neutral label here so the weekly feed-
+            # health view does not mislabel a plain timeout as a security block.
+            SafeLogger.warn("feed_fetch_blocked",
+                            "Feed fetch failed or was blocked (see prior log for cause)", url=url)
+            return FeedFetchResult(url=url, ok=False, entries_total=0,
+                                   entries_accepted=0, error_type="FetchFailedOrBlocked")
         feed = feedparser.parse(response.text)
         bozo_error_type: Optional[str] = None
         if feed.bozo:
