@@ -96,8 +96,8 @@ async def test_get_with_safe_redirects_allows_allowlisted_domain(monkeypatch):
         return httpx.Response(200, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
-    monkeypatch.setattr("src.utils.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
-    monkeypatch.setattr("src.utils.METADATA_FETCH_BLOCKED_DOMAINS", [])
+    monkeypatch.setattr("src.net_safety.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
+    monkeypatch.setattr("src.net_safety.METADATA_FETCH_BLOCKED_DOMAINS", [])
 
     async with httpx.AsyncClient() as client:
         monkeypatch.setattr(client, "get", fake_get)
@@ -116,8 +116,8 @@ async def test_get_with_safe_redirects_blocks_non_allowlisted_domain(monkeypatch
         raise AssertionError("request should not execute when domain policy blocks")
 
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
-    monkeypatch.setattr("src.utils.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
-    monkeypatch.setattr("src.utils.METADATA_FETCH_BLOCKED_DOMAINS", [])
+    monkeypatch.setattr("src.net_safety.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
+    monkeypatch.setattr("src.net_safety.METADATA_FETCH_BLOCKED_DOMAINS", [])
 
     async with httpx.AsyncClient() as client:
         monkeypatch.setattr(client, "get", fake_get)
@@ -144,8 +144,8 @@ async def test_get_with_safe_redirects_blocks_redirect_to_non_allowlisted_domain
         return httpx.Response(200, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
-    monkeypatch.setattr("src.utils.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
-    monkeypatch.setattr("src.utils.METADATA_FETCH_BLOCKED_DOMAINS", [])
+    monkeypatch.setattr("src.net_safety.METADATA_FETCH_ALLOWED_DOMAINS", ["allowed.example"])
+    monkeypatch.setattr("src.net_safety.METADATA_FETCH_BLOCKED_DOMAINS", [])
 
     async with httpx.AsyncClient() as client:
         monkeypatch.setattr(client, "get", fake_get)
