@@ -44,6 +44,16 @@ from src.config import (
 from src.logger import SafeLogger
 from src.file_lock import file_lock
 
+# Decompression-bomb guard (process-wide Pillow setting). The bot opens remote,
+# attacker-influenceable images via Pillow — OpenGraph thumbnails from article
+# URLs and generated post images. A malicious feed could serve a tiny file that
+# declares enormous dimensions; without a cap, decoding it OOMs the runner.
+# Pillow's default (~89M px) is generous for a social bot; 10M px comfortably
+# covers any legitimate post image and blocks the absurd sizes. Pillow raises
+# DecompressionBombError at open() from the header dimensions, which the guarded
+# Image.open call sites already catch.
+Image.MAX_IMAGE_PIXELS = 10_000_000
+
 T = TypeVar("T")
 STATE_STORE_TIMEOUT_SECONDS = 10.0
 
