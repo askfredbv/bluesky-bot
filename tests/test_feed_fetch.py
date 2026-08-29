@@ -90,16 +90,17 @@ def test_resolver_pin_serialized_across_concurrent_fetches(monkeypatch):
     monkeypatch.setattr(net_safety, "_resolve_public_ip_candidates", lambda h: ["1.2.3.4"])
     state = {"cur": 0, "max": 0}
 
-    class _ConcurrencyProbeClient:
-        async def get(self, url, **kwargs):
-            state["cur"] += 1
-            state["max"] = max(state["max"], state["cur"])
-            await asyncio.sleep(0.02)  # hold the pinned section open
-            state["cur"] -= 1
-            return _safe_response(text="ok")
+    async def _probe_capped_get(client, url, **kwargs):
+        state["cur"] += 1
+        state["max"] = max(state["max"], state["cur"])
+        await asyncio.sleep(0.02)  # hold the pinned section open
+        state["cur"] -= 1
+        return _safe_response(text="ok")
+
+    monkeypatch.setattr(net_safety, "_capped_stream_get", _probe_capped_get)
 
     async def _run():
-        client = _ConcurrencyProbeClient()
+        client = object()
         await asyncio.gather(
             news.get_with_safe_redirects(client, "https://a.example/x",
                                           enforce_metadata_policy=False),

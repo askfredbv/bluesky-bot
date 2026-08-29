@@ -12,6 +12,7 @@ import asyncio
 import ipaddress
 import re
 import socket
+import zlib
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Union
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -212,6 +213,119 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
         yield
     finally:
         socket.getaddrinfo = original_getaddrinfo
+
+
+# Hard cap on any single fetched body. Feeds are typically <1 MB, article HTML
+# <2 MB, and OG images are separately capped below 1 MB, so 5 MB is generous for
+# legitimate content while stopping a compromised source from OOM-ing the runner
+# with a multi-GB body (the size check used to happen only AFTER the full read).
+MAX_FETCH_BYTES = 5_000_000
+
+
+def _inflate_capped(raw: bytes, wbits: int, cap: int, url: str) -> Optional[bytes]:
+    """Decompress ``raw`` but stop and return None if the output exceeds ``cap``
+    — so a compression bomb (small compressed, huge decompressed) cannot allocate
+    unbounded memory. Returns None on any decompression error too."""
+    try:
+        d = zlib.decompressobj(wbits)
+        out = bytearray(d.decompress(raw, cap + 1))
+        while d.unconsumed_tail and len(out) <= cap:
+            out += d.decompress(d.unconsumed_tail, cap + 1 - len(out))
+        # Bail BEFORE flush(): a no-arg flush() would decompress all remaining
+        # unconsumed input unbounded, re-introducing the bomb. If we are already
+        # over the cap (compressed tail still pending), refuse now.
+        if len(out) > cap:
+            _log_over_cap(url, cap)
+            return None
+        out += d.flush()  # unconsumed_tail is empty here -> bounded output
+    except zlib.error as e:
+        # A malformed gzip body is a different failure than an oversize one —
+        # keep the zlib message so feed-health can tell them apart.
+        SafeLogger.warn("gzip_decode_failed", "Malformed gzip response",
+                        url=url, error_msg=str(e)[:200])
+        return None
+    if len(out) > cap:
+        _log_over_cap(url, cap)
+        return None
+    return bytes(out)
+
+
+def _log_over_cap(url: str, cap: int) -> None:
+    SafeLogger.warn("response_too_large",
+                    "gzip content exceeds size cap (decompressed / compression bomb)",
+                    url=url, cap_bytes=cap)
+
+
+# gzip (and x-gzip) use a zlib stream with a gzip header: wbits = 31.
+_GZIP_WBITS = 31
+
+
+async def _capped_stream_get(client: httpx.AsyncClient, url: str, *,
+                             headers: Optional[Dict[str, str]],
+                             timeout: Union[float, httpx.Timeout, None],
+                             max_bytes: int) -> Optional[httpx.Response]:
+    """GET with redirects disabled that aborts if the body exceeds ``max_bytes``.
+
+    Caps the RAW (still-compressed) stream, not the decoded stream: httpx's
+    aiter_bytes() decompresses each chunk before yielding, so a compression bomb
+    could allocate gigabytes from one small chunk before a decoded-size check
+    ran. We request identity encoding, cap aiter_raw() at max_bytes, and if a
+    non-compliant server compressed anyway (gzip) we inflate with an output cap.
+
+    A redirect is returned unread (only its headers matter); a final response is
+    returned as a fully-read Response with content-encoding resolved. Returns
+    None (logged) if the response declares/streams/decompresses past the cap or
+    uses an encoding we do not bound.
+    """
+    req_headers = dict(headers or {})
+    req_headers.setdefault("Accept-Encoding", "identity")
+    async with client.stream("GET", url, headers=req_headers, timeout=timeout,
+                             follow_redirects=False) as response:
+        if response.is_redirect:
+            return response
+        declared = response.headers.get("content-length")
+        if declared is not None:
+            try:
+                if int(declared) > max_bytes:
+                    SafeLogger.warn("response_too_large",
+                                    "Response exceeds size cap (declared Content-Length)",
+                                    url=url, cap_bytes=max_bytes)
+                    return None
+            except ValueError:
+                pass
+        raw = bytearray()
+        async for chunk in response.aiter_raw():
+            raw += chunk
+            if len(raw) > max_bytes:
+                SafeLogger.warn("response_too_large",
+                                "Response exceeds size cap (streamed raw)",
+                                url=url, cap_bytes=max_bytes)
+                return None
+
+        encoding = response.headers.get("content-encoding", "").lower().strip()
+        if encoding in ("", "identity"):
+            content: Optional[bytes] = bytes(raw)
+        elif encoding in ("gzip", "x-gzip"):
+            # _inflate_capped logs the specific reason (decode error vs oversize).
+            content = _inflate_capped(bytes(raw), _GZIP_WBITS, max_bytes, url)
+            if content is None:
+                return None
+        else:
+            # We asked for identity; a server forcing br/zstd/deflate anyway is
+            # rare. Rather than decode it unbounded, refuse (fail safe).
+            SafeLogger.warn("unsupported_content_encoding",
+                            "Refusing response with unbounded content-encoding",
+                            url=url, encoding=encoding)
+            return None
+
+        out_headers = httpx.Headers(response.headers)
+        out_headers.pop("content-encoding", None)  # content is now decoded
+        out_headers.pop("content-length", None)
+        return httpx.Response(status_code=response.status_code,
+                              headers=out_headers, content=content,
+                              request=response.request)
+
+
 async def get_with_safe_redirects(
     client: httpx.AsyncClient,
     url: str,
@@ -219,7 +333,8 @@ async def get_with_safe_redirects(
     headers: Optional[Dict[str, str]] = None,
     timeout: Union[float, httpx.Timeout, None] = 10.0,
     max_redirects: int = 5,
-    enforce_metadata_policy: bool = True
+    enforce_metadata_policy: bool = True,
+    max_bytes: int = MAX_FETCH_BYTES
 ) -> Optional[httpx.Response]:
     """
     Fetch a URL while validating each redirect target and disallowing scheme changes.
@@ -254,14 +369,16 @@ async def get_with_safe_redirects(
             # the await rather than only around the getaddrinfo swap.
             async with _resolver_pin_lock():
                 with _resolver_pinned_to_ips(hostname, candidate_ips):
-                    response = await client.get(
-                        current_url,
-                        headers=headers,
-                        timeout=timeout,
-                        follow_redirects=False
+                    response = await _capped_stream_get(
+                        client, current_url,
+                        headers=headers, timeout=timeout, max_bytes=max_bytes,
                     )
         except Exception as e:
             SafeLogger.warn("dns_validated_request_blocked", "Blocked URL request after DNS validation", url=current_url, error_type=type(e).__name__)
+            return None
+
+        # None => blocked by the size cap (logged in _capped_stream_get).
+        if response is None:
             return None
 
         if response.is_redirect:
