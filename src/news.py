@@ -250,10 +250,12 @@ async def fetch_single_feed(
             entries=items,
         )
     except httpx.TimeoutException as e:
-        SafeLogger.warn("feed_timeout", "Feed request timed out", url=url, error_type=type(e).__name__)
+        SafeLogger.warn("feed_timeout", "Feed request timed out", url=url,
+                        error_type=type(e).__name__, error_msg=str(e)[:200])
         return FeedFetchResult(url=url, ok=False, entries_total=0, entries_accepted=0, error_type=type(e).__name__)
     except Exception as e:
-        SafeLogger.warn("feed_fetch_failure", "Feed fetch failed", url=url, error_type=type(e).__name__)
+        SafeLogger.warn("feed_fetch_failure", "Feed fetch failed", url=url,
+                        error_type=type(e).__name__, error_msg=str(e)[:200])
         return FeedFetchResult(url=url, ok=False, entries_total=0, entries_accepted=0, error_type=type(e).__name__)
 async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int = 5) -> List[Dict[str, Any]]:
     """Weighted asynchronous fetch with Hidden Gem injection (v4.5 Sage)."""
