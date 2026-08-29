@@ -2,7 +2,7 @@ import json
 import random
 import asyncio
 import re
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, cast
 from datetime import datetime, timezone
 from google import genai
 from google.genai import types
@@ -405,7 +405,10 @@ def select_pioneer_topic(
     if not PIONEER_DIMENSION_ENABLED:
         return None
     now = now or datetime.now(timezone.utc)
-    rng = rng or random
+    # The random module exposes the same .random()/.choice() API we use here,
+    # so it is a valid default; cast keeps mypy from rejecting the module for
+    # the random.Random parameter type.
+    rng = cast(random.Random, rng or random)
 
     # Build the cooldown set from prune_pioneer_recent (drops stale entries)
     raw_recent = (seen_data or {}).get("pioneer_recent", []) or []
@@ -687,7 +690,9 @@ def _sync_generate(api_key: str, system_instr: str, task: str, model: str) -> st
         model=model,
         **_build_generate_kwargs(model, system_instr, task),
     )
-    return response.text
+    # .text is Optional on the SDK response (None on a content-filter refusal);
+    # callers treat "" as the no-content sentinel, so normalise here.
+    return response.text or ""
 
 def _sync_generate_image(api_key: str, prompt: str) -> Optional[bytes]:
     """Synchronous image generation via gemini-3.1-flash-image.
@@ -737,7 +742,8 @@ def _sync_generate_text(api_key: str, system_instr: str, task: str) -> str:
         contents=task,
         config={"system_instruction": system_instr},
     )
-    return result.text
+    # .text is Optional on the SDK response; normalise None to the "" sentinel.
+    return result.text or ""
 
 
 async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Optional[str]:
@@ -1034,6 +1040,9 @@ async def generate_content(
                 is_shape_valid, shape_reason = _validate_thread_shape(content_list)
                 if not is_shape_valid:
                     raise ValueError(shape_reason)
+                # _validate_thread_shape guarantees a list of non-empty strings
+                # here; narrow content_list from the parsed-JSON Any for mypy.
+                assert isinstance(content_list, list)
 
                 post_validations = [validate_summary(post) for post in content_list]
                 if all(is_valid for is_valid, _ in post_validations):
@@ -1062,6 +1071,9 @@ async def generate_content(
                     # in the offered set (hallucinated or edited), fall back to
                     # the top item so the run still ships a coherent post.
                     if curator_structured:
+                        # curator_structured implies bool(news_items) (set at
+                        # its definition), so news_items is non-empty here.
+                        assert news_items is not None
                         chosen_item = next(
                             (i for i in news_items if i.get("link") == chosen_link),
                             None,
