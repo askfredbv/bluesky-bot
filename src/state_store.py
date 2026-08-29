@@ -294,7 +294,7 @@ def _ensure_pioneer_field(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 def load_seen_articles() -> Dict[str, Any]:
     """Load seen state including links, recent topics, and pioneer cooldown."""
-    default = {"links": [], "recent_topics": [], "pioneer_recent": []}
+    default: Dict[str, Any] = {"links": [], "recent_topics": [], "pioneer_recent": []}
     # 1. Try Gist
     gist_data = _load_gist_state("seen_articles.json")
     if isinstance(gist_data, dict) and "links" in gist_data and "recent_topics" in gist_data:
@@ -338,7 +338,7 @@ def load_replied_to() -> List[str]:
     if isinstance(remote_data, list):
         return remote_data
     # 3. Local file fallback
-    data = _load_json_with_repair(REPLIED_FILE, lambda: [])
+    data: List[str] = _load_json_with_repair(REPLIED_FILE, lambda: [])
     if isinstance(data, list):
         return data
     SafeLogger.warn("replied_to_format_repaired", "Unexpected replied_to format detected; repairing to default shape")
