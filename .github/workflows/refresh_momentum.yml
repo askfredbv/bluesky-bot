@@ -37,6 +37,15 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python -m scripts.refresh_momentum
 
+      # Validate the rewrite here, in-job. A PR opened by the workflow's own
+      # GITHUB_TOKEN does NOT re-trigger the pull_request CI (GitHub's recursion
+      # guard), so mirror those checks now — a broken rewrite fails the job and
+      # no PR is opened. (Codex, a GitHub App, still reviews the PR normally.)
+      - name: Validate the refreshed tree (mirrors CI)
+        run: |
+          ruff check src/ main.py scripts/ tests/
+          pytest -q
+
       - name: Open a PR if the list changed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -54,5 +63,5 @@ jobs:
           git push -u origin "$BRANCH" --force
           gh pr create \
             --title "chore(config): refresh MOMENTUM_PRODUCTS from the news cycle" \
-            --body "Automated monthly refresh of the flagship-model scoring list from recent RSS headlines (Gemini-extracted, hard-sanitised in \`scripts/refresh_momentum.py\`). **Review the diff** — merge if the new names look right, close if not. Goes through Codex + CI like any PR; nothing lands on main unattended." \
+            --body "Automated monthly refresh of the flagship-model scoring list from recent RSS headlines (Gemini-extracted, hard-sanitised in \`scripts/refresh_momentum.py\`). **Review the diff** — merge if the new names look right, close if not. Codex reviews this PR normally. Note: the pull_request CI (ruff+pytest) does not auto-run on a bot-authored PR (GITHUB_TOKEN recursion guard) — the refresh job already ran those exact checks before opening this PR (see its logs); push any commit to the branch to re-run them here. Nothing lands on main unattended." \
             --head "$BRANCH" --base main || echo "PR may already exist for this branch."
