@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import feedparser
 
-from src import utils
+from src import net_safety, utils
 
 
 def _safe_response(text="<rss />"):
@@ -87,7 +87,7 @@ def test_resolver_pin_serialized_across_concurrent_fetches(monkeypatch):
     """The process-global resolver pin must never overlap across concurrent safe
     fetches, or a parallel feed would run with another feed's (or no) pin. The
     lock in get_with_safe_redirects must serialise the pinned section."""
-    monkeypatch.setattr(utils, "_resolve_public_ip_candidates", lambda h: ["1.2.3.4"])
+    monkeypatch.setattr(net_safety, "_resolve_public_ip_candidates", lambda h: ["1.2.3.4"])
     state = {"cur": 0, "max": 0}
 
     class _ConcurrencyProbeClient:
