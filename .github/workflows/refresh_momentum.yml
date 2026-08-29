@@ -1,0 +1,58 @@
+name: Refresh Momentum Products
+
+# Monthly refresh of MOMENTUM_PRODUCTS (the flagship-model scoring list) from the
+# live news cycle, via Gemini. Opens a PR — never pushes to main — so the change
+# goes through Codex + CI + a human merge like anything else. Manual-runnable.
+
+on:
+  schedule:
+    - cron: '0 3 1 * *'   # 03:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-momentum
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Refresh MOMENTUM_PRODUCTS
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m scripts.refresh_momentum
+
+      - name: Open a PR if the list changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet src/config.py; then
+            echo "MOMENTUM_PRODUCTS unchanged — nothing to propose."
+            exit 0
+          fi
+          BRANCH="automated/momentum-refresh-$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add src/config.py
+          git commit -m "chore(config): refresh MOMENTUM_PRODUCTS from the news cycle"
+          git push -u origin "$BRANCH" --force
+          gh pr create \
+            --title "chore(config): refresh MOMENTUM_PRODUCTS from the news cycle" \
+            --body "Automated monthly refresh of the flagship-model scoring list from recent RSS headlines (Gemini-extracted, hard-sanitised in \`scripts/refresh_momentum.py\`). **Review the diff** — merge if the new names look right, close if not. Goes through Codex + CI like any PR; nothing lands on main unattended." \
+            --head "$BRANCH" --base main || echo "PR may already exist for this branch."
