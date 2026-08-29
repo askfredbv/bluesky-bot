@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import feedparser
 
-from src import net_safety, utils
+from src import net_safety, news
 
 
 def _safe_response(text="<rss />"):
@@ -34,10 +34,10 @@ def test_fetch_single_feed_keeps_entries_when_bozo(monkeypatch):
     async def _fake_safe_get(client, url, **kwargs):
         return _safe_response()
 
-    monkeypatch.setattr(utils, "get_with_safe_redirects", _fake_safe_get)
-    monkeypatch.setattr(utils.feedparser, "parse", lambda _: feed)
+    monkeypatch.setattr(news, "get_with_safe_redirects", _fake_safe_get)
+    monkeypatch.setattr(news.feedparser, "parse", lambda _: feed)
 
-    result = asyncio.run(utils.fetch_single_feed(object(), "https://example.com/rss"))
+    result = asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss"))
 
     assert result.ok is True
     assert result.entries_total == 1
@@ -52,17 +52,17 @@ def test_fetch_single_feed_uses_safe_fetch_without_metadata_policy(monkeypatch):
     """Feeds must go through the SSRF-guarded path, with the metadata domain
     allowlist disabled (feeds are their own trusted source list)."""
     captured = {}
-    timeout = utils.httpx.Timeout(connect=1.0, read=2.0, write=3.0, pool=4.0)
+    timeout = news.httpx.Timeout(connect=1.0, read=2.0, write=3.0, pool=4.0)
 
     async def _fake_safe_get(client, url, **kwargs):
         captured.update(kwargs)
         return _safe_response()
 
-    monkeypatch.setattr(utils, "get_with_safe_redirects", _fake_safe_get)
-    monkeypatch.setattr(utils.feedparser, "parse",
+    monkeypatch.setattr(news, "get_with_safe_redirects", _fake_safe_get)
+    monkeypatch.setattr(news.feedparser, "parse",
                         lambda _: feedparser.FeedParserDict({"bozo": 0, "entries": []}))
 
-    asyncio.run(utils.fetch_single_feed(object(), "https://example.com/rss", timeout=timeout))
+    asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss", timeout=timeout))
 
     assert captured.get("timeout") is timeout
     assert captured.get("enforce_metadata_policy") is False
@@ -74,9 +74,9 @@ def test_fetch_single_feed_blocked_redirect_returns_not_ok(monkeypatch):
     async def _blocked(client, url, **kwargs):
         return None
 
-    monkeypatch.setattr(utils, "get_with_safe_redirects", _blocked)
+    monkeypatch.setattr(news, "get_with_safe_redirects", _blocked)
 
-    result = asyncio.run(utils.fetch_single_feed(object(), "https://evil.example/rss"))
+    result = asyncio.run(news.fetch_single_feed(object(), "https://evil.example/rss"))
 
     assert result.ok is False
     assert result.error_type == "FetchFailedOrBlocked"
@@ -101,9 +101,9 @@ def test_resolver_pin_serialized_across_concurrent_fetches(monkeypatch):
     async def _run():
         client = _ConcurrencyProbeClient()
         await asyncio.gather(
-            utils.get_with_safe_redirects(client, "https://a.example/x",
+            news.get_with_safe_redirects(client, "https://a.example/x",
                                           enforce_metadata_policy=False),
-            utils.get_with_safe_redirects(client, "https://b.example/y",
+            news.get_with_safe_redirects(client, "https://b.example/y",
                                           enforce_metadata_policy=False),
         )
 

@@ -17,7 +17,7 @@ def _make_sleep_capture(monkeypatch):
     async def fake_sleep(seconds):
         calls.append(seconds)
 
-    monkeypatch.setattr(utils.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(retry.asyncio, "sleep", fake_sleep)
     return calls
 
 
