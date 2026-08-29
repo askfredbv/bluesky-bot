@@ -13,7 +13,7 @@ import ipaddress
 import re
 import socket
 from contextlib import contextmanager
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
@@ -142,7 +142,10 @@ def _resolve_public_ip_candidates(hostname: str) -> Optional[List[str]]:
     candidate_ips: List[str] = []
     seen: set[str] = set()
     for result in resolved:
-        ip_str = result[4][0]
+        # sockaddr[0] is the host; typeshed widens it to str | int (AF_NETLINK
+        # etc.), but for the AF_INET/AF_INET6 records we resolve it is always
+        # the IP string. str() is a no-op on those and keeps the set/list typed.
+        ip_str = str(result[4][0])
         if ip_str in seen:
             continue
         seen.add(ip_str)
@@ -202,7 +205,9 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
             raise socket.gaierror(f"No allowed DNS records found for {host}")
         return filtered
 
-    socket.getaddrinfo = guarded_getaddrinfo
+    # Monkeypatching the module attribute: guarded_getaddrinfo intentionally
+    # has a looser (*args/**kwargs) signature than socket.getaddrinfo.
+    socket.getaddrinfo = guarded_getaddrinfo  # type: ignore[assignment]
     try:
         yield
     finally:
@@ -212,7 +217,7 @@ async def get_with_safe_redirects(
     url: str,
     *,
     headers: Optional[Dict[str, str]] = None,
-    timeout: float = 10.0,
+    timeout: Union[float, httpx.Timeout, None] = 10.0,
     max_redirects: int = 5,
     enforce_metadata_policy: bool = True
 ) -> Optional[httpx.Response]:
