@@ -28,6 +28,6 @@ You can expect an acknowledgement within **72 hours** and a resolution or status
 This is a personal automation bot. The main areas of security concern are:
 
 - **Credential handling** — API keys for Gemini, Bluesky, and Mastodon are stored as GitHub Actions secrets and stripped from logs by `SafeLogger`. Never commit credentials to the repository.
-- **SSRF protection** — The metadata scraper (`src/utils.py`) validates all URLs against a public IP allowlist before fetching, rejects private/loopback addresses, and pins DNS resolution to pre-validated IPs. Redirect chains are validated at each hop.
+- **SSRF protection** — Both the RSS feed fetcher and the metadata scraper (`src/utils.py`) validate URLs against a public-IP allowlist before fetching, reject private/loopback/link-local addresses across every resolved A/AAAA record, and pin DNS resolution to the pre-validated IPs to defeat rebinding. Redirect chains are validated at each hop and cross-scheme redirects are blocked. The metadata scraper additionally enforces a domain allow/block list (feeds are a fixed trusted source list, so they rely on the public-IP checks instead).
 - **Prompt injection** — Mention text from Bluesky is sanitised and clearly delimited in the prompt with `<<< >>>` markers, instructing the model to treat it as untrusted data only.
 - **Dependency vulnerabilities** — Dependabot is enabled and scans dependencies automatically. The lockfile (`requirements.txt`) is enforced by CI.
