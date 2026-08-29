@@ -153,3 +153,28 @@ async def test_get_with_safe_redirects_blocks_redirect_to_non_allowlisted_domain
 
     assert response is None
     assert requests_made == ["https://allowed.example/start"]
+
+
+def test_pillow_decompression_bomb_cap_is_set():
+    """The process-wide Pillow pixel cap must stay in place — it guards every
+    Image.open against a malicious feed serving a decompression-bomb thumbnail."""
+    from PIL import Image
+
+    import src.utils  # noqa: F401 — importing sets the cap as a side effect
+
+    assert Image.MAX_IMAGE_PIXELS == 10_000_000
+
+
+def test_compress_image_survives_decompression_bomb(monkeypatch):
+    """A bomb (or any Pillow decode error) must degrade to the original bytes,
+    never crash the run."""
+    from PIL import Image
+
+    from src.utils import compress_image
+
+    def _boom(*_a, **_kw):
+        raise Image.DecompressionBombError("image is too large")
+
+    monkeypatch.setattr("src.utils.Image.open", _boom)
+    original = b"not-a-real-image-but-that-is-fine"
+    assert compress_image(original) == original
