@@ -14,7 +14,7 @@ import re
 import socket
 import zlib
 from contextlib import contextmanager
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
@@ -226,7 +226,12 @@ def _inflate_capped(raw: bytes, wbits: int, cap: int) -> Optional[bytes]:
         out = bytearray(d.decompress(raw, cap + 1))
         while d.unconsumed_tail and len(out) <= cap:
             out += d.decompress(d.unconsumed_tail, cap + 1 - len(out))
-        out += d.flush()
+        # Bail BEFORE flush(): a no-arg flush() would decompress all remaining
+        # unconsumed input unbounded, re-introducing the bomb. If we are already
+        # over the cap (compressed tail still pending), refuse now.
+        if len(out) > cap:
+            return None
+        out += d.flush()  # unconsumed_tail is empty here -> bounded output
     except zlib.error:
         return None
     return None if len(out) > cap else bytes(out)
@@ -237,7 +242,8 @@ _GZIP_WBITS = 31
 
 
 async def _capped_stream_get(client: httpx.AsyncClient, url: str, *,
-                             headers: Optional[Dict[str, str]], timeout: float,
+                             headers: Optional[Dict[str, str]],
+                             timeout: Union[float, httpx.Timeout, None],
                              max_bytes: int) -> Optional[httpx.Response]:
     """GET with redirects disabled that aborts if the body exceeds ``max_bytes``.
 
@@ -308,7 +314,7 @@ async def get_with_safe_redirects(
     url: str,
     *,
     headers: Optional[Dict[str, str]] = None,
-    timeout: float = 10.0,
+    timeout: Union[float, httpx.Timeout, None] = 10.0,
     max_redirects: int = 5,
     enforce_metadata_policy: bool = True,
     max_bytes: int = MAX_FETCH_BYTES
