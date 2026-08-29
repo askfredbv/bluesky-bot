@@ -25,11 +25,22 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest-cov
+          pip install -r requirements.txt pytest-cov mypy
 
       - name: Lint with ruff
         run: |
           ruff check src/ main.py scripts/ tests/
+
+      # Type-check foothold: gate the modules that are already mypy-clean so
+      # type regressions there fail the build. The remaining modules (agents,
+      # main, net_safety, file_lock, broadcasters, utils, state_store, news)
+      # have known type issues to fix incrementally; expand this list as they
+      # go green. --follow-imports=silent keeps the gate scoped to these files.
+      - name: Type-check (mypy, clean modules)
+        run: |
+          mypy --ignore-missing-imports --follow-imports=silent \
+            src/config.py src/retry.py src/metrics.py src/proactive.py \
+            src/settings.py src/logger.py src/bluesky_session.py
 
       - name: Run tests with global coverage gate
         run: |
@@ -38,7 +49,7 @@ jobs:
             --cov=src \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
-            --cov-fail-under=70
+            --cov-fail-under=80
 
       - name: Upload coverage artifacts
         if: always()
