@@ -57,6 +57,26 @@ Image.MAX_IMAGE_PIXELS = 10_000_000
 T = TypeVar("T")
 STATE_STORE_TIMEOUT_SECONDS = 10.0
 
+# _resolver_pinned_to_ips swaps the PROCESS-GLOBAL socket.getaddrinfo for the
+# duration of a pinned request. That is not safe under concurrency: fetch_news
+# runs feeds in parallel, and overlapping pins would clobber each other's global
+# resolver — silently disabling the SSRF guard for the overlapping fetch. The
+# lock below serialises the pinned section so only one pinned request is in
+# flight at a time (feeds run twice a day, so the latency cost is irrelevant).
+# It is created lazily per running loop: a module-level asyncio.Lock() would
+# bind to the first loop and break across multiple asyncio.run() calls.
+_RESOLVER_PIN_LOCK: Optional[asyncio.Lock] = None
+_RESOLVER_PIN_LOCK_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _resolver_pin_lock() -> asyncio.Lock:
+    global _RESOLVER_PIN_LOCK, _RESOLVER_PIN_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _RESOLVER_PIN_LOCK is None or _RESOLVER_PIN_LOCK_LOOP is not loop:
+        _RESOLVER_PIN_LOCK = asyncio.Lock()
+        _RESOLVER_PIN_LOCK_LOOP = loop
+    return _RESOLVER_PIN_LOCK
+
 def _state_store_url_for_key(key: str) -> Optional[str]:
     base_url = os.environ.get("STATE_STORE_URL", "").strip()
     if not base_url:
@@ -848,13 +868,17 @@ async def get_with_safe_redirects(
             return None
 
         try:
-            with _resolver_pinned_to_ips(hostname, candidate_ips):
-                response = await client.get(
-                    current_url,
-                    headers=headers,
-                    timeout=timeout,
-                    follow_redirects=False
-                )
+            # Serialise the global-resolver pin (see _resolver_pin_lock): the
+            # pin must stay valid for the whole request, so hold the lock across
+            # the await rather than only around the getaddrinfo swap.
+            async with _resolver_pin_lock():
+                with _resolver_pinned_to_ips(hostname, candidate_ips):
+                    response = await client.get(
+                        current_url,
+                        headers=headers,
+                        timeout=timeout,
+                        follow_redirects=False
+                    )
         except Exception as e:
             SafeLogger.warn("dns_validated_request_blocked", "Blocked URL request after DNS validation", url=current_url, error_type=type(e).__name__)
             return None
@@ -1091,10 +1115,14 @@ async def fetch_single_feed(
         response = await get_with_safe_redirects(
             client, url, timeout=timeout, enforce_metadata_policy=False)
         if response is None:
+            # get_with_safe_redirects returns None for BOTH a security block and
+            # an ordinary transport failure (timeout/TLS/connection), logging the
+            # real cause itself. Use a neutral label here so the weekly feed-
+            # health view does not mislabel a plain timeout as a security block.
             SafeLogger.warn("feed_fetch_blocked",
-                            "Feed fetch blocked (unsafe URL / redirect) or failed", url=url)
+                            "Feed fetch failed or was blocked (see prior log for cause)", url=url)
             return FeedFetchResult(url=url, ok=False, entries_total=0,
-                                   entries_accepted=0, error_type="BlockedOrUnsafe")
+                                   entries_accepted=0, error_type="FetchFailedOrBlocked")
         feed = feedparser.parse(response.text)
         bozo_error_type: Optional[str] = None
         if feed.bozo:

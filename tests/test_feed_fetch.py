@@ -79,5 +79,33 @@ def test_fetch_single_feed_blocked_redirect_returns_not_ok(monkeypatch):
     result = asyncio.run(utils.fetch_single_feed(object(), "https://evil.example/rss"))
 
     assert result.ok is False
-    assert result.error_type == "BlockedOrUnsafe"
+    assert result.error_type == "FetchFailedOrBlocked"
     assert result.entries == []
+
+
+def test_resolver_pin_serialized_across_concurrent_fetches(monkeypatch):
+    """The process-global resolver pin must never overlap across concurrent safe
+    fetches, or a parallel feed would run with another feed's (or no) pin. The
+    lock in get_with_safe_redirects must serialise the pinned section."""
+    monkeypatch.setattr(utils, "_resolve_public_ip_candidates", lambda h: ["1.2.3.4"])
+    state = {"cur": 0, "max": 0}
+
+    class _ConcurrencyProbeClient:
+        async def get(self, url, **kwargs):
+            state["cur"] += 1
+            state["max"] = max(state["max"], state["cur"])
+            await asyncio.sleep(0.02)  # hold the pinned section open
+            state["cur"] -= 1
+            return _safe_response(text="ok")
+
+    async def _run():
+        client = _ConcurrencyProbeClient()
+        await asyncio.gather(
+            utils.get_with_safe_redirects(client, "https://a.example/x",
+                                          enforce_metadata_policy=False),
+            utils.get_with_safe_redirects(client, "https://b.example/y",
+                                          enforce_metadata_policy=False),
+        )
+
+    asyncio.run(_run())
+    assert state["max"] == 1, "pinned fetches overlapped — resolver pin can be clobbered"
