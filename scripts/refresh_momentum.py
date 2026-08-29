@@ -30,6 +30,7 @@ import httpx
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from src.agents import _thinking_budget_for  # noqa: E402  (reuse canonical rule)
 from src.config import GEMINI_MODEL_PRIORITY, RSS_FEEDS  # noqa: E402
 from src.logger import SafeLogger  # noqa: E402
 
@@ -37,6 +38,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "src" / "config.py"
 
 MAX_HEADLINES = 150
 MAX_PRODUCTS = 18          # hard cap on how many names we will write
+MIN_PRODUCTS = 8           # below this we do not trust the model — skip, don't shrink
 MAX_NAME_LEN = 30          # a flagship name is short; longer = model rambling
 # A momentum name is a product/model string: letters, digits, spaces, and the
 # few punctuation marks that show up in real names (gpt-4.5, o3, deepseek-v4).
@@ -75,25 +77,42 @@ async def _fetch_headlines() -> list[str]:
     return headlines[:MAX_HEADLINES]
 
 
-def _ask_gemini(api_key: str, headlines: list[str]) -> list[str] | None:
-    """Ask the model chain for trending flagship names; return the raw list."""
+def _ask_gemini(api_key: str, headlines: list[str]) -> list[str]:
+    """Ask the model chain for trending flagship names; return sanitised names.
+
+    Failover only ends when a model yields at least MIN_PRODUCTS *usable* names.
+    A response that parses to a nonempty list but sanitises to too few (garbage,
+    over-long, or injection-shaped entries) is not a success — keep trying the
+    next model. Returns [] if the whole chain fails.
+    """
     from google import genai
 
     client = genai.Client(api_key=api_key)
     task = _PROMPT.format(headlines="\n".join(headlines))
     for model in GEMINI_MODEL_PRIORITY:
         try:
+            # Pin thinking budget (canonical rule from agents.py): the 3.x/2.5
+            # chain runs thinking by default, which would eat the 512-token cap
+            # and can return empty output. None => send no thinking_config.
+            config: dict = {"max_output_tokens": 512}
+            budget = _thinking_budget_for(model)
+            if budget is not None:
+                config["thinking_config"] = {"thinking_budget": budget}
             resp = client.models.generate_content(
-                model=model, contents=task, config={"max_output_tokens": 512})
+                model=model, contents=task, config=config)
             text = (resp.text or "").strip()
-            parsed = _parse_json_array(text)
-            if parsed:
-                SafeLogger.info("momentum_model_used", "Model returned names", model=model)
-                return parsed
+            cleaned = sanitize_products(_parse_json_array(text) or [])
+            if len(cleaned) >= MIN_PRODUCTS:
+                SafeLogger.info("momentum_model_used", "Model returned usable names",
+                                model=model, count=len(cleaned))
+                return cleaned
+            SafeLogger.warn("momentum_model_thin",
+                            "Too few usable names, trying next model",
+                            model=model, count=len(cleaned))
         except Exception as exc:
             SafeLogger.warn("momentum_model_failed", "Model call failed",
                             model=model, error_type=type(exc).__name__, error_msg=str(exc)[:200])
-    return None
+    return []
 
 
 def _parse_json_array(text: str) -> list[str] | None:
@@ -163,9 +182,8 @@ async def _run() -> int:
         print(f"refresh_momentum: only {len(headlines)} headlines — too few, skipping.")
         return 0
 
-    raw = _ask_gemini(api_key, headlines)
-    products = sanitize_products(raw or [])
-    if len(products) < 8:
+    products = _ask_gemini(api_key, headlines)
+    if len(products) < MIN_PRODUCTS:
         print(f"refresh_momentum: model returned {len(products)} usable names — "
               "too few to trust, skipping to avoid shrinking the list.")
         return 0

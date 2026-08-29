@@ -7,7 +7,53 @@ Python and touch only the list body).
 """
 import pytest
 
+import scripts.refresh_momentum as rm
 from scripts.refresh_momentum import rewrite_momentum_products, sanitize_products
+
+
+class _FakeResp:
+    def __init__(self, text):
+        self.text = text
+
+
+def test_ask_gemini_continues_failover_until_enough_usable(monkeypatch):
+    """A response that sanitises to too few names must NOT end failover, and the
+    thinking budget must be pinned so the tight output cap isn't eaten."""
+    from google import genai
+
+    calls = []
+    many = "[" + ", ".join(f'"name-{i}"' for i in range(10)) + "]"
+
+    class _FakeModels:
+        def generate_content(self, model, contents, config):
+            calls.append((model, config))
+            return _FakeResp('["gpt-5"]' if len(calls) == 1 else many)
+
+    class _FakeClient:
+        def __init__(self, api_key=None):
+            self.models = _FakeModels()
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    out = rm._ask_gemini("key", ["headline"] * 10)
+
+    assert len(out) >= rm.MIN_PRODUCTS          # usable names returned
+    assert len(calls) >= 2                       # did not stop on the thin first reply
+    assert any("thinking_config" in cfg for _, cfg in calls)  # budget pinned
+
+
+def test_ask_gemini_returns_empty_when_whole_chain_thin(monkeypatch):
+    from google import genai
+
+    class _FakeModels:
+        def generate_content(self, model, contents, config):
+            return _FakeResp('["only-one"]')  # always below MIN_PRODUCTS
+
+    class _FakeClient:
+        def __init__(self, api_key=None):
+            self.models = _FakeModels()
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    assert rm._ask_gemini("key", ["headline"] * 10) == []
 
 _SNIPPET = '''from typing import List
 
