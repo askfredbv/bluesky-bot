@@ -1,0 +1,53 @@
+[project]
+name = "bluesky-bot"
+version = "4.22.0"
+description = "AI/tech curation + IT-mentorship bot posting to Bluesky and Mastodon."
+requires-python = ">=3.11"
+
+# Runtime dependencies. Human-edited constraints; regenerate the pinned
+# lockfiles after edits (see the lockfile note at the bottom of this file).
+dependencies = [
+    # Core runtime
+    "python-dotenv>=1.0,<2",
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.15.0,<5",
+    "Pillow>=12.3.0,<13",
+    # Critical integrations
+    "atproto>=0.0.61,<0.1",
+    "google-genai>=1.75.0,<2",
+    "Mastodon.py>=2.2,<3",
+    "httpx>=0.28,<0.29",
+    "feedparser>=6.0.11,<7",
+    # Transitive constraints for critical integrations
+    "anyio>=4.14.1,<5",
+    "httpcore>=1.0.5,<2",
+    "pydantic>=2.7,<3",
+]
+
+[project.optional-dependencies]
+# Lint / type / test tooling. Runs in CI, NOT installed into production runs.
+# mypy/ruff are pinned so the required lint + type-check gates can't start
+# failing on an unmanaged version bump (Codex review on PR #87).
+dev = [
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
+    "pytest-cov>=5,<8",
+    "ruff>=0.16.0,<1",
+    "mypy>=2.3,<3",
+]
+
+# This project is an application, not a distributed library: it is run as
+# `python main.py` from the repo, never installed. Setuptools is present only
+# so pip-compile can read the [project] metadata; it packages no code.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+# Lockfiles (pinned, generated — do not hand-edit):
+#   requirements.txt      = runtime only  -> pip-compile pyproject.toml
+#   requirements-dev.txt  = runtime + dev -> pip-compile --extra dev pyproject.toml
+# Production workflows install requirements.txt; CI installs requirements-dev.txt.
+# .github/workflows/lockfile-check.yml regenerates both and fails on drift.

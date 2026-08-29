@@ -23,8 +23,20 @@ jobs:
       - name: Install pip-tools
         run: python -m pip install --upgrade pip pip-tools
 
-      - name: Regenerate lockfile
-        run: pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt requirements.in
+      - name: Regenerate runtime lockfile
+        run: pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml
 
-      - name: Verify lockfile is up to date
-        run: git diff --exit-code requirements.txt
+      - name: Regenerate dev lockfile
+        run: pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml
+
+      - name: Upload regenerated lockfiles
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lockfiles
+          path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Verify lockfiles are up to date
+        run: git diff --exit-code requirements.txt requirements-dev.txt
