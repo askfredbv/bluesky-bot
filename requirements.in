@@ -23,7 +23,10 @@ pydantic>=2.7,<3
 pytest>=9.1.1,<10
 pytest-asyncio>=1.4.0,<2
 
-# Lint / dev tooling (runs in CI via tests.yml; not a runtime dep but
+# Lint / type / dev tooling (runs in CI via tests.yml; not a runtime dep but
 # must be in requirements.in so Dependabot's lockfile regen doesn't
-# silently drop it from requirements.txt — surfaced 2026-05-20 by PR #47)
+# silently drop it from requirements.txt — surfaced 2026-05-20 by PR #47).
+# mypy is pinned here so the required type-check gate can't start failing on an
+# unmanaged version bump (Codex review on PR #87).
 ruff>=0.16.0,<1
+mypy>=2.3,<3
