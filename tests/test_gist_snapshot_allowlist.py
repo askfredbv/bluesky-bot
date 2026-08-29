@@ -5,6 +5,7 @@ the only boundary keeping pending_replies.json (drafted replies + the proactive
 watchlist of named people) out of that public artifact. These tests fail loudly
 if someone reverts to an unfiltered snapshot or adds the sensitive file back.
 """
+import re
 from pathlib import Path
 
 _WORKFLOW = (Path(__file__).resolve().parent.parent
@@ -26,10 +27,15 @@ def test_snapshot_is_gated_by_an_allowlist():
         "Gist file to the public artifact again")
 
 
-def test_sensitive_file_is_never_snapshotted():
-    assert _SENSITIVE not in _text(), (
-        f"{_SENSITIVE} must never appear in the snapshot workflow — it would "
-        "leak the proactive watchlist into a public artifact")
+def test_sensitive_file_is_not_in_the_allowlist():
+    # check the SAFE_TO_SNAPSHOT set literal itself (the file may mention the
+    # sensitive name in an explanatory comment — that is fine; being in the
+    # allowlist set is not).
+    match = re.search(r"SAFE_TO_SNAPSHOT\s*=\s*\{(.*?)\}", _text(), re.DOTALL)
+    assert match, "SAFE_TO_SNAPSHOT set literal not found"
+    assert _SENSITIVE not in match.group(1), (
+        f"{_SENSITIVE} is in the snapshot allowlist — it would leak the "
+        "proactive watchlist into a public artifact")
 
 
 def test_known_safe_state_is_allowlisted():
