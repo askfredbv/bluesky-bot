@@ -1,6 +1,18 @@
 import os
+from enum import StrEnum
 from pathlib import Path
 from typing import List, Dict
+
+
+class Mode(StrEnum):
+    """The three posting modes. A StrEnum so members are their own string value:
+    `Mode.CURATOR == "curator"` is True and logs/JSON serialise as "curator",
+    but a typo like `Mode.STRATEGIS` is an AttributeError at import instead of a
+    silent miss (the string-literal `mode == "stategist"` bug this replaces)."""
+    CURATOR = "curator"
+    MENTOR = "mentor"
+    STRATEGIST = "strategist"
+
 
 # Platform Constants
 MAX_POST_LENGTH_BSKY: int = 300

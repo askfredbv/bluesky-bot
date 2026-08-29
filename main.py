@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Internal Imports
 from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
-    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY,
+    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
@@ -31,13 +31,13 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class ModeSelectionPayload:
-    mode: str
+    mode: Mode
     current_hour_utc: int
 
 
 @dataclass(frozen=True)
 class ContentPrepPayload:
-    mode: str
+    mode: Mode
     seen_data: Dict[str, List[str]]
     news_items: List[Dict[str, Any]]
     link_meta: Optional[Dict[str, Any]]
@@ -49,7 +49,7 @@ class ContentPrepPayload:
 
 @dataclass(frozen=True)
 class BroadcastPayload:
-    mode: str
+    mode: Mode
     seen_data: Dict[str, List[str]]
     news_items: List[Dict[str, Any]]
     content_list: List[str]
@@ -64,7 +64,7 @@ class BroadcastPayload:
 
 @dataclass(frozen=True)
 class AutomationPayload:
-    mode: str
+    mode: Mode
     seen_data: Dict[str, List[str]]
     news_items: List[Dict[str, Any]]
     pioneer_entry: Optional[Dict[str, Any]] = None
@@ -107,7 +107,7 @@ def load_settings_or_exit() -> Settings:
 
 async def mode_selection_stage() -> ModeSelectionPayload:
     current_hour = datetime.now(timezone.utc).hour
-    mode = "curator" if current_hour < 11 else "mentor"
+    mode = Mode.CURATOR if current_hour < 11 else Mode.MENTOR
     SafeLogger.configure(mode=mode)
     SafeLogger.info("mode_selected", "Execution mode selected", mode=mode)
     return ModeSelectionPayload(mode=mode, current_hour_utc=current_hour)
@@ -120,11 +120,11 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
     news_items = []
     link_meta = None
     source_domain: Optional[str] = None
-    if mode == "curator":
+    if mode == Mode.CURATOR:
         news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
         if len(news_items) < 3:
             SafeLogger.warn("news_volume_low", "Low high-signal news volume, shifting mode", mode=mode, selected_items=len(news_items))
-            mode = "strategist"
+            mode = Mode.STRATEGIST
             SafeLogger.configure(mode=mode)
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
@@ -155,7 +155,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
 
     # Pioneer dimension only attaches to Mentor/Strategist (afternoon).
     pioneer_entry = None
-    if mode != "curator":
+    if mode != Mode.CURATOR:
         pioneer_entry = select_pioneer_topic(seen_data)
 
     return ContentPrepPayload(
@@ -215,7 +215,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # link_meta from news_items[0], so a non-top pick would otherwise ship a
     # card pointing at a different article. generate_content returns the
     # chosen URL; only refetch when it differs from the pre-fetched top item.
-    if mode == "curator" and chosen_link:
+    if mode == Mode.CURATOR and chosen_link:
         top_link = news_items[0]["link"] if news_items else None
         if chosen_link != top_link:
             link_meta = await get_link_metadata(chosen_link)
@@ -233,7 +233,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
     image_bytes = None
-    if mode != "curator" and random.random() < IMAGE_GENERATION_PROBABILITY:
+    if mode != Mode.CURATOR and random.random() < IMAGE_GENERATION_PROBABILITY:
         image_bytes = await generate_post_image(
             creds.gemini_api_key, chosen_topic, thread_posts=content_list
         )
@@ -557,7 +557,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
     chosen_topic = automation.chosen_topic
 
     dirty = False
-    if mode == "curator" and news_items:
+    if mode == Mode.CURATOR and news_items:
         seen_data["links"] = (seen_data["links"] + [canonical_url(i['link']) for i in news_items])[-200:]
 
         # Sense topic to update memory
@@ -570,7 +570,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
     # next run's topic picker can avoid repeating it. Curator already has
     # its own categorical recent_topics; this is a separate field for the
     # free-form Mentor/Strategist topic strings.
-    if mode in ("mentor", "strategist") and chosen_topic:
+    if mode in (Mode.MENTOR, Mode.STRATEGIST) and chosen_topic:
         existing = seen_data.get("recent_mode_topics", []) or []
         seen_data["recent_mode_topics"] = (existing + [chosen_topic])[-5:]
         dirty = True

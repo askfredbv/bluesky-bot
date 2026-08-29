@@ -14,7 +14,7 @@ from src.config import (
     REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
-    MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY,
+    MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY, Mode,
     LANGUAGE_OPTIONS, IMAGE_MODEL, MAX_OUTPUT_TOKENS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
@@ -499,9 +499,9 @@ def _validate_thread_shape(content_list: Any) -> Tuple[bool, str]:
             return False, f"Post {idx} is {len(item)} chars, exceeds {MAX_POST_LENGTH_BSKY}"
     return True, "Success"
 
-def _select_persona_variant(mode: str) -> Tuple[str, str]:
+def _select_persona_variant(mode: Mode) -> Tuple[str, str]:
     """Select a lightweight persona variant to diversify voice while keeping core role."""
-    variants = CURATOR_PERSONA_VARIANTS if mode == "curator" else MENTOR_PERSONA_VARIANTS
+    variants = CURATOR_PERSONA_VARIANTS if mode == Mode.CURATOR else MENTOR_PERSONA_VARIANTS
     variant_name = random.choice(list(variants.keys()))
     return variant_name, variants[variant_name]
 
@@ -860,7 +860,7 @@ def _pick_topic_avoiding_recent(candidates: List[str], recent: List[str]) -> str
 async def generate_content(
     api_key: str,
     recent_posts: List[str],
-    mode: str = "mentor",
+    mode: Mode = Mode.MENTOR,
     news_items: Optional[List[Dict[str, Any]]] = None,
     model_priority: Optional[List[str]] = None,
     pioneer_entry: Optional[Dict[str, Any]] = None,
@@ -885,14 +885,14 @@ async def generate_content(
     style_constraints = _build_avoidance_constraints(style_fingerprints, recent_posts)
     recent_mode_topics = list(recent_mode_topics or [])
 
-    if mode == "curator" and not news_items:
+    if mode == Mode.CURATOR and not news_items:
         SafeLogger.warn("curator_no_items", "Curator mode called with no news items; falling back to mentor", mode=mode)
-        mode = "mentor"
+        mode = Mode.MENTOR
 
     # Pioneer dimension takes precedence for non-Curator modes when an entry
     # was selected upstream. Uses the Mentor system instructions as the base
     # voice anchor — the pioneer-specific shaping is in the user task.
-    if mode != "curator" and pioneer_entry:
+    if mode != Mode.CURATOR and pioneer_entry:
         entry = pioneer_entry["entry"]
         topic = entry["title"]
         instr = (
@@ -908,7 +908,7 @@ async def generate_content(
             entry_id=entry["id"],
             category=entry.get("category"),
         )
-    elif mode == "curator" and news_items:
+    elif mode == Mode.CURATOR and news_items:
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
@@ -924,7 +924,7 @@ async def generate_content(
             "Write the thread. Start with whichever item has the most interesting 'so what' — "
             "not necessarily the most prominent headline. Connect where it makes sense, but don't force links."
         )
-    elif mode == "strategist":
+    elif mode == Mode.STRATEGIST:
         topic = _pick_topic_avoiding_recent(SECONDARY_TOPICS, recent_mode_topics)
         instr = (
             f"{SYSTEM_INSTRUCTIONS_MENTOR}\n\n"
@@ -957,7 +957,7 @@ async def generate_content(
     # array so the link card can be built from the item the model actually
     # wrote about. The Curator task invites picking the most interesting
     # item, not the top-scored one; the URL tells us which it picked.
-    curator_structured = mode == "curator" and bool(news_items)
+    curator_structured = mode == Mode.CURATOR and bool(news_items)
     if curator_structured:
         format_instruction = (
             "OUTPUT FORMAT:\n"
