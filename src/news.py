@@ -4,7 +4,7 @@ diversity, cross-publisher consensus), and cluster the same story across
 publishers.
 
 Extracted from src/utils.py. Depends on src.net_safety (safe fetch + URL
-canonicalisation) and, lazily, on src.metrics (FeedFetchResult + feed-health);
+canonicalisation) and on src.metrics (FeedFetchResult + feed-health);
 imports nothing from src.utils.
 """
 import asyncio
@@ -37,6 +37,12 @@ from src.config import (
     TOPIC_MAP,
 )
 from src.logger import SafeLogger
+from src.metrics import (
+    FeedFetchResult,
+    load_feed_health,
+    record_feed_attempt,
+    save_feed_health,
+)
 from src.net_safety import canonical_url, get_with_safe_redirects, normalise_url
 
 
@@ -164,7 +170,7 @@ async def fetch_single_feed(
     url: str,
     *,
     timeout: Optional[httpx.Timeout] = None
-) -> "FeedFetchResult":  # noqa: F821 — forward ref, imported lazily inside the function to break the src.metrics ↔ src.utils circular dependency
+) -> FeedFetchResult:
     """Fetch and normalise one RSS feed; return a structured outcome.
 
     The `ok` flag reflects whether the HTTP request succeeded (i.e. no
@@ -172,9 +178,6 @@ async def fetch_single_feed(
     a feed that responds but has zero entries is `ok=True` with both
     `entries_total` and `entries_accepted` at zero.
     """
-    # Local import to avoid circular dependency at module load time.
-    from src.metrics import FeedFetchResult
-
     try:
         # SSRF guard: feeds go through the same public-IP validation, DNS
         # pinning, and per-hop redirect checks as the metadata scraper, but
@@ -281,10 +284,7 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         results = await asyncio.gather(*tasks)
 
     # Record per-feed outcomes for the weekly health view.
-    # Local import mirrors fetch_single_feed and keeps the circular-dep
-    # resolution consistent.
     try:
-        from src.metrics import load_feed_health, record_feed_attempt, save_feed_health
         feed_health = load_feed_health()
         for result in results:
             record_feed_attempt(feed_health, result)
