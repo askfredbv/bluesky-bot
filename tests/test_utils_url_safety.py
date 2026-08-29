@@ -191,7 +191,7 @@ class _FakeStreamResponse:
         self.request = httpx.Request("GET", "https://example.com/x")
         self._chunks = chunks
 
-    async def aiter_bytes(self):
+    async def aiter_raw(self):
         for c in self._chunks:
             yield c
 
@@ -239,3 +239,37 @@ async def test_capped_stream_get_returns_body_under_cap():
         _client_streaming(resp), "https://example.com/x",
         headers=None, timeout=1.0, max_bytes=1500)
     assert out is not None and out.content == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_decodes_gzip_under_cap():
+    import gzip
+    payload = b"hello gzip world"
+    resp = _FakeStreamResponse([gzip.compress(payload)],
+                               headers={"content-encoding": "gzip"})
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=1500)
+    assert out is not None and out.content == payload
+    assert "content-encoding" not in out.headers  # decoded, header stripped
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_blocks_gzip_bomb():
+    import gzip
+    bomb = gzip.compress(b"x" * 5_000_000)  # tiny compressed, 5 MB decompressed
+    assert len(bomb) < 50_000  # confirm the payload itself is small
+    resp = _FakeStreamResponse([bomb], headers={"content-encoding": "gzip"})
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=100_000)
+    assert out is None  # decompressed size exceeds the cap -> refused
+
+
+@pytest.mark.asyncio
+async def test_capped_stream_get_refuses_unbounded_encoding():
+    resp = _FakeStreamResponse([b"whatever"], headers={"content-encoding": "br"})
+    out = await net_safety._capped_stream_get(
+        _client_streaming(resp), "https://example.com/x",
+        headers=None, timeout=1.0, max_bytes=1500)
+    assert out is None  # br is not bounded here -> fail safe
