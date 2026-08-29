@@ -81,7 +81,7 @@ def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
     """Compresses an image to stay under AtProto's 1MB blob limit."""
     try:
         img_io = io.BytesIO(image_bytes)
-        img = Image.open(img_io)
+        img: Image.Image = Image.open(img_io)
     except Exception as e:
         SafeLogger.warn("image_open_for_compression_failed", "Failed to open image for compression", error_type=type(e).__name__)
         return image_bytes
@@ -127,7 +127,7 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
             # Download image if exists for uploading as blob
             img_data = None
             if og_image and og_image.get('content'):
-                img_url = normalise_url(og_image['content'], base_url=url)
+                img_url = normalise_url(str(og_image['content']), base_url=url)
                 if img_url:
                     if not is_safe_public_url(img_url):
                         SafeLogger.warn("unsafe_og_image_url_blocked", "Blocked unsafe og:image URL", url=img_url)

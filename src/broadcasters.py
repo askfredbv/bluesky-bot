@@ -62,7 +62,7 @@ def _compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, b
         )
         return image_bytes, False
     try:
-        img = Image.open(io.BytesIO(image_bytes))
+        img: Image.Image = Image.open(io.BytesIO(image_bytes))
         # JPEG has no alpha; flatten anything with transparency / palette.
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
@@ -350,7 +350,7 @@ async def post_to_mastodon(
                 )
 
     async def _status_post_with_timeout(post_text: str, reply_to_id: Optional[str], media: Optional[List[str]] = None):
-        kwargs = {
+        kwargs: Dict[str, Any] = {
             "status": post_text,
             "in_reply_to_id": reply_to_id,
             "visibility": 'public',
