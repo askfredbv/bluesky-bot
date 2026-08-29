@@ -16,7 +16,7 @@ updates:
       # forcing function until one of three named triggers fires
       # (1.x SDK bug, CVE, or a planned feature needing 2.x-only
       # capability). PR #46 was closed for this reason on 2026-05-18.
-      # Belt-and-suspenders with the `<2` ceiling in requirements.in.
+      # Belt-and-suspenders with the `<2` ceiling in pyproject.toml.
       - dependency-name: "google-genai"
         update-types: ["version-update:semver-major"]
     # Bundle minor/major bumps into a single weekly PR so we regenerate

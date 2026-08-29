@@ -77,11 +77,13 @@ for the hard-won context before proposing structural changes.
 ## Build / test
 
 ```
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ruff check src/ main.py scripts/ tests/
 pytest -q
 ```
 
-`requirements.txt` is generated from `requirements.in` via `pip-compile` (the lockfile
-check in CI enforces they match). Add new deps to `requirements.in`, including dev tools
-(`ruff`, `pytest`), or the lockfile regen drops them.
+`requirements.txt` (runtime) and `requirements-dev.txt` (runtime + dev tools) are both
+generated from `pyproject.toml` via `pip-compile` (the lockfile check in CI enforces they
+match). Add new deps to `pyproject.toml` — runtime under `[project.dependencies]`, dev
+tools (`ruff`, `pytest`, `mypy`, …) under `[project.optional-dependencies] dev` — then
+regenerate both lockfiles.

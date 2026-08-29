@@ -78,12 +78,15 @@ CI enforces a **70% global coverage floor**, with **80% module gates** on the hi
 
 ### Dependency management
 
-Dependencies are pinned via `pip-tools`. Edit intent in `requirements.in` (runtime **and** dev tools like `ruff`/`pytest`), then regenerate — CI fails if the lockfile is out of sync:
+Dependencies are declared in `pyproject.toml` — runtime under `[project.dependencies]`, dev tools like `ruff`/`pytest`/`mypy` under the `dev` optional-dependency group — and pinned to two lockfiles via `pip-tools`. CI fails if either lockfile is out of sync:
 
 ```bash
 pip install pip-tools
-pip-compile --no-header --no-annotate --strip-extras --output-file requirements.txt requirements.in
+pip-compile --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml
+pip-compile --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml
 ```
+
+Production installs `requirements.txt` (runtime only); CI and local dev install `requirements-dev.txt` (runtime + tooling).
 
 Platform note: file locks use `fcntl.flock` on Linux/macOS, `msvcrt.locking` on Windows.
 
@@ -128,8 +131,9 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 ├── .github/workflows/      # daily_post, schedule-health, lockfile-check, codeql,
 │                           #   proactive_scan + approve_pending_reply (dormant), voice-audit, model-discovery
 ├── AGENTS.md               # Briefs the Codex PR reviewer on project principles
-├── requirements.in         # Human-edited dependency constraints
-└── requirements.txt        # Resolved lockfile
+├── pyproject.toml          # Dependency constraints (runtime + dev extra) + project metadata
+├── requirements.txt        # Pinned runtime lockfile (generated)
+└── requirements-dev.txt    # Pinned runtime + dev lockfile (generated)
 ```
 
 ---
