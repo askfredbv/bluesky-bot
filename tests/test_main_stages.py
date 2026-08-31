@@ -112,10 +112,11 @@ async def test_curator_fallback_generates_when_no_thumbnail(monkeypatch):
     _patch_gen(monkeypatch, gen)
     link_meta = {"title": "Big AI launch", "image_data": None}
 
-    await main._apply_curator_fallback_image(link_meta, "key", "Big AI launch")
+    result = await main._apply_curator_fallback_image(link_meta, "key", "Big AI launch")
 
     assert gen == [1]                              # fallback fired
     assert link_meta["image_data"] == b"compressed"
+    assert result == b"compressed"                 # returned for Mastodon parity
 
 
 @pytest.mark.asyncio
@@ -124,10 +125,11 @@ async def test_curator_fallback_keeps_existing_thumbnail(monkeypatch):
     _patch_gen(monkeypatch, gen)
     link_meta = {"title": "T", "image_data": b"og-thumb"}
 
-    await main._apply_curator_fallback_image(link_meta, "key", "T")
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
 
     assert gen == []                               # no generation when a thumbnail exists
     assert link_meta["image_data"] == b"og-thumb"
+    assert result is None                          # nothing generated -> nothing for Mastodon
 
 
 @pytest.mark.asyncio
@@ -136,9 +138,10 @@ async def test_curator_fallback_no_image_when_generation_empty(monkeypatch):
     _patch_gen(monkeypatch, gen, returns=None)     # generation returns nothing
     link_meta = {"title": "T", "image_data": None}
 
-    await main._apply_curator_fallback_image(link_meta, "key", "T")
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
 
     assert link_meta["image_data"] is None         # thumbnail-free card, no crash
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -151,9 +154,10 @@ async def test_curator_fallback_survives_compression_failure(monkeypatch):
     monkeypatch.setattr(main, "compress_image", boom)
     link_meta = {"title": "T", "image_data": None}
 
-    await main._apply_curator_fallback_image(link_meta, "key", "T")
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
 
     assert link_meta["image_data"] is None         # compression failed -> thumbnail-free, no crash
+    assert result is None
 
 
 @pytest.mark.asyncio
