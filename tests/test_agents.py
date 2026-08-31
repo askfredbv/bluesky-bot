@@ -640,6 +640,21 @@ async def test_generate_post_image_returns_none_on_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_post_image_returns_none_on_timeout(monkeypatch):
+    """A stalled image request must not block the post — it times out to None."""
+    monkeypatch.setattr(agents, "_sync_generate_text", lambda k, s, t: "a sphere")
+    monkeypatch.setattr(agents, "_sync_generate_image", lambda k, p: b"unused")
+
+    async def fake_wait_for(coro, timeout):
+        coro.close()  # avoid "coroutine was never awaited"
+        raise agents.asyncio.TimeoutError
+
+    monkeypatch.setattr(agents.asyncio, "wait_for", fake_wait_for)
+    result = await generate_post_image("fake-key", "automation")
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_generate_post_image_uses_crafted_prompt(monkeypatch):
     """When _craft_visual_prompt returns a prompt, that prompt is passed to the image model."""
     captured_prompt = {}

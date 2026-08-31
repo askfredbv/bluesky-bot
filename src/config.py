@@ -212,6 +212,9 @@ GEMINI_MODEL_PRIORITY: List[str] = [
 # generated image, and Curator link cards get a generated fallback image when
 # the article has no OG thumbnail — the visual component drives likes/follows.
 IMAGE_GENERATION_PROBABILITY: float = 1.0
+# Hard bound on the image request (step 2). The image is optional, so a stalled
+# request must never block the post — on timeout we log and post without it.
+IMAGE_GENERATION_TIMEOUT_SECONDS: float = 30.0
 # 2026-06-15: migrated off Imagen. Google discontinues the imagen-4.0-* family
 # (standard/ultra/fast) on 2026-08-17 — calls 404 after that. The recommended
 # successor is gemini-3.1-flash-image, which generates images via
