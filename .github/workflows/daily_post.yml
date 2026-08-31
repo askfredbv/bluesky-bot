@@ -6,6 +6,15 @@ on:
   # 08:00/15:30 UTC in winter (CET), 07:00/14:30 UTC in summer (CEST).
   # GitHub's built-in schedule is intentionally removed to avoid duplicate posts and timing delays.
   workflow_dispatch:
+    inputs:
+      force_mode:
+        description: "Force mode: curator / mentor / strategist (blank = hour-based). Test/validation only."
+        required: false
+        default: ""
+      force_image:
+        description: "Force image generation: 1 = always (blank = normal probability). Test/validation only."
+        required: false
+        default: ""
 
 concurrency:
   group: daily-post-${{ github.ref }}
@@ -96,6 +105,9 @@ jobs:
           # Cap jitter to 5 min so the Actions runner doesn't idle for 30 min
           POST_JITTER_MIN_SECONDS: 30
           POST_JITTER_MAX_SECONDS: 300
+          # Manual test/validation hooks (blank on the cron-job.org dispatches)
+          FORCE_MODE: ${{ github.event.inputs.force_mode }}
+          FORCE_IMAGE: ${{ github.event.inputs.force_image }}
         run: python main.py
 
       - name: Snapshot Gist state
