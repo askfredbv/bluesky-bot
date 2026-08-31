@@ -397,7 +397,10 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         "topic": chosen_topic,
         "source_domain": source_domain,
         "pioneer_id": pioneer_id,
-        "had_image": image_bytes is not None,
+        # Count the Curator fallback image too — it ships on both platforms
+        # (Bluesky card thumb + Mastodon media), so had_image must reflect it or
+        # visual-engagement analysis under-counts Curator posts.
+        "had_image": (image_bytes is not None) or (curator_fallback_image is not None),
         "had_link_card": link_meta is not None,
     }
 

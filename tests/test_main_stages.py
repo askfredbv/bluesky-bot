@@ -516,6 +516,53 @@ async def test_broadcasting_stage_curator_link_card_follows_chosen_item(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_broadcasting_stage_curator_fallback_image_is_recorded_and_reaches_mastodon(monkeypatch):
+    """A generated Curator fallback image ships to Mastodon and is counted in
+    metrics (had_image), not just set as the Bluesky card thumbnail."""
+    masto_kwargs = {}
+
+    async def fake_generate(*a, **k):
+        return ["a post"], "Chosen Topic", None  # no chosen link -> keep the top card
+
+    async def fake_gen_image(*a, **k):
+        return b"rawbytes"                        # override the conftest stub
+
+    async def fake_bluesky(*a, **k):
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["at://x"])
+
+    async def fake_mastodon(access_token, api_base_url, content_list, **kwargs):
+        masto_kwargs.update(kwargs)
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["1"])
+
+    async def no_delay(*a, **k):
+        return None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate)
+    monkeypatch.setattr(main, "generate_post_image", fake_gen_image)
+    monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
+    monkeypatch.setattr(main, "post_to_bluesky", fake_bluesky)
+    monkeypatch.setattr(main, "post_to_mastodon", fake_mastodon)
+    monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
+    monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
+
+    creds = SimpleNamespace(gemini_api_key="g", bluesky_username="u", bluesky_password="p",
+                            mastodon_access_token="t", mastodon_api_base_url="https://masto")
+    settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
+    prep = main.ContentPrepPayload(
+        mode="curator", seen_data={"links": [], "recent_topics": []},
+        news_items=[{"title": "Top", "link": "https://top.example.com/article"}],
+        link_meta={"title": "Top", "image_data": None, "url": "https://top.example.com/article"},
+        bsky_client="c", recent_posts=[], source_domain="top.example.com")
+
+    payload = await main.broadcasting_stage(prep, settings, creds)
+
+    assert masto_kwargs.get("image_bytes") == b"compressed"   # fallback attached to Mastodon
+    assert payload.metrics_context["had_image"] is True        # and counted in metrics
+
+
+@pytest.mark.asyncio
 async def test_capture_follower_snapshot_stage_records_bluesky_and_mastodon(monkeypatch):
     """One run hitting both platforms appends two snapshot rows — one per
     platform — to growth.json. Bluesky uses getProfile; Mastodon uses
