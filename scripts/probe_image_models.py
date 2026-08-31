@@ -81,7 +81,9 @@ def _probe_imagen(client: genai.Client, model: str) -> str:
         images = getattr(result, "generated_images", None) or []
         if images:
             data = getattr(getattr(images[0], "image", None), "image_bytes", None)
-            return f"OK        image={len(data) if data else '?'} bytes"
+            if data:
+                return f"OK        image={len(data)} bytes"
+            return "NO_IMAGE  (entry had no image_bytes — filtered?)"
         return "NO_IMAGE  (empty result)"
     except Exception as exc:
         return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
