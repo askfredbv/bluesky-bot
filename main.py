@@ -16,7 +16,7 @@ from src.config import (
 )
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
-    get_link_metadata, prune_pioneer_recent, canonical_url,
+    get_link_metadata, prune_pioneer_recent, canonical_url, compress_image,
 )
 from src.agents import (
     generate_content, handle_interactions, generate_post_image,
@@ -137,6 +137,23 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
+            # Fallback visual: if the article has no OG thumbnail, generate an
+            # image so the Curator link card still carries a picture (visuals
+            # drive engagement). Compressed to fit Bluesky's blob limit.
+            if link_meta and not link_meta.get('image_data'):
+                topic = news_items[0].get('title') or "AI and technology news"
+                generated = await generate_post_image(creds.gemini_api_key, topic)
+                if generated:
+                    link_meta['image_data'] = compress_image(generated)
+                    SafeLogger.info(
+                        "curator_fallback_image",
+                        "Article had no thumbnail; generated a fallback link-card image",
+                        topic=topic, image_bytes=len(link_meta['image_data']))
+                else:
+                    SafeLogger.warn(
+                        "curator_fallback_image_absent",
+                        "Article had no thumbnail and fallback image generation returned nothing",
+                        topic=topic)
             # Derive the publisher domain for post-metrics attribution.
             try:
                 from urllib.parse import urlparse

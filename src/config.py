@@ -208,7 +208,10 @@ GEMINI_MODEL_PRIORITY: List[str] = [
 ]
 
 # Image generation
-IMAGE_GENERATION_PROBABILITY: float = 0.5
+# 2026-08-31: raised 0.5 -> 1.0. Every Mentor/Strategist post now gets a
+# generated image, and Curator link cards get a generated fallback image when
+# the article has no OG thumbnail — the visual component drives likes/follows.
+IMAGE_GENERATION_PROBABILITY: float = 1.0
 # 2026-06-15: migrated off Imagen. Google discontinues the imagen-4.0-* family
 # (standard/ultra/fast) on 2026-08-17 — calls 404 after that. The recommended
 # successor is gemini-3.1-flash-image, which generates images via

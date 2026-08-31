@@ -98,6 +98,66 @@ async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
     assert payload.link_meta is None
 
 
+class _FakeClient:
+    def on_session_change(self, cb):
+        return cb
+
+    async def login(self, username, password):
+        return None
+
+
+def _curator_harness(monkeypatch, link_meta, gen_calls):
+    async def fake_get_recent_posts(*a, **k):
+        return []
+
+    async def fake_fetch_news(*a, **k):
+        return [{"link": "https://x/1", "title": "Big AI launch"},
+                {"link": "https://x/2"}, {"link": "https://x/3"}]
+
+    async def fake_get_link_metadata(*a, **k):
+        return link_meta
+
+    async def counting_generate_image(*a, **k):
+        gen_calls.append(1)
+        return b"rawimagebytes"
+
+    monkeypatch.setattr(main, "load_seen_articles", lambda: {"links": [], "recent_topics": []})
+    monkeypatch.setattr(main, "fetch_news", fake_fetch_news)
+    monkeypatch.setattr(main, "get_link_metadata", fake_get_link_metadata)
+    monkeypatch.setattr(main, "generate_post_image", counting_generate_image)
+    monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
+    monkeypatch.setattr(main, "get_recent_posts", fake_get_recent_posts)
+    monkeypatch.setitem(__import__("sys").modules, "atproto",
+                        SimpleNamespace(AsyncClient=_FakeClient))
+
+
+@pytest.mark.asyncio
+async def test_content_prep_generates_curator_fallback_image_when_no_thumbnail(monkeypatch):
+    creds = SimpleNamespace(bluesky_username="u", bluesky_password="p", gemini_api_key="g")
+    gen_calls: list = []
+    _curator_harness(monkeypatch, {"title": "Big AI launch", "image_data": None}, gen_calls)
+
+    payload = await main.content_prep_stage(
+        main.ModeSelectionPayload(mode="curator", current_hour_utc=8), creds)
+
+    assert payload.mode == "curator"
+    assert gen_calls == [1]                                  # fallback fired once
+    assert payload.link_meta["image_data"] == b"compressed"  # compressed generated image set
+
+
+@pytest.mark.asyncio
+async def test_content_prep_keeps_existing_curator_thumbnail(monkeypatch):
+    creds = SimpleNamespace(bluesky_username="u", bluesky_password="p", gemini_api_key="g")
+    gen_calls: list = []
+    _curator_harness(monkeypatch, {"title": "T", "image_data": b"og-thumb"}, gen_calls)
+
+    payload = await main.content_prep_stage(
+        main.ModeSelectionPayload(mode="curator", current_hour_utc=8), creds)
+
+    assert gen_calls == []                                   # no fallback when a thumbnail exists
+    assert payload.link_meta["image_data"] == b"og-thumb"    # original OG thumbnail preserved
+
+
 @pytest.mark.asyncio
 async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(monkeypatch):
     creds = SimpleNamespace(
