@@ -137,23 +137,9 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         else:
             # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
             link_meta = await get_link_metadata(news_items[0]['link'])
-            # Fallback visual: if the article has no OG thumbnail, generate an
-            # image so the Curator link card still carries a picture (visuals
-            # drive engagement). Compressed to fit Bluesky's blob limit.
-            if link_meta and not link_meta.get('image_data'):
-                topic = news_items[0].get('title') or "AI and technology news"
-                generated = await generate_post_image(creds.gemini_api_key, topic)
-                if generated:
-                    link_meta['image_data'] = compress_image(generated)
-                    SafeLogger.info(
-                        "curator_fallback_image",
-                        "Article had no thumbnail; generated a fallback link-card image",
-                        topic=topic, image_bytes=len(link_meta['image_data']))
-                else:
-                    SafeLogger.warn(
-                        "curator_fallback_image_absent",
-                        "Article had no thumbnail and fallback image generation returned nothing",
-                        topic=topic)
+            # (The no-thumbnail fallback image is applied later, in
+            # broadcasting_stage, once the model's chosen link is known — see
+            # _apply_curator_fallback_image.)
             # Derive the publisher domain for post-metrics attribution.
             try:
                 from urllib.parse import urlparse
@@ -193,6 +179,34 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         pioneer_entry=pioneer_entry,
         source_domain=source_domain,
     )
+
+
+async def _apply_curator_fallback_image(
+    link_meta: Optional[Dict[str, Any]], api_key: str, topic: str
+) -> None:
+    """Give a Curator link card a picture when the article has no OG thumbnail:
+    generate an image from the story topic and set it as the card image
+    (compressed to fit Bluesky's blob limit). Mutates ``link_meta`` in place.
+    No-op — a thumbnail-free card, never a crash — if the card already has a
+    thumbnail, generation returns nothing, or compression fails."""
+    if not link_meta or link_meta.get("image_data"):
+        return
+    generated = await generate_post_image(api_key, topic)
+    if not generated:
+        SafeLogger.warn("curator_fallback_image_absent",
+                        "Article had no thumbnail and fallback generation returned nothing",
+                        topic=topic)
+        return
+    try:
+        link_meta["image_data"] = compress_image(generated)
+    except Exception as exc:
+        SafeLogger.warn("curator_fallback_image_compress_failed",
+                        "Fallback image could not be compressed; shipping a thumbnail-free card",
+                        topic=topic, error_type=type(exc).__name__)
+        return
+    SafeLogger.info("curator_fallback_image",
+                    "Article had no thumbnail; generated a fallback link-card image",
+                    topic=topic, image_bytes=len(link_meta["image_data"]))
 
 
 def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
@@ -263,6 +277,12 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             source_domain = urlparse(chosen_link).netloc or None
         except Exception:
             source_domain = None
+
+    # Fallback visual on the FINAL Curator card (after any link realignment):
+    # generate an image when the chosen article has no OG thumbnail.
+    if mode == Mode.CURATOR:
+        fallback_topic = chosen_topic or (news_items[0].get("title") if news_items else "") or "AI and technology news"
+        await _apply_curator_fallback_image(link_meta, creds.gemini_api_key, fallback_topic)
 
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.

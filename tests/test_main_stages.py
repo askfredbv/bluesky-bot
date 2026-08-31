@@ -98,64 +98,62 @@ async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
     assert payload.link_meta is None
 
 
-class _FakeClient:
-    def on_session_change(self, cb):
-        return cb
-
-    async def login(self, username, password):
-        return None
-
-
-def _curator_harness(monkeypatch, link_meta, gen_calls):
-    async def fake_get_recent_posts(*a, **k):
-        return []
-
-    async def fake_fetch_news(*a, **k):
-        return [{"link": "https://x/1", "title": "Big AI launch"},
-                {"link": "https://x/2"}, {"link": "https://x/3"}]
-
-    async def fake_get_link_metadata(*a, **k):
-        return link_meta
-
+def _patch_gen(monkeypatch, gen_calls, returns=b"rawbytes"):
     async def counting_generate_image(*a, **k):
         gen_calls.append(1)
-        return b"rawimagebytes"
-
-    monkeypatch.setattr(main, "load_seen_articles", lambda: {"links": [], "recent_topics": []})
-    monkeypatch.setattr(main, "fetch_news", fake_fetch_news)
-    monkeypatch.setattr(main, "get_link_metadata", fake_get_link_metadata)
+        return returns
     monkeypatch.setattr(main, "generate_post_image", counting_generate_image)
     monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
-    monkeypatch.setattr(main, "get_recent_posts", fake_get_recent_posts)
-    monkeypatch.setitem(__import__("sys").modules, "atproto",
-                        SimpleNamespace(AsyncClient=_FakeClient))
 
 
 @pytest.mark.asyncio
-async def test_content_prep_generates_curator_fallback_image_when_no_thumbnail(monkeypatch):
-    creds = SimpleNamespace(bluesky_username="u", bluesky_password="p", gemini_api_key="g")
-    gen_calls: list = []
-    _curator_harness(monkeypatch, {"title": "Big AI launch", "image_data": None}, gen_calls)
+async def test_curator_fallback_generates_when_no_thumbnail(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+    link_meta = {"title": "Big AI launch", "image_data": None}
 
-    payload = await main.content_prep_stage(
-        main.ModeSelectionPayload(mode="curator", current_hour_utc=8), creds)
+    await main._apply_curator_fallback_image(link_meta, "key", "Big AI launch")
 
-    assert payload.mode == "curator"
-    assert gen_calls == [1]                                  # fallback fired once
-    assert payload.link_meta["image_data"] == b"compressed"  # compressed generated image set
+    assert gen == [1]                              # fallback fired
+    assert link_meta["image_data"] == b"compressed"
 
 
 @pytest.mark.asyncio
-async def test_content_prep_keeps_existing_curator_thumbnail(monkeypatch):
-    creds = SimpleNamespace(bluesky_username="u", bluesky_password="p", gemini_api_key="g")
-    gen_calls: list = []
-    _curator_harness(monkeypatch, {"title": "T", "image_data": b"og-thumb"}, gen_calls)
+async def test_curator_fallback_keeps_existing_thumbnail(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+    link_meta = {"title": "T", "image_data": b"og-thumb"}
 
-    payload = await main.content_prep_stage(
-        main.ModeSelectionPayload(mode="curator", current_hour_utc=8), creds)
+    await main._apply_curator_fallback_image(link_meta, "key", "T")
 
-    assert gen_calls == []                                   # no fallback when a thumbnail exists
-    assert payload.link_meta["image_data"] == b"og-thumb"    # original OG thumbnail preserved
+    assert gen == []                               # no generation when a thumbnail exists
+    assert link_meta["image_data"] == b"og-thumb"
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_no_image_when_generation_empty(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen, returns=None)     # generation returns nothing
+    link_meta = {"title": "T", "image_data": None}
+
+    await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert link_meta["image_data"] is None         # thumbnail-free card, no crash
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_survives_compression_failure(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+
+    def boom(_b, **_k):
+        raise ValueError("cannot encode LA png as JPEG")
+    monkeypatch.setattr(main, "compress_image", boom)
+    link_meta = {"title": "T", "image_data": None}
+
+    await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert link_meta["image_data"] is None         # compression failed -> thumbnail-free, no crash
 
 
 @pytest.mark.asyncio
