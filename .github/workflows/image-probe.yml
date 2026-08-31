@@ -1,12 +1,14 @@
 name: Image Model Probe (diagnostic)
 
 # Manual, read-only diagnostic. Runs scripts/probe_image_models.py with the
-# production GEMINI_API_KEY to find which image model still returns image bytes
-# — the bot's IMAGE_MODEL (gemini-3.1-flash-image) went unreachable ~2026-08-26,
-# which silently stopped image generation on Mentor/Strategist posts. Posts
-# nothing, changes nothing. Same rationale as model-discovery.yml: the key is
-# IP-restricted to the runners, so this is the only place the probe is truthful.
-# Trigger from the Actions UI → "Run workflow".
+# production GEMINI_API_KEY to find which image model still returns image bytes,
+# and to verify the request-level HttpOptions timeout the bot relies on. The
+# bot's IMAGE_MODEL (gemini-3.1-flash-image) briefly went unreachable ~2026-08-26
+# (silently stopping image generation on Mentor/Strategist posts) and was
+# reachable again by 2026-08-31 — keep this as the standing check for the next
+# time. Posts nothing, changes nothing. Same rationale as model-discovery.yml:
+# the key is IP-restricted to the runners, so this is the only place the probe is
+# truthful. Trigger from the Actions UI → "Run workflow".
 
 on:
   workflow_dispatch:

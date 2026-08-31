@@ -1,12 +1,15 @@
 """Diagnostic: find which image-generation model this GEMINI_API_KEY can reach.
 
-Read-only — posts nothing, changes nothing. The bot's IMAGE_MODEL
-(gemini-3.1-flash-image) stopped returning images around 2026-08-26 because
-Google removed it from the key's reachable models. This enumerates the key's
-image-capable models and actively probes a candidate set (both the Gemini
-IMAGE-modality path the bot uses and the Imagen generate_images path) so we can
-pick a working replacement. Run via the image-probe workflow — the key is
-IP-restricted to the GitHub runners.
+Read-only — posts nothing, changes nothing. History: the bot's IMAGE_MODEL
+(gemini-3.1-flash-image) briefly stopped returning images around 2026-08-26
+when Google removed it from the key's reachable models; it was reachable again
+by 2026-08-31 (this probe, run 33406401910). The probe stays useful as the
+standing diagnostic — it enumerates the key's image-capable models and actively
+probes a candidate set (both the Gemini IMAGE-modality path the bot uses and the
+Imagen generate_images path) so a working replacement is one dispatch away if the
+model drops off again, and it verifies the request-level HttpOptions timeout the
+bot relies on. Run via the image-probe workflow — the key is IP-restricted to the
+GitHub runners.
 """
 import os
 from typing import List
@@ -25,7 +28,7 @@ _PROMPT = ("A clean, minimal editorial illustration of a lighthouse at dusk. "
 
 # generate_content candidates (Gemini image output via response_modalities=IMAGE)
 _GEMINI_CANDIDATES = [
-    "gemini-3.1-flash-image",                     # the bot's current (now-dead) model
+    "gemini-3.1-flash-image",                     # the bot's live IMAGE_MODEL
     "gemini-2.5-flash-image",
     "gemini-2.5-flash-image-preview",
     "gemini-2.0-flash-preview-image-generation",
