@@ -101,6 +101,20 @@ def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
     return out_io.getvalue()
 
 
+def is_usable_image(image_bytes: bytes, max_bytes: int = 976 * 1024) -> bool:
+    """True if bytes decode as an image and fit Bluesky's blob limit. Needed
+    because compress_image returns the ORIGINAL bytes when Pillow cannot open or
+    shrink them, so callers must validate the result before shipping it as media."""
+    if not image_bytes or len(image_bytes) > max_bytes:
+        return False
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
 async def get_link_metadata(url: str) -> Dict[str, Any]:
     """Scrapes OpenGraph metadata from a URL (v4.5 Sage replacement for DALL-E)."""
     fallback = {"title": "Source Link", "description": "", "image_data": None, "url": url}

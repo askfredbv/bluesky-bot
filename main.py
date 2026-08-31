@@ -17,6 +17,7 @@ from src.config import (
 from src.utils import (
     load_seen_articles, update_seen_articles, fetch_news,
     get_link_metadata, prune_pioneer_recent, canonical_url, compress_image,
+    is_usable_image,
 )
 from src.agents import (
     generate_content, handle_interactions, generate_post_image,
@@ -206,6 +207,14 @@ async def _apply_curator_fallback_image(
                         "Fallback image could not be compressed; shipping a thumbnail-free card",
                         topic=topic, error_type=type(exc).__name__,
                         error_msg=str(exc)[:200])
+        return None
+    # compress_image returns the ORIGINAL bytes when Pillow cannot open/shrink
+    # them, so validate before shipping — otherwise both platform uploads reject
+    # invalid media while we'd log success and record had_image=true.
+    if not is_usable_image(compressed):
+        SafeLogger.warn("curator_fallback_image_unusable",
+                        "Generated fallback image did not validate; shipping a thumbnail-free card",
+                        topic=topic)
         return None
     link_meta["image_data"] = compressed
     SafeLogger.info("curator_fallback_image",

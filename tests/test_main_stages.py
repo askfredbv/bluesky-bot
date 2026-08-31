@@ -104,6 +104,7 @@ def _patch_gen(monkeypatch, gen_calls, returns=b"rawbytes"):
         return returns
     monkeypatch.setattr(main, "generate_post_image", counting_generate_image)
     monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: True)
 
 
 @pytest.mark.asyncio
@@ -158,6 +159,21 @@ async def test_curator_fallback_survives_compression_failure(monkeypatch):
 
     assert link_meta["image_data"] is None         # compression failed -> thumbnail-free, no crash
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_rejects_unusable_image(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+    # compress_image returns bytes Pillow can't open (its own open-failure path),
+    # so validation must reject them rather than shipping invalid media.
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: False)
+    link_meta = {"title": "T", "image_data": None}
+
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert result is None                          # unusable -> nothing shipped
+    assert link_meta["image_data"] is None         # thumbnail-free card
 
 
 @pytest.mark.asyncio
@@ -542,6 +558,7 @@ async def test_broadcasting_stage_curator_fallback_image_is_recorded_and_reaches
     monkeypatch.setattr(main, "generate_content", fake_generate)
     monkeypatch.setattr(main, "generate_post_image", fake_gen_image)
     monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: True)
     monkeypatch.setattr(main, "post_to_bluesky", fake_bluesky)
     monkeypatch.setattr(main, "post_to_mastodon", fake_mastodon)
     monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
