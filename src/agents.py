@@ -803,12 +803,14 @@ async def generate_post_image(
             asyncio.to_thread(_sync_generate_image, api_key, visual_prompt),
             timeout=IMAGE_GENERATION_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         # The image is optional — a stalled request must not block the post.
+        # error_msg distinguishes an SDK-originated timeout from the local deadline.
         SafeLogger.warn(
             "image_generation_timeout",
             "Image generation timed out; posting without image",
-            topic=topic, timeout_s=IMAGE_GENERATION_TIMEOUT_SECONDS)
+            topic=topic, timeout_s=IMAGE_GENERATION_TIMEOUT_SECONDS,
+            error_msg=str(exc)[:200])
         return None
     except Exception as exc:
         # error_msg is the diagnostic difference between "quota exhausted",
