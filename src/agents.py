@@ -799,7 +799,7 @@ async def generate_post_image(
             "No text, no people, flat design style, muted modern palette."
         )
     try:
-        return await asyncio.to_thread(_sync_generate_image, api_key, visual_prompt)
+        image = await asyncio.to_thread(_sync_generate_image, api_key, visual_prompt)
     except Exception as exc:
         # error_msg is the diagnostic difference between "quota exhausted",
         # "auth failed", "content filter", and "model deprecated" — all of
@@ -813,6 +813,16 @@ async def generate_post_image(
             topic=topic,
         )
         return None
+    if image is None:
+        # No exception, but _sync_generate_image found no image part — a
+        # content-filter refusal or text-only response. Previously silent.
+        SafeLogger.warn(
+            "image_empty_response",
+            "Image model returned no image (filtered or text-only)",
+            model=IMAGE_MODEL,
+            topic=topic,
+        )
+    return image
 
 
 async def filter_available_models(api_key: str, priority: List[str]) -> List[str]:

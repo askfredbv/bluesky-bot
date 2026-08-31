@@ -1,4 +1,5 @@
 import sys
+import os
 import asyncio
 import random
 import uuid
@@ -108,6 +109,13 @@ def load_settings_or_exit() -> Settings:
 async def mode_selection_stage() -> ModeSelectionPayload:
     current_hour = datetime.now(timezone.utc).hour
     mode = Mode.CURATOR if current_hour < 11 else Mode.MENTOR
+    # Test hook: FORCE_MODE (workflow_dispatch input) pins the mode for a manual
+    # run — e.g. forcing Mentor to validate the image path. Blank/invalid keeps
+    # the normal hour-based selection, so scheduled runs are unaffected.
+    forced = os.environ.get("FORCE_MODE", "").strip().lower()
+    if forced in (Mode.CURATOR, Mode.MENTOR, Mode.STRATEGIST):
+        mode = Mode(forced)
+        SafeLogger.info("mode_forced", "Mode overridden by FORCE_MODE", mode=mode)
     SafeLogger.configure(mode=mode)
     SafeLogger.info("mode_selected", "Execution mode selected", mode=mode)
     return ModeSelectionPayload(mode=mode, current_hour_utc=current_hour)
@@ -168,6 +176,15 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
         pioneer_entry=pioneer_entry,
         source_domain=source_domain,
     )
+
+
+def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
+    """Whether to generate a post image. Never for Curator (it uses a link
+    card); always when FORCE_IMAGE is set (deterministic validation); otherwise
+    at the configured probability."""
+    if mode == Mode.CURATOR:
+        return False
+    return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
 
 
 async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Settings, creds: Any, active_models: Optional[List[str]] = None) -> BroadcastPayload:
@@ -233,10 +250,25 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
     image_bytes = None
-    if mode != Mode.CURATOR and random.random() < IMAGE_GENERATION_PROBABILITY:
+    # FORCE_IMAGE=1 (workflow_dispatch input) always attempts an image, for
+    # deterministic end-to-end validation of the image path; otherwise the
+    # configured probability applies.
+    force_image = os.environ.get("FORCE_IMAGE", "").strip() == "1"
+    if _should_attempt_image(mode, force_image):
+        SafeLogger.info("image_requested", "Attempting post image",
+                        mode=mode, forced=force_image, topic=chosen_topic)
         image_bytes = await generate_post_image(
             creds.gemini_api_key, chosen_topic, thread_posts=content_list
         )
+        # Previously invisible: an image that failed or came back empty left no
+        # trace, so a silent regression could run for days (it did — 2026-08).
+        if image_bytes:
+            SafeLogger.info("image_generated", "Post image ready",
+                            mode=mode, image_bytes=len(image_bytes))
+        else:
+            SafeLogger.warn("image_absent",
+                            "Image branch entered but no image was produced",
+                            mode=mode, topic=chosen_topic)
 
     thread_pause_profile = random.choice(list(THREAD_PAUSE_PROFILES.keys())) if THREAD_PAUSE_PROFILES else DEFAULT_THREAD_PAUSE_PROFILE
     await apply_humanized_post_delay(settings)
