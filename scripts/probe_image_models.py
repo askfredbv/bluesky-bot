@@ -14,6 +14,12 @@ from typing import List
 from google import genai
 from google.genai import types
 
+try:
+    # The bot's live image model — probe the real one, not a guess.
+    from src.config import IMAGE_MODEL
+except Exception:  # pragma: no cover - defensive if run outside the repo root
+    IMAGE_MODEL = "gemini-3.1-flash-image"
+
 _PROMPT = ("A clean, minimal editorial illustration of a lighthouse at dusk. "
            "No text, flat design, muted modern palette.")
 
@@ -89,6 +95,79 @@ def _probe_imagen(client: genai.Client, model: str) -> str:
         return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
 
 
+def _probe_gemini_with_http_timeout(model: str) -> None:
+    """Verify a request-level SDK timeout on the bot's image path (issue: shutdown hang).
+
+    Confirms three things the src/agents.py hardening depends on, all against
+    the model the bot actually uses:
+      1. A generous per-request timeout (config=HttpOptions(timeout=30000ms))
+         still returns image bytes — the timeout config does not break the call.
+      2. A generous client-level timeout (genai.Client(http_options=...)) also
+         returns image bytes.
+      3. The unit is MILLISECONDS: a tiny timeout (1 ms) must raise fast rather
+         than wait ~30 s. If 1 were seconds, the call would usually succeed.
+    Read-only.
+    """
+    key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+
+    print(f"\n=== request-level HttpOptions timeout on {model} (the bot's path) ===")
+
+    # 1. Per-request config timeout, generous (30 s expressed as ms).
+    try:
+        client = genai.Client(api_key=key)
+        result = client.models.generate_content(
+            model=model, contents=_PROMPT,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="1:1"),
+                http_options=types.HttpOptions(timeout=30000)))
+        got = _first_image_len(result)
+        print(f"  per-request config timeout=30000ms   "
+              f"{'OK  image=' + str(got) + ' bytes' if got else 'NO_IMAGE'}")
+    except Exception as exc:
+        print(f"  per-request config timeout=30000ms   ERROR {type(exc).__name__}: {str(exc)[:140]}")
+
+    # 2. Client-level http_options timeout, generous.
+    try:
+        client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=30000))
+        result = client.models.generate_content(
+            model=model, contents=_PROMPT,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="1:1")))
+        got = _first_image_len(result)
+        print(f"  client-level  timeout=30000ms        "
+              f"{'OK  image=' + str(got) + ' bytes' if got else 'NO_IMAGE'}")
+    except Exception as exc:
+        print(f"  client-level  timeout=30000ms        ERROR {type(exc).__name__}: {str(exc)[:140]}")
+
+    # 3. Unit proof: 1 ms must fail fast. If ms, this errors immediately; if the
+    #    unit were seconds, a 1 s budget would usually let the call through.
+    try:
+        client = genai.Client(api_key=key)
+        client.models.generate_content(
+            model=model, contents=_PROMPT,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="1:1"),
+                http_options=types.HttpOptions(timeout=1)))
+        print("  per-request timeout=1ms              UNEXPECTED_OK "
+              "(did NOT time out — unit may not be ms!)")
+    except Exception as exc:
+        print(f"  per-request timeout=1ms              EXPECTED_TIMEOUT "
+              f"{type(exc).__name__}: {str(exc)[:100]}")
+
+
+def _first_image_len(result: object) -> int:
+    for candidate in getattr(result, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        for part in (getattr(content, "parts", None) if content else None) or []:
+            inline = getattr(part, "inline_data", None)
+            if inline is not None and getattr(inline, "data", None):
+                return len(inline.data)
+    return 0
+
+
 def main() -> int:
     client = _client()
 
@@ -111,6 +190,8 @@ def main() -> int:
 
     print("\nPick any row marked OK for IMAGE_MODEL (and switch the call path if "
           "it is an Imagen model).")
+
+    _probe_gemini_with_http_timeout(IMAGE_MODEL)
     return 0
 
 
