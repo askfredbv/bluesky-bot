@@ -178,6 +178,15 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
     )
 
 
+def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
+    """Whether to generate a post image. Never for Curator (it uses a link
+    card); always when FORCE_IMAGE is set (deterministic validation); otherwise
+    at the configured probability."""
+    if mode == Mode.CURATOR:
+        return False
+    return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
+
+
 async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Settings, creds: Any, active_models: Optional[List[str]] = None) -> BroadcastPayload:
     mode = content_prep.mode
     news_items = content_prep.news_items
@@ -245,7 +254,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # deterministic end-to-end validation of the image path; otherwise the
     # configured probability applies.
     force_image = os.environ.get("FORCE_IMAGE", "").strip() == "1"
-    if mode != Mode.CURATOR and (force_image or random.random() < IMAGE_GENERATION_PROBABILITY):
+    if _should_attempt_image(mode, force_image):
         SafeLogger.info("image_requested", "Attempting post image",
                         mode=mode, forced=force_image, topic=chosen_topic)
         image_bytes = await generate_post_image(

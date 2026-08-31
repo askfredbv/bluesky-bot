@@ -50,6 +50,25 @@ async def test_mode_selection_stage_ignores_blank_force_mode(monkeypatch):
     assert payload.mode == "mentor"
 
 
+def test_should_attempt_image_never_for_curator(monkeypatch):
+    monkeypatch.setattr(main.random, "random", lambda: 0.0)  # would pass the roll
+    assert main._should_attempt_image(main.Mode.CURATOR, force_image=True) is False
+    assert main._should_attempt_image(main.Mode.CURATOR, force_image=False) is False
+
+
+def test_should_attempt_image_forced_overrides_probability(monkeypatch):
+    monkeypatch.setattr(main.random, "random", lambda: 0.99)  # would fail the roll
+    assert main._should_attempt_image(main.Mode.MENTOR, force_image=True) is True
+
+
+def test_should_attempt_image_probability_gate(monkeypatch):
+    monkeypatch.setattr(main, "IMAGE_GENERATION_PROBABILITY", 0.5)
+    monkeypatch.setattr(main.random, "random", lambda: 0.4)  # below the gate
+    assert main._should_attempt_image(main.Mode.MENTOR, force_image=False) is True
+    monkeypatch.setattr(main.random, "random", lambda: 0.6)  # above the gate
+    assert main._should_attempt_image(main.Mode.MENTOR, force_image=False) is False
+
+
 @pytest.mark.asyncio
 async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
     creds = SimpleNamespace(bluesky_username="u", bluesky_password="p")
