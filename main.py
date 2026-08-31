@@ -202,7 +202,8 @@ async def _apply_curator_fallback_image(
     except Exception as exc:
         SafeLogger.warn("curator_fallback_image_compress_failed",
                         "Fallback image could not be compressed; shipping a thumbnail-free card",
-                        topic=topic, error_type=type(exc).__name__)
+                        topic=topic, error_type=type(exc).__name__,
+                        error_msg=str(exc)[:200])
         return
     SafeLogger.info("curator_fallback_image",
                     "Article had no thumbnail; generated a fallback link-card image",
