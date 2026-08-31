@@ -357,7 +357,7 @@ def test_sync_generate_reuses_cached_client(monkeypatch):
             return DummyResponse()
 
     class DummyClient:
-        def __init__(self, api_key):
+        def __init__(self, api_key, http_options=None):
             call_count["count"] += 1
             self.models = DummyModels()
 
@@ -367,6 +367,37 @@ def test_sync_generate_reuses_cached_client(monkeypatch):
     assert _sync_generate("fake-key", "system", "prompt 1", "gemini-2.5-flash") == "ok"
     assert _sync_generate("fake-key", "system", "prompt 2", "gemini-2.5-flash") == "ok"
     assert call_count["count"] == 1
+
+
+def test_get_client_sets_request_timeout_in_milliseconds(monkeypatch):
+    """_get_client must pass a request-level HttpOptions timeout in MILLISECONDS.
+
+    Guards the shutdown-hang fix (PR #101 / Codex): without a request deadline
+    on the SDK, a truly-hung google-genai call keeps its worker thread alive and
+    blocks asyncio.run() at process exit. The unit is milliseconds (verified on
+    the runner, image-probe 2026-08-31), so the value must be the timeout
+    seconds * 1000, not the raw seconds.
+    """
+    from src.config import IMAGE_GENERATION_TIMEOUT_SECONDS
+
+    captured = {}
+
+    class DummyClient:
+        def __init__(self, api_key, http_options=None):
+            captured["api_key"] = api_key
+            captured["http_options"] = http_options
+
+    monkeypatch.setattr("src.agents._CLIENT_CACHE", {})
+    monkeypatch.setattr("src.agents.genai.Client", DummyClient)
+
+    agents._get_client("fake-key")
+
+    http_options = captured["http_options"]
+    assert http_options is not None, "client created without http_options — no request timeout"
+    expected_ms = int(IMAGE_GENERATION_TIMEOUT_SECONDS * 1000)
+    assert http_options.timeout == expected_ms
+    # Sanity: a millisecond value, not the raw seconds (30000 vs 30).
+    assert http_options.timeout > IMAGE_GENERATION_TIMEOUT_SECONDS
 
 
 def test_sync_generate_missing_key_raises_clear_error():
