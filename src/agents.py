@@ -33,6 +33,43 @@ MIN_POST_CHARS_FOR_VALIDATION: int = 40  # was 60; lowered for image-led short p
 
 _CLIENT_CACHE: Dict[str, Any] = {}
 
+# Request-level SDK timeout (milliseconds). google-genai's HttpOptions.timeout
+# is documented in ms; verified on the runner (image-probe, 2026-08-31): a
+# generous per-request/client-level timeout still returns image bytes for the
+# live IMAGE_MODEL, while a 1 ms budget fails fast — proving the unit. We reuse
+# IMAGE_GENERATION_TIMEOUT_SECONDS so the SDK's own request deadline matches the
+# asyncio.wait_for guard around generate_post_image.
+#
+# Why this matters (PR #101 / Codex review): asyncio.wait_for cancels only the
+# awaiting coroutine, NOT the worker thread from asyncio.to_thread. If a
+# synchronous google-genai call truly hangs (no underlying HTTP timeout fires),
+# the thread keeps running and asyncio.run() blocks in shutdown_default_executor()
+# at process exit — so daily_post.yml's post-`python main.py` steps (the Gist
+# state snapshot) never run. Setting the timeout on the SDK makes the call itself
+# raise, letting the thread finish. The wait_for stays as belt-and-suspenders
+# (keeps the POST resilient — ships without the image).
+_REQUEST_TIMEOUT_MS: int = int(IMAGE_GENERATION_TIMEOUT_SECONDS * 1000)
+
+
+def _get_client(api_key: str) -> Any:
+    """Return a cached google-genai client carrying a request-level timeout.
+
+    Centralises client creation so every SDK call — text posts, image
+    generation, and model discovery — inherits HttpOptions(timeout=
+    _REQUEST_TIMEOUT_MS). Without a request deadline the underlying HTTP call can
+    hang indefinitely and block interpreter shutdown (see _REQUEST_TIMEOUT_MS).
+    Cached per API key in _CLIENT_CACHE, matching the prior per-call-site caching.
+    """
+    cache_key = api_key.strip()
+    client = _CLIENT_CACHE.get(cache_key)
+    if client is None:
+        client = genai.Client(
+            api_key=cache_key,
+            http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
+        )
+        _CLIENT_CACHE[cache_key] = client
+    return client
+
 def _sanitize_mention(text: str) -> str:
     """Apply strict input shaping for untrusted mention content (Fortress v4.5)."""
     # Normalize all whitespace runs (including new lines and tabs) to single spaces.
@@ -677,14 +714,10 @@ def _sync_generate(api_key: str, system_instr: str, task: str, model: str) -> st
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("Gemini API key is missing or empty.")
 
-    cache_key = api_key.strip()
-    client = _CLIENT_CACHE.get(cache_key)
-    if client is None:
-        try:
-            client = genai.Client(api_key=cache_key)
-        except Exception as exc:
-            raise ValueError("Failed to initialize Gemini client. Verify the API key is valid.") from exc
-        _CLIENT_CACHE[cache_key] = client
+    try:
+        client = _get_client(api_key)
+    except Exception as exc:
+        raise ValueError("Failed to initialize Gemini client. Verify the API key is valid.") from exc
 
     response = client.models.generate_content(
         model=model,
@@ -703,12 +736,11 @@ def _sync_generate_image(api_key: str, prompt: str) -> Optional[bytes]:
     1:1 aspect ratio and pull the bytes from the first inline part. Returns
     None if the response carries no image (e.g. a content-filter refusal that
     comes back as text only).
+
+    The client carries a request-level SDK timeout (see _get_client) so a hung
+    image call raises instead of blocking process shutdown.
     """
-    cache_key = api_key.strip()
-    client = _CLIENT_CACHE.get(cache_key)
-    if client is None:
-        client = genai.Client(api_key=cache_key)
-        _CLIENT_CACHE[cache_key] = client
+    client = _get_client(api_key)
     result = client.models.generate_content(
         model=IMAGE_MODEL,
         contents=prompt,
@@ -731,12 +763,11 @@ def _sync_generate_text(api_key: str, system_instr: str, task: str) -> str:
 
     Uses gemini-2.5-flash (first in priority list) — fast enough for the
     auxiliary visual-prompt crafting step where latency matters more than depth.
+
+    The client carries a request-level SDK timeout (see _get_client) so a hung
+    call raises instead of blocking process shutdown.
     """
-    cache_key = api_key.strip()
-    client = _CLIENT_CACHE.get(cache_key)
-    if client is None:
-        client = genai.Client(api_key=cache_key)
-        _CLIENT_CACHE[cache_key] = client
+    client = _get_client(api_key)
     result = client.models.generate_content(
         model=GEMINI_MODEL_PRIORITY[0],
         contents=task,
@@ -845,11 +876,7 @@ async def filter_available_models(api_key: str, priority: List[str]) -> List[str
     for any reason the original list is returned unchanged.
     """
     try:
-        cache_key = api_key.strip()
-        client = _CLIENT_CACHE.get(cache_key)
-        if client is None:
-            client = genai.Client(api_key=cache_key)
-            _CLIENT_CACHE[cache_key] = client
+        client = _get_client(api_key)
         models_list = await asyncio.to_thread(client.models.list)
         available = {m.name.split("/")[-1] for m in models_list}
         filtered = [m for m in priority if m in available]
