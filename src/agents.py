@@ -15,7 +15,7 @@ from src.config import (
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY, Mode,
-    LANGUAGE_OPTIONS, IMAGE_MODEL, MAX_OUTPUT_TOKENS,
+    LANGUAGE_OPTIONS, IMAGE_MODEL, MAX_OUTPUT_TOKENS, IMAGE_GENERATION_TIMEOUT_SECONDS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
@@ -799,7 +799,19 @@ async def generate_post_image(
             "No text, no people, flat design style, muted modern palette."
         )
     try:
-        image = await asyncio.to_thread(_sync_generate_image, api_key, visual_prompt)
+        image = await asyncio.wait_for(
+            asyncio.to_thread(_sync_generate_image, api_key, visual_prompt),
+            timeout=IMAGE_GENERATION_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        # The image is optional — a stalled request must not block the post.
+        # error_msg distinguishes an SDK-originated timeout from the local deadline.
+        SafeLogger.warn(
+            "image_generation_timeout",
+            "Image generation timed out; posting without image",
+            topic=topic, timeout_s=IMAGE_GENERATION_TIMEOUT_SECONDS,
+            error_msg=str(exc)[:200])
+        return None
     except Exception as exc:
         # error_msg is the diagnostic difference between "quota exhausted",
         # "auth failed", "content filter", and "model deprecated" — all of

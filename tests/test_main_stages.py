@@ -98,6 +98,84 @@ async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
     assert payload.link_meta is None
 
 
+def _patch_gen(monkeypatch, gen_calls, returns=b"rawbytes"):
+    async def counting_generate_image(*a, **k):
+        gen_calls.append(1)
+        return returns
+    monkeypatch.setattr(main, "generate_post_image", counting_generate_image)
+    monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: True)
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_generates_when_no_thumbnail(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+    link_meta = {"title": "Big AI launch", "image_data": None}
+
+    result = await main._apply_curator_fallback_image(link_meta, "key", "Big AI launch")
+
+    assert gen == [1]                              # fallback fired
+    assert link_meta["image_data"] == b"compressed"
+    assert result == b"compressed"                 # returned for Mastodon parity
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_keeps_existing_thumbnail(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+    link_meta = {"title": "T", "image_data": b"og-thumb"}
+
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert gen == []                               # no generation when a thumbnail exists
+    assert link_meta["image_data"] == b"og-thumb"
+    assert result is None                          # nothing generated -> nothing for Mastodon
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_no_image_when_generation_empty(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen, returns=None)     # generation returns nothing
+    link_meta = {"title": "T", "image_data": None}
+
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert link_meta["image_data"] is None         # thumbnail-free card, no crash
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_survives_compression_failure(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+
+    def boom(_b, **_k):
+        raise ValueError("cannot encode LA png as JPEG")
+    monkeypatch.setattr(main, "compress_image", boom)
+    link_meta = {"title": "T", "image_data": None}
+
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert link_meta["image_data"] is None         # compression failed -> thumbnail-free, no crash
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_curator_fallback_rejects_unusable_image(monkeypatch):
+    gen: list = []
+    _patch_gen(monkeypatch, gen)
+    # compress_image returns bytes Pillow can't open (its own open-failure path),
+    # so validation must reject them rather than shipping invalid media.
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: False)
+    link_meta = {"title": "T", "image_data": None}
+
+    result = await main._apply_curator_fallback_image(link_meta, "key", "T")
+
+    assert result is None                          # unusable -> nothing shipped
+    assert link_meta["image_data"] is None         # thumbnail-free card
+
+
 @pytest.mark.asyncio
 async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(monkeypatch):
     creds = SimpleNamespace(
@@ -451,6 +529,54 @@ async def test_broadcasting_stage_curator_link_card_follows_chosen_item(monkeypa
     assert captured_link_meta["value"]["url"] == "https://chosen.example.com/article"
     # Metrics attribution reflects the chosen item's domain.
     assert payload.metrics_context["source_domain"] == "chosen.example.com"
+
+
+@pytest.mark.asyncio
+async def test_broadcasting_stage_curator_fallback_image_is_recorded_and_reaches_mastodon(monkeypatch):
+    """A generated Curator fallback image ships to Mastodon and is counted in
+    metrics (had_image), not just set as the Bluesky card thumbnail."""
+    masto_kwargs = {}
+
+    async def fake_generate(*a, **k):
+        return ["a post"], "Chosen Topic", None  # no chosen link -> keep the top card
+
+    async def fake_gen_image(*a, **k):
+        return b"rawbytes"                        # override the conftest stub
+
+    async def fake_bluesky(*a, **k):
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["at://x"])
+
+    async def fake_mastodon(access_token, api_base_url, content_list, **kwargs):
+        masto_kwargs.update(kwargs)
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=["1"])
+
+    async def no_delay(*a, **k):
+        return None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate)
+    monkeypatch.setattr(main, "generate_post_image", fake_gen_image)
+    monkeypatch.setattr(main, "compress_image", lambda b, **k: b"compressed")
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: True)
+    monkeypatch.setattr(main, "post_to_bluesky", fake_bluesky)
+    monkeypatch.setattr(main, "post_to_mastodon", fake_mastodon)
+    monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
+    monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
+
+    creds = SimpleNamespace(gemini_api_key="g", bluesky_username="u", bluesky_password="p",
+                            mastodon_access_token="t", mastodon_api_base_url="https://masto")
+    settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
+    prep = main.ContentPrepPayload(
+        mode="curator", seen_data={"links": [], "recent_topics": []},
+        news_items=[{"title": "Top", "link": "https://top.example.com/article"}],
+        link_meta={"title": "Top", "image_data": None, "url": "https://top.example.com/article"},
+        bsky_client="c", recent_posts=[], source_domain="top.example.com")
+
+    payload = await main.broadcasting_stage(prep, settings, creds)
+
+    assert masto_kwargs.get("image_bytes") == b"compressed"   # fallback attached to Mastodon
+    assert payload.metrics_context["had_image"] is True        # and counted in metrics
 
 
 @pytest.mark.asyncio
