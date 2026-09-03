@@ -90,9 +90,12 @@ def test_consensus_synergy_three_feeds_adds_double_bonus():
 def test_momentum_product_bonus():
     """Items mentioning flagship 2026 products score MOMENTUM_PRODUCT_BONUS higher."""
     from src.config import MOMENTUM_PRODUCT_BONUS
-    # Identical items from same source and age — only difference is product name in title
-    base = {'title': 'New AI Model Released', 'description': 'Details', 'link': 'https://techcrunch.com/1'}
-    flagship = {'title': 'claude 4 Released by Anthropic', 'description': 'Details', 'link': 'https://techcrunch.com/2'}
+    # Identical items from same source and age — only difference is product name
+    # in title. Deliberately NO launch word ("released"/"launches"): a momentum
+    # name + a launch word is a landmark (v4.25) and would add LANDMARK_LAUNCH_BONUS
+    # on top, which this test isolates away from. See the landmark tests below.
+    base = {'title': 'New AI Model', 'description': 'Details', 'link': 'https://techcrunch.com/1'}
+    flagship = {'title': 'claude 4 by Anthropic', 'description': 'Details', 'link': 'https://techcrunch.com/2'}
     now = datetime.now(timezone.utc)
 
     score_base = calculate_relevance_score(base, now, [])
@@ -104,14 +107,82 @@ def test_momentum_product_bonus():
 def test_momentum_product_bonus_case_insensitive():
     """Momentum matching is lowercase — title casing should not matter."""
     from src.config import MOMENTUM_PRODUCT_BONUS
-    upper_case = {'title': 'GPT-5 Announced', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/1'}
-    no_match = {'title': 'New Model Announced', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/2'}
+    # No launch word, so momentum is isolated from the landmark bonus (see above).
+    upper_case = {'title': 'GPT-5 Update', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/1'}
+    no_match = {'title': 'New Model Update', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/2'}
     now = datetime.now(timezone.utc)
 
     score_match = calculate_relevance_score(upper_case, now, [])
     score_no_match = calculate_relevance_score(no_match, now, [])
 
     assert score_match == pytest.approx(score_no_match + MOMENTUM_PRODUCT_BONUS)
+
+
+def test_landmark_detection_requires_momentum_plus_signal():
+    """is_landmark is set only for a momentum flagship that is a launch or widely covered."""
+    now = datetime.now(timezone.utc)
+
+    # momentum + launch word → landmark
+    momentum_launch = {'title': 'OpenAI launches GPT-5', 'description': 'x', 'link': 'https://techcrunch.com/1'}
+    calculate_relevance_score(momentum_launch, now, [])
+    assert momentum_launch['is_landmark'] is True
+
+    # momentum only, no launch word, single publisher → NOT landmark
+    momentum_only = {'title': 'GPT-5 impressions', 'description': 'a review', 'link': 'https://techcrunch.com/2'}
+    calculate_relevance_score(momentum_only, now, [])
+    assert momentum_only['is_landmark'] is False
+
+    # launch word only, no momentum product → NOT landmark
+    launch_only = {'title': 'Startup launches new app', 'description': 'x', 'link': 'https://techcrunch.com/3'}
+    calculate_relevance_score(launch_only, now, [])
+    assert launch_only['is_landmark'] is False
+
+
+def test_landmark_via_high_cross_publisher_consensus():
+    """A momentum flagship covered by >= N independent publishers is a landmark even without a launch word."""
+    from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS
+    now = datetime.now(timezone.utc)
+    item = {
+        'title': 'GPT-5 impressions roundup', 'description': 'analysis',
+        'link': 'https://techcrunch.com/1',
+        'cross_publisher_domains': LANDMARK_CONSENSUS_MIN_PUBLISHERS,
+    }
+    calculate_relevance_score(item, now, [])
+    assert item['is_landmark'] is True
+
+
+def test_landmark_waives_topic_diversity_penalty():
+    """A landmark launch is NOT hit by the -12 repetition penalty; a non-landmark still is."""
+    now = datetime.now(timezone.utc)
+
+    landmark = {'title': 'OpenAI launches GPT-5', 'description': 'reasoning model', 'link': 'https://techcrunch.com/1'}
+    score_fresh = calculate_relevance_score(dict(landmark), now, [])
+    score_repeat = calculate_relevance_score(dict(landmark), now, ['LLMs'])
+    assert score_repeat == pytest.approx(score_fresh)  # penalty waived
+
+    # Control: a non-landmark LLM item still eats the -12.
+    plain = {'title': 'Thoughts on LLM scaling', 'description': 'an essay', 'link': 'https://techcrunch.com/2'}
+    plain_fresh = calculate_relevance_score(dict(plain), now, [])
+    plain_repeat = calculate_relevance_score(dict(plain), now, ['LLMs'])
+    assert plain_repeat == pytest.approx(plain_fresh - 12.0)
+
+
+def test_landmark_adds_launch_bonus():
+    """The landmark bonus is exactly LANDMARK_LAUNCH_BONUS above the same item without the momentum name.
+
+    Removing the momentum name drops both the momentum bonus and landmark status,
+    so the delta is MOMENTUM_PRODUCT_BONUS + LANDMARK_LAUNCH_BONUS; the launch
+    word, source tier, and age are identical on both sides.
+    """
+    from src.config import MOMENTUM_PRODUCT_BONUS, LANDMARK_LAUNCH_BONUS
+    now = datetime.now(timezone.utc)
+    landmark = {'title': 'GPT-5 launches today', 'description': 'details', 'link': 'https://techcrunch.com/1'}
+    non_landmark = {'title': 'model launches today', 'description': 'details', 'link': 'https://techcrunch.com/2'}
+
+    score_landmark = calculate_relevance_score(landmark, now, [])
+    score_plain = calculate_relevance_score(non_landmark, now, [])
+    assert non_landmark['is_landmark'] is False
+    assert score_landmark == pytest.approx(score_plain + MOMENTUM_PRODUCT_BONUS + LANDMARK_LAUNCH_BONUS)
 
 
 def test_fetch_news_merges_source_feeds_on_duplicate_link(monkeypatch):

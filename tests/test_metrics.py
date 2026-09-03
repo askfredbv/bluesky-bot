@@ -112,6 +112,83 @@ def test_record_feed_attempt_trims_recent_attempts_to_limit():
 
 
 # ---------------------------------------------------------------------------
+# check_feed_health_alerts
+# ---------------------------------------------------------------------------
+
+def _fill_attempts(health, url, *, ok, accepted, n):
+    for _ in range(n):
+        record_feed_attempt(
+            health,
+            FeedFetchResult(url=url, ok=ok, entries_total=accepted, entries_accepted=accepted),
+        )
+
+
+def _capture_warns(monkeypatch):
+    warns = []
+    monkeypatch.setattr(
+        "src.metrics.SafeLogger.warn",
+        lambda event, msg, **kw: warns.append({"event": event, **kw}),
+    )
+    return warns
+
+
+def test_feed_health_alert_fires_on_sustained_fetch_failure(monkeypatch):
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://dead", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+
+    alerting = metrics.check_feed_health_alerts(health)
+
+    assert alerting == ["https://dead"]
+    assert warns and warns[0]["reason"] == "fetch_failing"
+
+
+def test_feed_health_alert_fires_on_200_but_no_entries(monkeypatch):
+    """A feed that responds OK but yields zero entries (the Anthropic-404-as-HTML shape)."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://empty", ok=True, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+
+    alerting = metrics.check_feed_health_alerts(health)
+
+    assert alerting == ["https://empty"]
+    assert warns[0]["reason"] == "no_accepted_entries"
+
+
+def test_feed_health_alert_silent_for_healthy_feed(monkeypatch):
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://good", ok=True, accepted=4, n=FEED_HEALTH_ALERT_WINDOW)
+
+    assert metrics.check_feed_health_alerts(health) == []
+    assert warns == []
+
+
+def test_feed_health_alert_needs_a_track_record(monkeypatch):
+    """Fewer than the window's worth of attempts must not alert, even if all failed."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://new", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW - 1)
+
+    assert metrics.check_feed_health_alerts(health) == []
+
+
+def test_feed_health_alert_uses_only_the_recent_window(monkeypatch):
+    """A feed that failed in the past but has recovered in the last window must not alert."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://recovered", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+    _fill_attempts(health, "https://recovered", ok=True, accepted=3, n=FEED_HEALTH_ALERT_WINDOW)
+
+    assert metrics.check_feed_health_alerts(health) == []
+
+
+# ---------------------------------------------------------------------------
 # load_feed_health / save_feed_health
 # ---------------------------------------------------------------------------
 

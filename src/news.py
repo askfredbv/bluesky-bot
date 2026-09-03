@@ -29,6 +29,9 @@ from src.config import (
     FEED_SUMMARY_MAX_CHARS,
     GROUNDBREAKING_KEYWORDS,
     HIDDEN_GEM_SOURCES,
+    LANDMARK_CONSENSUS_MIN_PUBLISHERS,
+    LANDMARK_LAUNCH_BONUS,
+    LAUNCH_SIGNAL_KEYWORDS,
     MOMENTUM_PRODUCTS,
     MOMENTUM_PRODUCT_BONUS,
     PRODUCT_KEYWORDS,
@@ -39,6 +42,7 @@ from src.config import (
 from src.logger import SafeLogger
 from src.metrics import (
     FeedFetchResult,
+    check_feed_health_alerts,
     load_feed_health,
     record_feed_attempt,
     save_feed_health,
@@ -141,15 +145,33 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     age_hours = (datetime.now(timezone.utc) - pub_date).total_seconds() / 3600
     score -= (age_hours * 0.5)
     
-    # 5. Topic Diversity Penalty
+    # Landmark detection (v4.25): a flagship launch overrides the repetition
+    # penalty below and earns a bonus. Anchored to a named momentum product so a
+    # routine topic repeat never qualifies — either the flagship is framed as a
+    # launch, or many independent publishers are covering it at once. Fixes the
+    # class of miss where an obvious model launch scored below lighter off-topic
+    # news because we had posted about its topic the run before.
+    is_momentum = any(p in text for p in MOMENTUM_PRODUCTS)
+    has_launch_signal = any(kw in text for kw in LAUNCH_SIGNAL_KEYWORDS)
+    publisher_count = item.get('cross_publisher_domains', 1)
+    is_landmark = is_momentum and (
+        has_launch_signal or publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
+    )
+    item['is_landmark'] = is_landmark
+
+    # 5. Topic Diversity Penalty — waived for landmarks.
     item_topic = "General"
     for topic, kws in TOPIC_MAP.items():
         if any(kw in text for kw in kws):
             item_topic = topic
             break
-    
-    if item_topic in recent_topics:
+
+    if item_topic in recent_topics and not is_landmark:
         score -= 12.0 # Heavy "Discernment" penalty for repetition
+
+    # 5b. Landmark launch bonus.
+    if is_landmark:
+        score += LANDMARK_LAUNCH_BONUS
 
     # 6. Consensus Synergy: reward stories covered by multiple independent
     # sources. feed_count = the same URL across feeds; cross_publisher_domains =
@@ -157,7 +179,6 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # annotate_cross_publisher_consensus). Take the stronger of the two signals,
     # capped so a very widely-covered story does not dominate the ranking.
     feed_count = len(item.get('source_feeds', []))
-    publisher_count = item.get('cross_publisher_domains', 1)
     consensus_sources = min(max(feed_count, publisher_count),
                             _CROSS_PUBLISHER_MULTIPLIER_CAP + 1)
     if consensus_sources > 1:
@@ -291,6 +312,10 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         for result in results:
             record_feed_attempt(feed_health, result)
         save_feed_health(feed_health)
+        # Surface any feed that has been silently failing across the window
+        # (see check_feed_health_alerts) — a dead feed like the removed Anthropic
+        # news.rss otherwise stays invisible until someone notices missing coverage.
+        check_feed_health_alerts(feed_health)
     except Exception as e:
         SafeLogger.warn(
             "feed_health_record_failed",

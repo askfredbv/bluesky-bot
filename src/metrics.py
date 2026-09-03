@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from src.config import (
+    FEED_HEALTH_ALERT_WINDOW,
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
     GROWTH_FILE,
@@ -147,6 +148,48 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
     # Trim from the left so the most recent survive.
     if len(attempts) > FEED_HEALTH_RECENT_ATTEMPTS_LIMIT:
         del attempts[:-FEED_HEALTH_RECENT_ATTEMPTS_LIMIT]
+
+
+def check_feed_health_alerts(feed_health: Dict[str, Any]) -> List[str]:
+    """Warn on feeds that have been unhealthy across the recent window.
+
+    Two failure shapes, both read from the tail of each feed's `recent_attempts`:
+      - **fetch_failing**: the last FEED_HEALTH_ALERT_WINDOW attempts were all
+        `ok=False` (timeout / TLS / SSRF-block / DNS).
+      - **no_accepted_entries**: those attempts accepted zero entries — a feed
+        that responds but yields nothing (a 404-served-as-HTML page, a moved
+        feed, or a format change). This is how a dead feed like the Anthropic
+        news.rss 404 surfaces, since a 404 is a completed HTTP request
+        (`ok=True`) that simply parses to zero entries.
+
+    Only alerts once a feed has at least FEED_HEALTH_ALERT_WINDOW attempts on
+    record, so a newly added feed does not warn before it has a track record.
+    Emits one WARN per alerting feed and returns their URLs (for tests/callers).
+    """
+    alerting: List[str] = []
+    for url, entry in (feed_health.get("feeds") or {}).items():
+        attempts = entry.get("recent_attempts") or []
+        if len(attempts) < FEED_HEALTH_ALERT_WINDOW:
+            continue
+        window = attempts[-FEED_HEALTH_ALERT_WINDOW:]
+        all_failed = all(not a.get("ok", False) for a in window)
+        none_accepted = all((a.get("accepted") or 0) == 0 for a in window)
+        if not (all_failed or none_accepted):
+            continue
+        # all_failed implies none_accepted (a failed fetch accepts nothing), so
+        # report the more specific transport failure when it applies.
+        reason = "fetch_failing" if all_failed else "no_accepted_entries"
+        SafeLogger.warn(
+            "feed_persistently_unhealthy",
+            "Feed unhealthy across the recent window; check the URL is still live",
+            url=url,
+            reason=reason,
+            window=FEED_HEALTH_ALERT_WINDOW,
+            last_ok_at=entry.get("last_ok_at"),
+            last_accepted_at=entry.get("last_accepted_at"),
+        )
+        alerting.append(url)
+    return alerting
 
 
 # ---------------------------------------------------------------------------
