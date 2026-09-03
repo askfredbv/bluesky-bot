@@ -119,31 +119,40 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
                 if _titles_cluster(tokens_i, tokens_j):
                     domains.add(domain_j)
         item["cross_publisher_domains"] = max(1, len(domains))
-# How close (in characters) a launch word must sit to a named flagship for the
-# launch to count as being *about* that flagship. Titles+blurbs are short, so a
-# generous-but-finite window ties the two together without demanding adjacency.
-_LANDMARK_PROXIMITY_CHARS: int = 60
+# Landmark launch *construction*: a launch verb governing a named flagship,
+# within a few words, in either order — so the launch is about the flagship, not
+# an unrelated launch that merely mentions it as context. Raw character distance
+# was insufficient (Codex #106): "Acme launches a migration tool ... from GPT-5"
+# has the words near each other but GPT-5 is the migration source, not the thing
+# launched. Requiring launch-verb → flagship (or flagship → launch-verb) with at
+# most a few intervening words captures "OpenAI launches GPT-5" / "GPT-5 is now
+# available" while rejecting that shape.
+#
+# Built once at import from the config lists:
+#   - launch stems get a \w* tail so "launch" matches "launches"/"launched";
+#   - flagship names get a [\w.]* tail so "gemini 3" matches "gemini 3.8"/"...-pro";
+#   - the gap allows up to 3 intervening words (lazy) on either side.
+_LANDMARK_MAX_GAP_WORDS: int = 3
+_LAUNCH_ALT = "|".join(re.escape(k) + r"\w*" for k in LAUNCH_SIGNAL_KEYWORDS)
+_FLAGSHIP_ALT = "|".join(re.escape(p) + r"[\w.]*" for p in MOMENTUM_PRODUCTS)
+_LANDMARK_GAP = r"(?:\s+\S+){0,%d}?\s+" % _LANDMARK_MAX_GAP_WORDS
+_FLAGSHIP_LAUNCH_RE = re.compile(
+    rf"(?:{_LAUNCH_ALT}){_LANDMARK_GAP}(?:{_FLAGSHIP_ALT})"
+    rf"|(?:{_FLAGSHIP_ALT}){_LANDMARK_GAP}(?:{_LAUNCH_ALT})"
+)
 
 
 def _flagship_launch_nearby(text: str) -> bool:
-    """True if a LAUNCH_SIGNAL_KEYWORD sits within _LANDMARK_PROXIMITY_CHARS of a
-    named MOMENTUM_PRODUCTS flagship in `text` (already lowercased).
+    """True if `text` (already lowercased) contains a launch construction about a
+    named flagship — a launch verb governing a MOMENTUM_PRODUCTS flagship within a
+    few words, in either order.
 
-    Ties the launch signal to the flagship so an unrelated launch word elsewhere
-    in the same blurb does not manufacture a landmark (Codex #106): "OpenAI
-    launches GPT-5" qualifies; "GPT-5 is great; separately, Acme launches a
-    toaster" does not.
+    Ties the launch to the flagship so an unrelated launch that merely mentions
+    the flagship does not manufacture a landmark (Codex #106): "OpenAI launches
+    GPT-5" and "GPT-5 is now available" qualify; "Acme launches a migration tool
+    for teams moving projects from GPT-5" does not.
     """
-    for product in MOMENTUM_PRODUCTS:
-        start = text.find(product)
-        while start != -1:
-            lo = max(0, start - _LANDMARK_PROXIMITY_CHARS)
-            hi = start + len(product) + _LANDMARK_PROXIMITY_CHARS
-            window = text[lo:hi]
-            if any(kw in window for kw in LAUNCH_SIGNAL_KEYWORDS):
-                return True
-            start = text.find(product, start + 1)
-    return False
+    return bool(_FLAGSHIP_LAUNCH_RE.search(text))
 
 
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:

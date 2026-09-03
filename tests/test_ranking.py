@@ -157,6 +157,35 @@ def test_landmark_launch_must_be_near_the_flagship():
     assert near['is_landmark'] is True
 
 
+def test_landmark_requires_launch_to_govern_the_flagship():
+    """The launch verb must govern the flagship, not merely sit near it (Codex #106).
+
+    'Acme launches a migration tool ... from GPT-5' has launch + flagship close
+    together, but GPT-5 is the migration *source*, not the launched product."""
+    now = datetime.now(timezone.utc)
+    unrelated = {
+        'title': 'Acme launches a migration tool for teams moving projects from GPT-5',
+        'description': 'x', 'link': 'https://techcrunch.com/1',
+    }
+    calculate_relevance_score(unrelated, now, [])
+    assert unrelated['is_landmark'] is False
+
+
+def test_landmark_construction_both_orders_and_versioned():
+    """Launch-verb→flagship and flagship→launch-verb both qualify, incl. version suffixes."""
+    now = datetime.now(timezone.utc)
+    cases = [
+        'OpenAI launches GPT-5',              # verb → flagship
+        'GPT-5 is now available',             # flagship → verb (multi-word signal)
+        'Google unveils Gemini 3.8 today',    # version suffix on the flagship
+        'Introducing GPT-5 to everyone',      # 'introduc' stem → flagship
+    ]
+    for title in cases:
+        item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/x'}
+        calculate_relevance_score(item, now, [])
+        assert item['is_landmark'] is True, title
+
+
 def test_landmark_via_high_cross_publisher_consensus():
     """A momentum flagship covered by >= N independent publishers is a landmark even without a launch word."""
     from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS
