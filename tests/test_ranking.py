@@ -138,6 +138,25 @@ def test_landmark_detection_requires_momentum_plus_signal():
     assert launch_only['is_landmark'] is False
 
 
+def test_landmark_launch_must_be_near_the_flagship():
+    """A launch word far from the flagship (an unrelated launch in the same blurb)
+    must NOT manufacture a landmark — the launch has to be about the flagship."""
+    now = datetime.now(timezone.utc)
+    # "gpt-5" and "launches" are >60 chars apart and about different things.
+    far = {
+        'title': 'GPT-5 remains the model to beat in most evaluations this year',
+        'description': 'In entirely separate news, a small hardware startup launches a kitchen gadget.',
+        'link': 'https://techcrunch.com/1',
+    }
+    calculate_relevance_score(far, now, [])
+    assert far['is_landmark'] is False
+
+    # Same words, now adjacent → about the flagship → landmark.
+    near = {'title': 'OpenAI launches GPT-5', 'description': 'x', 'link': 'https://techcrunch.com/2'}
+    calculate_relevance_score(near, now, [])
+    assert near['is_landmark'] is True
+
+
 def test_landmark_via_high_cross_publisher_consensus():
     """A momentum flagship covered by >= N independent publishers is a landmark even without a launch word."""
     from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS

@@ -73,9 +73,13 @@ FEED_HEALTH_RECENT_ATTEMPTS_LIMIT: int = 28  # ~2 weeks at 2 runs/day
 # failed — or 200s but yields nothing (a 404-as-HTML page, moved/format-changed
 # feed) — across the last N attempts, so the next dead feed is caught by a log
 # signal rather than by noticing missing coverage weeks later (as happened with
-# the Anthropic news.rss 404). ~3 days at 2 runs/day; only alerts once a feed has
-# this many attempts on record, so a freshly added feed does not warn early.
-FEED_HEALTH_ALERT_WINDOW: int = 6
+# the Anthropic news.rss 404). Feeds are fetched ONCE per day — only the morning
+# Curator run calls fetch_news; the afternoon Mentor run does not — so N attempts
+# ≈ N days (Codex #106, correcting an earlier "2 runs/day" assumption). 3 keeps
+# the signal to ~3 consecutive dead days (a real outage recovers sooner) while
+# not crying wolf on a one-off blip. Only alerts once a feed has this many
+# attempts on record, so a freshly added feed does not warn for its first 3 days.
+FEED_HEALTH_ALERT_WINDOW: int = 3
 
 # Post metrics telemetry (Phase 1 Step 4-5)
 POST_METRICS_CONTENT_PREVIEW_MAX_CHARS: int = 80

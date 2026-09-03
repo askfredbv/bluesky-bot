@@ -119,6 +119,33 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
                 if _titles_cluster(tokens_i, tokens_j):
                     domains.add(domain_j)
         item["cross_publisher_domains"] = max(1, len(domains))
+# How close (in characters) a launch word must sit to a named flagship for the
+# launch to count as being *about* that flagship. Titles+blurbs are short, so a
+# generous-but-finite window ties the two together without demanding adjacency.
+_LANDMARK_PROXIMITY_CHARS: int = 60
+
+
+def _flagship_launch_nearby(text: str) -> bool:
+    """True if a LAUNCH_SIGNAL_KEYWORD sits within _LANDMARK_PROXIMITY_CHARS of a
+    named MOMENTUM_PRODUCTS flagship in `text` (already lowercased).
+
+    Ties the launch signal to the flagship so an unrelated launch word elsewhere
+    in the same blurb does not manufacture a landmark (Codex #106): "OpenAI
+    launches GPT-5" qualifies; "GPT-5 is great; separately, Acme launches a
+    toaster" does not.
+    """
+    for product in MOMENTUM_PRODUCTS:
+        start = text.find(product)
+        while start != -1:
+            lo = max(0, start - _LANDMARK_PROXIMITY_CHARS)
+            hi = start + len(product) + _LANDMARK_PROXIMITY_CHARS
+            window = text[lo:hi]
+            if any(kw in window for kw in LAUNCH_SIGNAL_KEYWORDS):
+                return True
+            start = text.find(product, start + 1)
+    return False
+
+
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
     score = 0.0
@@ -147,15 +174,16 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     
     # Landmark detection (v4.25): a flagship launch overrides the repetition
     # penalty below and earns a bonus. Anchored to a named momentum product so a
-    # routine topic repeat never qualifies — either the flagship is framed as a
-    # launch, or many independent publishers are covering it at once. Fixes the
-    # class of miss where an obvious model launch scored below lighter off-topic
-    # news because we had posted about its topic the run before.
+    # routine topic repeat never qualifies. Two shapes qualify:
+    #   - the launch signal sits NEAR the flagship (_flagship_launch_nearby), so
+    #     "OpenAI launches GPT-5" fires but "GPT-5 is great; Acme launches a
+    #     toaster" does not — the launch must be about the flagship (Codex #106);
+    #   - the flagship is named AND many independent publishers cover it at once
+    #     (a big flagship story even without an explicit launch word).
     is_momentum = any(p in text for p in MOMENTUM_PRODUCTS)
-    has_launch_signal = any(kw in text for kw in LAUNCH_SIGNAL_KEYWORDS)
     publisher_count = item.get('cross_publisher_domains', 1)
-    is_landmark = is_momentum and (
-        has_launch_signal or publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
+    is_landmark = _flagship_launch_nearby(text) or (
+        is_momentum and publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
     )
     item['is_landmark'] = is_landmark
 
