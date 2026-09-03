@@ -315,7 +315,8 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         # Surface any feed that has been silently failing across the window
         # (see check_feed_health_alerts) — a dead feed like the removed Anthropic
         # news.rss otherwise stays invisible until someone notices missing coverage.
-        check_feed_health_alerts(feed_health)
+        # Scope to RSS_FEEDS so a just-removed feed's stale failures don't alert.
+        check_feed_health_alerts(feed_health, RSS_FEEDS)
     except Exception as e:
         SafeLogger.warn(
             "feed_health_record_failed",
