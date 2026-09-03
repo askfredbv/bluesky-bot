@@ -201,6 +201,21 @@ def test_landmark_launch_stems_do_not_match_mid_word():
         assert item['is_landmark'] is False, title
 
 
+def test_landmark_short_flagship_names_do_not_match_unrelated_identifiers():
+    """The short flagship name 'o3' must not match inside 'O365'/'O3DE' (Codex #106)."""
+    now = datetime.now(timezone.utc)
+    for title in ('Microsoft O365 now available to all',
+                  'O3DE engine launches a new renderer'):
+        item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/1'}
+        calculate_relevance_score(item, now, [])
+        assert item['is_landmark'] is False, title
+
+    # A genuine o3 launch still qualifies.
+    real = {'title': 'OpenAI o3 launches today', 'description': '', 'link': 'https://techcrunch.com/2'}
+    calculate_relevance_score(real, now, [])
+    assert real['is_landmark'] is True
+
+
 def test_landmark_does_not_cross_the_title_description_boundary():
     """A launch in the description must not attach to a flagship in an
     unpunctuated title (Codex #106)."""

@@ -143,7 +143,10 @@ _LANDMARK_MAX_GAP_WORDS: int = 3
 # mid-word: without it "release\w*" fires inside "unreleased" and "launch\w*"
 # inside "prelaunch" — stories about a model that has NOT launched (Codex #106).
 _LAUNCH_ALT = "|".join(r"\b" + re.escape(k) + r"\w*" for k in LAUNCH_SIGNAL_KEYWORDS)
-_FLAGSHIP_ALT = "|".join(r"\b" + re.escape(p) + r"[\w.]*" for p in MOMENTUM_PRODUCTS)
+# The flagship tail allows ONLY a dot-number version suffix ("gemini 3" -> "gemini
+# 3.8"), not arbitrary word chars — a bare "[\w.]*" let the short name "o3" swallow
+# "o365"/"o3de" and manufacture a landmark for unrelated products (Codex #106).
+_FLAGSHIP_ALT = "|".join(r"\b" + re.escape(p) + r"(?:\.\d+)*" for p in MOMENTUM_PRODUCTS)
 _LANDMARK_GAP = r"(?:\W+\w+){0,%d}?\W+" % _LANDMARK_MAX_GAP_WORDS
 _FLAGSHIP_LAUNCH_RE = re.compile(
     rf"(?:{_LAUNCH_ALT}){_LANDMARK_GAP}(?:{_FLAGSHIP_ALT})"
