@@ -181,6 +181,8 @@ def test_landmark_construction_both_orders_and_versioned():
         'Introducing GPT-5 to everyone',      # 'introduc' stem → flagship
         'Introducing: GPT-5',                 # punctuation between verb and flagship
         'GPT-5, released today by OpenAI',     # comma glued to the flagship
+        'Gemini 3.8 launches today',           # reverse order + decimal version (must not split on the dot)
+        'Gemini 3.5 is now available',         # decimal version, flagship → verb
     ]
     for title in cases:
         item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/x'}

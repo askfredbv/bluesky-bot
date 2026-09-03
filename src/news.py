@@ -147,8 +147,11 @@ _FLAGSHIP_LAUNCH_RE = re.compile(
     rf"|(?:{_FLAGSHIP_ALT}){_LANDMARK_GAP}(?:{_LAUNCH_ALT})"
 )
 # Clause boundaries: sentence terminators. Deliberately NOT comma/colon — those
-# are intra-clause connectors ("Introducing: GPT-5", "GPT-5, released").
-_CLAUSE_SPLIT_RE = re.compile(r"[.!?;]+")
+# are intra-clause connectors ("Introducing: GPT-5", "GPT-5, released"). A period
+# is a boundary UNLESS it sits between digits — a decimal version like "3.8" must
+# stay intact, else "Gemini 3.8 launches today" would split into "gemini 3" /
+# "8 launches today" and miss the launch (Codex #106).
+_CLAUSE_SPLIT_RE = re.compile(r"[!?;]+|(?<!\d)\.|\.(?!\d)")
 
 
 def _flagship_launch_nearby(text: str) -> bool:
