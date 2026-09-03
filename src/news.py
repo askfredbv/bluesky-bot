@@ -131,28 +131,37 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
 # Built once at import from the config lists:
 #   - launch stems get a \w* tail so "launch" matches "launches"/"launched";
 #   - flagship names get a [\w.]* tail so "gemini 3" matches "gemini 3.8"/"...-pro";
-#   - the gap allows up to 3 intervening words (lazy) on either side.
+#   - the gap allows up to 3 intervening WORDS (lazy) on either side, and the
+#     separators are \W (any non-word char) rather than only whitespace, so
+#     punctuation between the verb and the flagship is tolerated — "Introducing:
+#     GPT-5" and "GPT-5, released today" match (Codex #106).
+# The match is applied per CLAUSE (text is split on sentence terminators first),
+# so a launch in the next sentence cannot reach back to a flagship in this one —
+# "GPT-5 tops the charts. A startup released a toaster." is not a landmark.
 _LANDMARK_MAX_GAP_WORDS: int = 3
 _LAUNCH_ALT = "|".join(re.escape(k) + r"\w*" for k in LAUNCH_SIGNAL_KEYWORDS)
 _FLAGSHIP_ALT = "|".join(re.escape(p) + r"[\w.]*" for p in MOMENTUM_PRODUCTS)
-_LANDMARK_GAP = r"(?:\s+\S+){0,%d}?\s+" % _LANDMARK_MAX_GAP_WORDS
+_LANDMARK_GAP = r"(?:\W+\w+){0,%d}?\W+" % _LANDMARK_MAX_GAP_WORDS
 _FLAGSHIP_LAUNCH_RE = re.compile(
     rf"(?:{_LAUNCH_ALT}){_LANDMARK_GAP}(?:{_FLAGSHIP_ALT})"
     rf"|(?:{_FLAGSHIP_ALT}){_LANDMARK_GAP}(?:{_LAUNCH_ALT})"
 )
+# Clause boundaries: sentence terminators. Deliberately NOT comma/colon — those
+# are intra-clause connectors ("Introducing: GPT-5", "GPT-5, released").
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;]+")
 
 
 def _flagship_launch_nearby(text: str) -> bool:
-    """True if `text` (already lowercased) contains a launch construction about a
-    named flagship — a launch verb governing a MOMENTUM_PRODUCTS flagship within a
-    few words, in either order.
+    """True if any clause of `text` (already lowercased) contains a launch
+    construction about a named flagship — a launch verb governing a
+    MOMENTUM_PRODUCTS flagship within a few words, in either order.
 
     Ties the launch to the flagship so an unrelated launch that merely mentions
     the flagship does not manufacture a landmark (Codex #106): "OpenAI launches
-    GPT-5" and "GPT-5 is now available" qualify; "Acme launches a migration tool
-    for teams moving projects from GPT-5" does not.
+    GPT-5", "GPT-5 is now available", "Introducing: GPT-5" qualify; "Acme launches
+    a migration tool ... from GPT-5" and a launch in a separate sentence do not.
     """
-    return bool(_FLAGSHIP_LAUNCH_RE.search(text))
+    return any(_FLAGSHIP_LAUNCH_RE.search(clause) for clause in _CLAUSE_SPLIT_RE.split(text))
 
 
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:

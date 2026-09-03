@@ -179,11 +179,25 @@ def test_landmark_construction_both_orders_and_versioned():
         'GPT-5 is now available',             # flagship → verb (multi-word signal)
         'Google unveils Gemini 3.8 today',    # version suffix on the flagship
         'Introducing GPT-5 to everyone',      # 'introduc' stem → flagship
+        'Introducing: GPT-5',                 # punctuation between verb and flagship
+        'GPT-5, released today by OpenAI',     # comma glued to the flagship
     ]
     for title in cases:
         item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/x'}
         calculate_relevance_score(item, now, [])
         assert item['is_landmark'] is True, title
+
+
+def test_landmark_does_not_cross_a_sentence_boundary():
+    """A launch in a separate sentence must not attach to a flagship in another (Codex #106)."""
+    now = datetime.now(timezone.utc)
+    item = {
+        'title': 'GPT-5 tops the benchmarks this quarter',
+        'description': 'In unrelated news, a hardware startup released a new toaster.',
+        'link': 'https://techcrunch.com/1',
+    }
+    calculate_relevance_score(item, now, [])
+    assert item['is_landmark'] is False
 
 
 def test_landmark_via_high_cross_publisher_consensus():
