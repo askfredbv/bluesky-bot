@@ -190,6 +190,30 @@ def test_landmark_construction_both_orders_and_versioned():
         assert item['is_landmark'] is True, title
 
 
+def test_landmark_launch_stems_do_not_match_mid_word():
+    """Negative-prefix words must not trip the launch detector (Codex #106):
+    'unreleased' / 'prelaunch' describe a model that has NOT launched."""
+    now = datetime.now(timezone.utc)
+    for title in ('Unreleased GPT-5 benchmark results leak',
+                  'Prelaunch GPT-5 testing begins at OpenAI'):
+        item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/1'}
+        calculate_relevance_score(item, now, [])
+        assert item['is_landmark'] is False, title
+
+
+def test_landmark_does_not_cross_the_title_description_boundary():
+    """A launch in the description must not attach to a flagship in an
+    unpunctuated title (Codex #106)."""
+    now = datetime.now(timezone.utc)
+    item = {
+        'title': 'GPT-5 review',                       # no trailing punctuation
+        'description': 'Acme launches a migration tool for teams',
+        'link': 'https://techcrunch.com/1',
+    }
+    calculate_relevance_score(item, now, [])
+    assert item['is_landmark'] is False
+
+
 def test_landmark_does_not_cross_a_sentence_boundary():
     """A launch in a separate sentence must not attach to a flagship in another (Codex #106)."""
     now = datetime.now(timezone.utc)

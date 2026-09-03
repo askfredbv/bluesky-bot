@@ -139,8 +139,11 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
 # so a launch in the next sentence cannot reach back to a flagship in this one —
 # "GPT-5 tops the charts. A startup released a toaster." is not a landmark.
 _LANDMARK_MAX_GAP_WORDS: int = 3
-_LAUNCH_ALT = "|".join(re.escape(k) + r"\w*" for k in LAUNCH_SIGNAL_KEYWORDS)
-_FLAGSHIP_ALT = "|".join(re.escape(p) + r"[\w.]*" for p in MOMENTUM_PRODUCTS)
+# \b anchors each alternative to a word boundary so a stem does not match
+# mid-word: without it "release\w*" fires inside "unreleased" and "launch\w*"
+# inside "prelaunch" — stories about a model that has NOT launched (Codex #106).
+_LAUNCH_ALT = "|".join(r"\b" + re.escape(k) + r"\w*" for k in LAUNCH_SIGNAL_KEYWORDS)
+_FLAGSHIP_ALT = "|".join(r"\b" + re.escape(p) + r"[\w.]*" for p in MOMENTUM_PRODUCTS)
 _LANDMARK_GAP = r"(?:\W+\w+){0,%d}?\W+" % _LANDMARK_MAX_GAP_WORDS
 _FLAGSHIP_LAUNCH_RE = re.compile(
     rf"(?:{_LAUNCH_ALT}){_LANDMARK_GAP}(?:{_FLAGSHIP_ALT})"
@@ -196,14 +199,18 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # Landmark detection (v4.25): a flagship launch overrides the repetition
     # penalty below and earns a bonus. Anchored to a named momentum product so a
     # routine topic repeat never qualifies. Two shapes qualify:
-    #   - the launch signal sits NEAR the flagship (_flagship_launch_nearby), so
-    #     "OpenAI launches GPT-5" fires but "GPT-5 is great; Acme launches a
-    #     toaster" does not — the launch must be about the flagship (Codex #106);
+    #   - a launch CONSTRUCTION about the flagship (_flagship_launch_nearby), so
+    #     "OpenAI launches GPT-5" fires but "GPT-5 review ... Acme launches a
+    #     toaster" does not — the launch must govern the flagship (Codex #106);
     #   - the flagship is named AND many independent publishers cover it at once
     #     (a big flagship story even without an explicit launch word).
+    # The launch check runs on title + description joined by a period so the two
+    # metadata fields are separate clauses — a launch in the description must not
+    # attach to a flagship in an unpunctuated title (Codex #106).
+    landmark_text = f"{item['title']}. {item['description']}".lower()
     is_momentum = any(p in text for p in MOMENTUM_PRODUCTS)
     publisher_count = item.get('cross_publisher_domains', 1)
-    is_landmark = _flagship_launch_nearby(text) or (
+    is_landmark = _flagship_launch_nearby(landmark_text) or (
         is_momentum and publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
     )
     item['is_landmark'] = is_landmark
