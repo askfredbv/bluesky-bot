@@ -195,6 +195,19 @@ async def fetch_single_feed(
                             "Feed fetch failed or was blocked (see prior log for cause)", url=url)
             return FeedFetchResult(url=url, ok=False, entries_total=0,
                                    entries_accepted=0, error_type="FetchFailedOrBlocked")
+        # A non-2xx response is a failed fetch, not a successful one that happens
+        # to contain an error page. Without this check a feed returning 404 or 500
+        # still counted as ok=True (the HTML body just parses to zero entries), so
+        # last_ok_at refreshed every run and the "broken" health gate could never
+        # fire — a dead feed would surface only as "stale" days later, or not at
+        # all if the error page carried parseable entries.
+        if not (200 <= response.status_code < 300):
+            SafeLogger.warn("feed_fetch_http_error",
+                            "Feed returned a non-success HTTP status",
+                            url=url, status_code=response.status_code)
+            return FeedFetchResult(url=url, ok=False, entries_total=0,
+                                   entries_accepted=0,
+                                   error_type=f"HTTP{response.status_code}")
         feed = feedparser.parse(response.text)
         bozo_error_type: Optional[str] = None
         if feed.bozo:
