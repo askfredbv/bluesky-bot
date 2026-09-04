@@ -41,7 +41,7 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ## §2 — Open issues (fix when convenient)
 
-### Curator topic memory records the wrong topic, and records it even when nothing shipped (surfaced 2026-09-04)
+### Post-dependent state is recorded even when nothing was posted — and Curator records the wrong topic (surfaced 2026-09-04)
 
 `persistence_stage` appends `news_items[0]['detected_topic']` to `recent_topics` (`main.py`, Curator branch). But the Curator is explicitly allowed to write about a *non-top* item — that is the whole point of the `chosen_link` contract added in #51, and `broadcasting_stage` already realigns the link card and `source_domain` to the chosen item. Persistence was never updated to match.
 
@@ -49,9 +49,17 @@ Consequences, both wrong and in opposite directions:
 - The topic actually **posted** is not recorded, so it is not penalised on the next run — the diversity memory under-counts what we really published.
 - A topic that was merely **offered** is recorded, so an unrelated later story in that bucket eats the −12 penalty for a post that never happened. This is a *false* penalty, and it is one of the mechanisms behind "an obvious launch got buried" — the symptom that prompted the v4.25.0 coverage work.
 
-**Second, independent half — the topic is recorded even when no post went live.** `main()` calls `persistence_stage` unconditionally, and `AutomationPayload` drops the `bsky_sent_uris` / `mastodon_sent_ids` that `BroadcastPayload` carries. So a run where the model chain exhausted (`broadcast_skipped_no_content`) or where both platform broadcasts failed still appends a topic to `recent_topics` — and a later story eats −12 for a post that never happened. This affects *every* Curator run that fails to deliver, not just non-top picks.
+**Second, independent half — post-dependent state is written even when no post went live, across ALL three cooldowns.** `main()` calls `persistence_stage` unconditionally and `AutomationPayload` drops the `bsky_sent_uris` / `mastodon_sent_ids` that `BroadcastPayload` carries, so a run where the model chain exhausted (`broadcast_skipped_no_content`) or where both broadcasts failed still writes:
 
-Fix, one change covering both halves: thread `chosen_link` **and** delivery status into `AutomationPayload` / `persistence_stage`; persist the *chosen* item's `detected_topic`, and only when at least one platform actually delivered. Regression tests for both paths: a non-top pick records the chosen topic, and a run with no successful delivery records nothing.
+| State | Consequence of a phantom write |
+| :--- | :--- |
+| `recent_topics` (Curator) | a later story eats −12 for a post that never happened |
+| `recent_mode_topics` (Mentor/Strategist) | a topic is suppressed from the next runs' picker though it never ran |
+| `pioneer_recent` | a Pioneer entry burns its multi-week cooldown without ever being posted |
+
+The Pioneer case is the clearest tell: the block is commented *"only when a pioneer post actually fired"* and does not check that it fired. Pioneer is the scarcest content the bot has (~2–3/week from a curated corpus), so silently retiring entries is the most costly of the three.
+
+Fix, one change covering both halves: thread `chosen_link` **and** delivery status into `AutomationPayload` / `persistence_stage`; persist the *chosen* item's `detected_topic`, and gate **every** post-dependent update — `recent_topics`, `recent_mode_topics`, `pioneer_recent` — on at least one platform having delivered. Regression tests: a non-top pick records the chosen topic, and a no-delivery run records nothing in any of the three.
 
 Open question while in there: `seen_data["links"]` is updated on the same unconditional path, so a failed run also marks its articles as seen and they are never reconsidered. That may be deliberate (avoid re-offering stale items) or the same bug in a second place — decide explicitly rather than by accident.
 
@@ -195,6 +203,7 @@ The diagnostic discipline ("never log error_type alone, always include error_msg
 
   **The direction instead**, when this is worth doing:
   - **Refuse** any regex for model names or importance keywords, and keyword-based consensus clustering. Dead ends, evidenced.
+  - **Build the shortlist from a penalty-free first-pass score.** `calculate_relevance_score` applies the −12 *before* `ranked[:limit]` (`src/news.py`), so a shortlist taken from the current ranked slice sits downstream of the very defect the pass exists to correct — a penalised flagship launch can fall outside it and never be scored at all. Rank the shortlist on merit only, or explicitly re-include penalised candidates, before any diversity is applied.
   - **Build** a cheap-LLM pass over the top ~15–20 candidates: classify topic, detect genuine launches, assign a 1–10 impact score. Fractions of a cent per run. The bot already calls Gemini to *write* posts; it just never calls anything to *judge* them. This deletes the regex/alias/domain-matching surface rather than patching it.
   - **Selection is probably the real lever, not scoring.** Only the top 5 reach the Curator, which is told to pick "the most interesting so-what" and can skip a top-ranked launch entirely. Consider handing it 7–10 items deduplicated across topics (MMR / slotting) and letting it choose — that also removes the need for a diversity penalty in the score at all.
 
