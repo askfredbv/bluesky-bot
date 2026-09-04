@@ -62,6 +62,12 @@ class BroadcastPayload:
     bsky_sent_uris: List[str] = field(default_factory=list)
     mastodon_sent_ids: List[str] = field(default_factory=list)
     metrics_context: Dict[str, Any] = field(default_factory=dict)
+    # The topic category of the item the Curator actually wrote about, resolved
+    # here rather than re-derived downstream. persistence_stage used to read
+    # news_items[0]'s category, which is wrong whenever the model picks a
+    # non-top item — the same drift that #51 fixed for the link card but not
+    # for the topic memory. Resolve once, pass the answer.
+    posted_topic_category: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,12 @@ class AutomationPayload:
     news_items: List[Dict[str, Any]]
     pioneer_entry: Optional[Dict[str, Any]] = None
     chosen_topic: Optional[str] = None
+    # Did anything actually reach a platform this run? persistence_stage gates
+    # every post-dependent cooldown on this: without it, a run that exhausted
+    # the model chain or failed both broadcasts still recorded topics and burned
+    # Pioneer cooldowns for a post that never existed.
+    delivered: bool = False
+    posted_topic_category: Optional[str] = None
 
 
 async def get_recent_posts(client, handle: str) -> List[str]:
@@ -288,6 +300,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # link_meta from news_items[0], so a non-top pick would otherwise ship a
     # card pointing at a different article. generate_content returns the
     # chosen URL; only refetch when it differs from the pre-fetched top item.
+    posted_topic_category: Optional[str] = None
     if mode == Mode.CURATOR and chosen_link:
         top_link = news_items[0]["link"] if news_items else None
         if chosen_link != top_link:
@@ -302,6 +315,18 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             source_domain = urlparse(chosen_link).netloc or None
         except Exception:
             source_domain = None
+        # Resolve the topic category of the item actually written about, in the
+        # same place the link card is realigned, so the two can never disagree.
+        chosen_item = next(
+            (i for i in news_items if i.get("link") == chosen_link), None
+        )
+        if chosen_item is None and news_items:
+            chosen_item = news_items[0]  # hallucinated/edited URL — same fallback as the card
+        if chosen_item:
+            posted_topic_category = chosen_item.get("detected_topic")
+    elif mode == Mode.CURATOR and news_items:
+        # No chosen link (older/bare-array output): fall back to the top item.
+        posted_topic_category = news_items[0].get("detected_topic")
 
     # FORCE_IMAGE=1 (workflow_dispatch input) always attempts an image, for
     # deterministic end-to-end validation of the image path; otherwise the
@@ -441,6 +466,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         bsky_sent_uris=bsky_sent_uris,
         mastodon_sent_ids=mastodon_sent_ids,
         metrics_context=metrics_context,
+        posted_topic_category=posted_topic_category,
     )
 
 
@@ -650,12 +676,19 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
         )
     await asyncio.gather(*automation_tasks, return_exceptions=True)
 
+    # Either platform landing counts as delivered: the post is publicly live, so
+    # its topic should suppress repeats and its Pioneer entry should consume its
+    # cooldown. Only a run that reached nobody leaves state untouched.
+    delivered = bool(broadcast.bsky_sent_uris or broadcast.mastodon_sent_ids)
+
     return AutomationPayload(
         mode=broadcast.mode,
         seen_data=broadcast.seen_data,
         news_items=broadcast.news_items,
         pioneer_entry=broadcast.pioneer_entry,
         chosen_topic=broadcast.chosen_topic,
+        delivered=delivered,
+        posted_topic_category=broadcast.posted_topic_category,
     )
 
 
@@ -665,13 +698,29 @@ async def persistence_stage(automation: AutomationPayload) -> None:
     seen_data = automation.seen_data
     pioneer_entry = automation.pioneer_entry
     chosen_topic = automation.chosen_topic
+    delivered = automation.delivered
+
+    # EVERY write below is post-dependent: each one exists to stop the bot
+    # repeating something it just published. When nothing reached a platform
+    # there is nothing to avoid repeating, and writing anyway suppresses content
+    # that never ran — a false -12 topic penalty, a Mentor topic skipped, or a
+    # Pioneer entry burning its multi-week cooldown unposted.
+    if not delivered:
+        SafeLogger.info(
+            "persistence_skipped_no_delivery",
+            "Nothing reached a platform; leaving post-dependent state untouched",
+            mode=mode,
+        )
+        return
 
     dirty = False
     if mode == Mode.CURATOR and news_items:
         seen_data["links"] = (seen_data["links"] + [canonical_url(i['link']) for i in news_items])[-200:]
 
-        # Sense topic to update memory
-        topic_cat = news_items[0].get('detected_topic', 'General')
+        # Record the category of the item actually written about, resolved in
+        # broadcasting_stage alongside the link card. Falls back to the top item
+        # only if that resolution produced nothing.
+        topic_cat = automation.posted_topic_category or news_items[0].get('detected_topic', 'General')
         if topic_cat != 'General':
             seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
         dirty = True
