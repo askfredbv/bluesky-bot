@@ -283,6 +283,8 @@ async def test_persistence_stage_updates_seen_articles(monkeypatch):
         mode="curator",
         seen_data=state,
         news_items=[{"link": "https://new", "detected_topic": "Markets"}],
+        delivered=True,  # post-dependent state only persists when something shipped
+        posted_topic_category="Markets",
     )
 
     await main.persistence_stage(payload)
@@ -709,3 +711,83 @@ async def test_capture_follower_snapshot_stage_isolates_per_platform_failures(mo
     assert len(rows) == 1
     assert rows[0]["platform"] == "mastodon"
     assert rows[0]["followers"] == 12
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_records_the_posted_item_not_the_top_one(monkeypatch):
+    """Curator may write about a non-top item (the chosen_link contract, #51).
+
+    persistence_stage used to record news_items[0]'s category regardless, so the
+    topic actually posted went unrecorded and a merely-offered topic took the
+    -12 penalty for a post that never happened."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[
+            {"link": "https://top", "detected_topic": "LLMs"},       # offered, not written about
+            {"link": "https://chosen", "detected_topic": "Compute/HW"},  # what the model picked
+        ],
+        delivered=True,
+        posted_topic_category="Compute/HW",
+    )
+    await main.persistence_stage(payload)
+
+    assert updated["value"]["recent_topics"] == ["Compute/HW"]
+    assert "LLMs" not in updated["value"]["recent_topics"]
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_writes_nothing_when_nothing_was_delivered(monkeypatch):
+    """A run that reached no platform must leave every post-dependent cooldown alone.
+
+    Covers all three: recent_topics, recent_mode_topics and pioneer_recent. The
+    Pioneer case is the costliest -- burning a multi-week cooldown on an entry
+    that was never posted."""
+    called = {"n": 0}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: called.__setitem__("n", called["n"] + 1))
+
+    for mode, extra in (
+        ("curator", {"news_items": [{"link": "https://x", "detected_topic": "LLMs"}]}),
+        ("mentor", {"news_items": [], "chosen_topic": "Career"}),
+    ):
+        payload = main.AutomationPayload(
+            mode=mode,
+            seen_data={"links": [], "recent_topics": [], "recent_mode_topics": [], "pioneer_recent": []},
+            pioneer_entry={"entry": {"id": "lynn-conway"}, "pool": "undated"},
+            delivered=False,
+            **extra,
+        )
+        await main.persistence_stage(payload)
+
+    assert called["n"] == 0, "no state should be persisted when nothing was delivered"
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_partial_delivery_still_counts(monkeypatch):
+    """One platform landing is enough: the post is publicly live, so its Pioneer
+    entry should consume its cooldown and its topic should suppress repeats."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+
+    broadcast = main.BroadcastPayload(
+        mode="mentor",
+        seen_data={"links": [], "recent_topics": [], "recent_mode_topics": [], "pioneer_recent": []},
+        news_items=[],
+        content_list=["a post"],
+        chosen_topic="Career",
+        thread_pause_profile="normal",
+        bsky_broadcast_client=None,
+        pioneer_entry={"entry": {"id": "lynn-conway"}, "pool": "undated"},
+        bsky_sent_uris=["at://x"],   # Bluesky landed
+        mastodon_sent_ids=[],        # Mastodon did not
+    )
+    automation = await main.post_run_automation_stage(broadcast, SimpleNamespace(
+        bluesky_username="u", gemini_api_key="g"))
+    assert automation.delivered is True
+
+    await main.persistence_stage(automation)
+    assert updated["value"]["recent_mode_topics"] == ["Career"]
+    assert updated["value"]["pioneer_recent"][0]["id"] == "lynn-conway"
