@@ -74,7 +74,7 @@ Create a `.env` from `.env.example` for local credentials.
 pytest
 ```
 
-CI enforces a **70% global coverage floor**, with **80% module gates** on the high-risk paths (`src/utils.py`, `src/agents.py`, `main.py`). PRs that change those modules must also update a matching test file.
+CI enforces a single **global 80% coverage floor** across `main.py` and `src/` (`pytest --cov-fail-under=80`), alongside `ruff` and a whole-codebase `mypy` gate.
 
 ### Dependency management
 
