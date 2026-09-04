@@ -232,6 +232,17 @@ def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
     return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
 
 
+def _should_attempt_curator_fallback_image(force_image: bool) -> bool:
+    """Whether to generate a fallback card image for a thumbnail-less Curator post.
+
+    A different visual from the Mentor/Strategist post image (this one becomes the
+    link-card thumbnail), but governed by the same IMAGE_GENERATION_PROBABILITY so
+    the cadence-variety setting covers the whole feed. Curator is the morning
+    scheduled mode; gating only the afternoon post would halve the intended
+    text-only rate."""
+    return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
+
+
 async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Settings, creds: Any, active_models: Optional[List[str]] = None) -> BroadcastPayload:
     mode = content_prep.mode
     news_items = content_prep.news_items
@@ -292,10 +303,19 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         except Exception:
             source_domain = None
 
+    # FORCE_IMAGE=1 (workflow_dispatch input) always attempts an image, for
+    # deterministic end-to-end validation of the image path; otherwise the
+    # configured probability applies. Read before the Curator branch below because
+    # both image paths are gated by it.
+    force_image = os.environ.get("FORCE_IMAGE", "").strip() == "1"
+
     # Fallback visual on the FINAL Curator card (after any link realignment):
-    # generate an image when the chosen article has no OG thumbnail.
+    # generate an image when the chosen article has no OG thumbnail. Gated by the
+    # same IMAGE_GENERATION_PROBABILITY as the Mentor/Strategist post image —
+    # Curator is one of the two scheduled daily modes, so leaving it ungated meant
+    # the 0.85 cadence-variety setting only reached half the feed.
     curator_fallback_image = None
-    if mode == Mode.CURATOR:
+    if mode == Mode.CURATOR and _should_attempt_curator_fallback_image(force_image):
         fallback_topic = chosen_topic or (news_items[0].get("title") if news_items else "") or "AI and technology news"
         curator_fallback_image = await _apply_curator_fallback_image(
             link_meta, creds.gemini_api_key, fallback_topic)
@@ -303,10 +323,6 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
     image_bytes = None
-    # FORCE_IMAGE=1 (workflow_dispatch input) always attempts an image, for
-    # deterministic end-to-end validation of the image path; otherwise the
-    # configured probability applies.
-    force_image = os.environ.get("FORCE_IMAGE", "").strip() == "1"
     if _should_attempt_image(mode, force_image):
         SafeLogger.info("image_requested", "Attempting post image",
                         mode=mode, forced=force_image, topic=chosen_topic)

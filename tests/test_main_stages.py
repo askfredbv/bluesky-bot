@@ -69,6 +69,23 @@ def test_should_attempt_image_probability_gate(monkeypatch):
     assert main._should_attempt_image(main.Mode.MENTOR, force_image=False) is False
 
 
+def test_should_attempt_curator_fallback_image_respects_probability(monkeypatch):
+    """The Curator fallback card image is gated by the same probability.
+
+    Curator is the morning scheduled mode; leaving it ungated kept it at 100% and
+    halved the intended text-only cadence (Codex #106)."""
+    monkeypatch.setattr(main, "IMAGE_GENERATION_PROBABILITY", 0.5)
+    monkeypatch.setattr(main.random, "random", lambda: 0.4)  # below the gate
+    assert main._should_attempt_curator_fallback_image(force_image=False) is True
+    monkeypatch.setattr(main.random, "random", lambda: 0.6)  # above the gate
+    assert main._should_attempt_curator_fallback_image(force_image=False) is False
+
+
+def test_should_attempt_curator_fallback_image_honours_force(monkeypatch):
+    monkeypatch.setattr(main.random, "random", lambda: 0.99)  # would fail the roll
+    assert main._should_attempt_curator_fallback_image(force_image=True) is True
+
+
 @pytest.mark.asyncio
 async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
     creds = SimpleNamespace(bluesky_username="u", bluesky_password="p")
