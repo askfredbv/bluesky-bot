@@ -41,6 +41,30 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ## §2 — Open issues (fix when convenient)
 
+### Post-dependent state is recorded even when nothing was posted — and Curator records the wrong topic (surfaced 2026-09-04)
+
+`persistence_stage` appends `news_items[0]['detected_topic']` to `recent_topics` (`main.py`, Curator branch). But the Curator is explicitly allowed to write about a *non-top* item — that is the whole point of the `chosen_link` contract added in #51, and `broadcasting_stage` already realigns the link card and `source_domain` to the chosen item. Persistence was never updated to match.
+
+Consequences, both wrong and in opposite directions:
+- The topic actually **posted** is not recorded, so it is not penalised on the next run — the diversity memory under-counts what we really published.
+- A topic that was merely **offered** is recorded, so an unrelated later story in that bucket eats the −12 penalty for a post that never happened. This is a *false* penalty, and it is one of the mechanisms behind "an obvious launch got buried" — the symptom that prompted the v4.25.0 coverage work.
+
+**Second, independent half — post-dependent state is written even when no post went live, across ALL three cooldowns.** `main()` calls `persistence_stage` unconditionally and `AutomationPayload` drops the `bsky_sent_uris` / `mastodon_sent_ids` that `BroadcastPayload` carries, so a run where the model chain exhausted (`broadcast_skipped_no_content`) or where both broadcasts failed still writes:
+
+| State | Consequence of a phantom write |
+| :--- | :--- |
+| `recent_topics` (Curator) | a later story eats −12 for a post that never happened |
+| `recent_mode_topics` (Mentor/Strategist) | a topic is suppressed from the next runs' picker though it never ran |
+| `pioneer_recent` | a Pioneer entry burns its multi-week cooldown without ever being posted |
+
+The Pioneer case is the clearest tell: the block is commented *"only when a pioneer post actually fired"* and does not check that it fired. Pioneer is the scarcest content the bot has (~2–3/week from a curated corpus), so silently retiring entries is the most costly of the three.
+
+Fix, one change covering both halves: thread `chosen_link` **and** delivery status into `AutomationPayload` / `persistence_stage`; persist the *chosen* item's `detected_topic`, and gate **every** post-dependent update — `recent_topics`, `recent_mode_topics`, `pioneer_recent` — on at least one platform having delivered. Regression tests: a non-top pick records the chosen topic, and a no-delivery run records nothing in any of the three.
+
+Open question while in there: `seen_data["links"]` is updated on the same unconditional path, so a failed run also marks its articles as seen and they are never reconsidered. That may be deliberate (avoid re-offering stale items) or the same bug in a second place — decide explicitly rather than by accident.
+
+Worth doing before any larger scoring rework — it is cheap, and it changes what the data says.
+
 ### Duplicate-source-posts follow-ups (surfaced 2026-05-13)
 
 Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. **All three shipped:** #1 and #3 in `2be1148` (2026-05-14), #2 in `76f1287` (2026-05-15).
@@ -172,6 +196,18 @@ The diagnostic discipline ("never log error_type alone, always include error_msg
 ---
 
 ## §3 — Observational (wait for data)
+
+- **Semantic scoring pass — replaces the abandoned "landmark" gate.** The −12 topic-diversity penalty in `calculate_relevance_score` is magnitude-blind: it demotes a flagship launch simply because we posted on its topic the run before, which is how a real Gemini launch got buried. v4.25.0 fixed that from the *coverage* side (primary vendor feeds, so launches arrive first-hand at tier 10), but the penalty itself is untouched. **Note the diagnosis is two-part:** the penalty is magnitude-blind *and* it is currently fed the wrong topic (see the §2 entry "Curator records the top item's topic, not the one it posted"). That second half is a plain bug and much cheaper to fix — do it first, and re-measure before assuming the scoring model needs replacing at all.
+
+  **Do not rebuild an exemption gate.** Two attempts, ~11 review rounds, neither converged: (1) detect "this is a launch" from the headline with a regex — leaked on word order ("Acme launches a tool for migrating from GPT-5"), punctuation ("Introducing: GPT-5"), decimal versions ("Gemini 3.8" split on the dot), mid-word stems ("Unreleased GPT-5"), title/description bleed, short names ("o3" inside "o365"); (2) count distinct publishers covering the same flagship — leaked on headline variance (punchy titles don't cluster), alias/variant splitting ("GPT-5" vs "GPT 5"; Claude 4 / Opus 4 / Sonnet 4), and same-org domains (`openai.com` + `developers.openai.com`). Both are proxies for "importance" inferred from text, which is an unbounded problem: every fix revealed a new leak of the same kind. A second opinion (Gemini, 2026-09-04) reached the same conclusion independently, and also shot down the obvious "fix" of moving diversity to a selection-time score margin — that swaps one magic number for another on an uncalibrated scale, and removing the penalty from scoring lets the top-5 fill with variants of one story.
+
+  **The direction instead**, when this is worth doing:
+  - **Refuse** any regex for model names or importance keywords, and keyword-based consensus clustering. Dead ends, evidenced.
+  - **Build the shortlist from a penalty-free first-pass score.** `calculate_relevance_score` applies the −12 *before* `ranked[:limit]` (`src/news.py`), so a shortlist taken from the current ranked slice sits downstream of the very defect the pass exists to correct — a penalised flagship launch can fall outside it and never be scored at all. Rank the shortlist on merit only, or explicitly re-include penalised candidates, before any diversity is applied.
+  - **Build** a cheap-LLM pass over the top ~15–20 candidates: classify topic, detect genuine launches, assign a 1–10 impact score. Fractions of a cent per run. The bot already calls Gemini to *write* posts; it just never calls anything to *judge* them. This deletes the regex/alias/domain-matching surface rather than patching it.
+  - **Selection is probably the real lever, not scoring.** Only the top 5 reach the Curator, which is told to pick "the most interesting so-what" and can skip a top-ranked launch entirely. Consider handing it 7–10 items deduplicated across topics (MMR / slotting) and letting it choose — that also removes the need for a diversity penalty in the score at all.
+
+  **Trigger:** worth doing if the live feed shows launches still being missed *after* v4.25.0's feed additions have had a few weeks. If coverage alone fixed it, this stays parked — it was always an optimisation, not the fix.
 
 - **The Register main feed drift.** `https://www.theregister.com/headlines.atom` added in v4.13 alongside the software-specific feed. If Curator runs start surfacing space/security-humour content that isn't AI/tech dev-relevant, remove it from `RSS_FEEDS`. The `/software/headlines.atom` feed stays either way.
 - **`CONSENSUS_SYNERGY_BONUS` retune.** Currently `1.5` per additional feed. With 25 feeds, a viral story covered by 5+ sources gets `+6.0` on top of its base score — could start dominating every Curator run. Drop to `1.2` if the Curator starts repeatedly picking the same wire-story everyone covers over genuinely distinctive items.
