@@ -1,6 +1,8 @@
 """Tests for src.metrics — feed health telemetry (Phase 1 Step 2)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from src import metrics
@@ -112,18 +114,19 @@ def test_record_feed_attempt_trims_recent_attempts_to_limit():
 
 
 # ---------------------------------------------------------------------------
-# check_feed_health_alerts
+# check_feed_health_alerts — two distinct signals, both time-based
 # ---------------------------------------------------------------------------
 
-def _fill_attempts(health, url, *, ok, accepted, n, total=None):
-    # total defaults to accepted (the common case); pass it explicitly to model a
-    # feed that returned raw entries but accepted none this window (quiet feed).
-    total = accepted if total is None else total
-    for _ in range(n):
-        record_feed_attempt(
-            health,
-            FeedFetchResult(url=url, ok=ok, entries_total=total, entries_accepted=accepted),
-        )
+_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+
+
+def _feed(*, ok_days_ago=None, accepted_days_ago=None):
+    """A feed_health entry with last_ok_at / last_accepted_at set N days back."""
+    def stamp(days):
+        return None if days is None else (_NOW - timedelta(days=days)).isoformat()
+    return {"last_ok_at": stamp(ok_days_ago),
+            "last_accepted_at": stamp(accepted_days_ago),
+            "recent_attempts": []}
 
 
 def _capture_warns(monkeypatch):
@@ -135,86 +138,76 @@ def _capture_warns(monkeypatch):
     return warns
 
 
-def test_feed_health_alert_fires_on_sustained_fetch_failure(monkeypatch):
-    from src.config import FEED_HEALTH_ALERT_WINDOW
+def test_feed_health_alert_broken_when_no_successful_fetch(monkeypatch):
+    """Signal 1: unreachable — no successful fetch inside the broken threshold."""
+    from src.config import FEED_HEALTH_BROKEN_AFTER_DAYS
     warns = _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://dead", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+    health = {"feeds": {"https://dead": _feed(ok_days_ago=FEED_HEALTH_BROKEN_AFTER_DAYS + 1,
+                                              accepted_days_ago=FEED_HEALTH_BROKEN_AFTER_DAYS + 1)}}
 
-    alerting = metrics.check_feed_health_alerts(health)
-
-    assert alerting == ["https://dead"]
-    assert warns and warns[0]["reason"] == "fetch_failing"
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == ["https://dead"]
+    assert warns[0]["reason"] == "broken"
 
 
-def test_feed_health_alert_fires_on_200_but_no_entries(monkeypatch):
-    """A feed that responds OK but returns zero raw entries (the Anthropic-404-as-HTML shape)."""
-    from src.config import FEED_HEALTH_ALERT_WINDOW
+def test_feed_health_alert_stale_when_fetching_but_never_usable(monkeypatch):
+    """Signal 2: reachable but yields nothing usable (the 404-as-HTML shape)."""
+    from src.config import FEED_HEALTH_STALE_AFTER_DAYS
     warns = _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://empty", ok=True, accepted=0, total=0, n=FEED_HEALTH_ALERT_WINDOW)
+    health = {"feeds": {"https://empty": _feed(ok_days_ago=0,
+                                               accepted_days_ago=FEED_HEALTH_STALE_AFTER_DAYS + 1)}}
 
-    alerting = metrics.check_feed_health_alerts(health)
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == ["https://empty"]
+    assert warns[0]["reason"] == "stale"
 
-    assert alerting == ["https://empty"]
-    assert warns[0]["reason"] == "returns_no_entries"
+
+def test_feed_health_alert_stale_when_no_usable_entry_ever(monkeypatch):
+    """Fetches fine but has never produced a usable entry — a wrong/moved URL."""
+    _capture_warns(monkeypatch)
+    health = {"feeds": {"https://wrong": _feed(ok_days_ago=0, accepted_days_ago=None)}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == ["https://wrong"]
 
 
 def test_feed_health_alert_silent_for_quiet_low_volume_feed(monkeypatch):
-    """A live feed that returns entries but accepts none this window (all older than
-    the 2-day lookback) must NOT alert — total>0 means the feed is alive (Codex #106)."""
-    from src.config import FEED_HEALTH_ALERT_WINDOW
+    """A publisher that posts rarely must not alert — this is why the two signals
+    are separate and why the stale threshold is generous."""
+    from src.config import FEED_HEALTH_STALE_AFTER_DAYS
     warns = _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://quiet", ok=True, accepted=0, total=5, n=FEED_HEALTH_ALERT_WINDOW)
+    health = {"feeds": {"https://quiet": _feed(ok_days_ago=0,
+                                               accepted_days_ago=FEED_HEALTH_STALE_AFTER_DAYS - 1)}}
 
-    assert metrics.check_feed_health_alerts(health) == []
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == []
     assert warns == []
 
 
 def test_feed_health_alert_silent_for_healthy_feed(monkeypatch):
-    from src.config import FEED_HEALTH_ALERT_WINDOW
     warns = _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://good", ok=True, accepted=4, n=FEED_HEALTH_ALERT_WINDOW)
-
-    assert metrics.check_feed_health_alerts(health) == []
+    health = {"feeds": {"https://good": _feed(ok_days_ago=0, accepted_days_ago=0)}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == []
     assert warns == []
 
 
+def test_feed_health_alert_skips_feed_with_no_track_record(monkeypatch):
+    """A feed that has never fetched successfully has no baseline to judge."""
+    _capture_warns(monkeypatch)
+    health = {"feeds": {"https://new": _feed(ok_days_ago=None, accepted_days_ago=None)}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == []
+
+
 def test_feed_health_alert_ignores_feeds_not_in_configured_set(monkeypatch):
-    """A persisted-but-removed feed (still failing in feed_health.json) must not
-    alert once it is no longer in RSS_FEEDS (Codex #106)."""
-    from src.config import FEED_HEALTH_ALERT_WINDOW
+    """A removed-but-still-persisted feed must not alert forever."""
     _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://removed", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
-    _fill_attempts(health, "https://kept", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+    health = {"feeds": {"https://removed": _feed(ok_days_ago=99, accepted_days_ago=99),
+                        "https://kept": _feed(ok_days_ago=99, accepted_days_ago=99)}}
 
-    alerting = metrics.check_feed_health_alerts(health, {"https://kept"})
-
-    assert alerting == ["https://kept"]  # the removed feed is skipped
+    assert metrics.check_feed_health_alerts(health, {"https://kept"}, now=_NOW) == ["https://kept"]
 
 
-def test_feed_health_alert_needs_a_track_record(monkeypatch):
-    """Fewer than the window's worth of attempts must not alert, even if all failed."""
-    from src.config import FEED_HEALTH_ALERT_WINDOW
+def test_feed_health_alert_tolerates_unparseable_timestamps(monkeypatch):
     _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://new", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW - 1)
-
-    assert metrics.check_feed_health_alerts(health) == []
-
-
-def test_feed_health_alert_uses_only_the_recent_window(monkeypatch):
-    """A feed that failed in the past but has recovered in the last window must not alert."""
-    from src.config import FEED_HEALTH_ALERT_WINDOW
-    _capture_warns(monkeypatch)
-    health = {"feeds": {}}
-    _fill_attempts(health, "https://recovered", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
-    _fill_attempts(health, "https://recovered", ok=True, accepted=3, n=FEED_HEALTH_ALERT_WINDOW)
-
-    assert metrics.check_feed_health_alerts(health) == []
+    health = {"feeds": {"https://odd": {"last_ok_at": "not-a-date",
+                                        "last_accepted_at": "also-bad",
+                                        "recent_attempts": []}}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == []
 
 
 # ---------------------------------------------------------------------------
@@ -495,8 +488,6 @@ def test_save_post_metrics_falls_back_to_local_file(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 # Phase 1 Step 5 — should_refresh, prune_old_metrics, refresh_stale_metrics
 # ---------------------------------------------------------------------------
-
-from datetime import datetime, timedelta, timezone
 
 NOW = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
 

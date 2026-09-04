@@ -15,7 +15,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Collection, Dict, List, Optional
 
 from src.config import (
-    FEED_HEALTH_ALERT_WINDOW,
+    FEED_HEALTH_BROKEN_AFTER_DAYS,
+    FEED_HEALTH_STALE_AFTER_DAYS,
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
     GROWTH_FILE,
@@ -150,57 +151,76 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
         del attempts[:-FEED_HEALTH_RECENT_ATTEMPTS_LIMIT]
 
 
+def _iso_age_days(stamp: Optional[str], now: datetime) -> Optional[float]:
+    """Age in days of an ISO timestamp, or None if absent/unparseable."""
+    if not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now - parsed).total_seconds() / 86400.0
+
+
 def check_feed_health_alerts(
     feed_health: Dict[str, Any],
     configured_feeds: Optional[Collection[str]] = None,
+    *,
+    now: Optional[datetime] = None,
 ) -> List[str]:
-    """Warn on configured feeds that have been unhealthy across the recent window.
+    """Warn on configured feeds that have quietly died. Two distinct signals.
 
-    Two failure shapes, both read from the tail of each feed's `recent_attempts`:
-      - **fetch_failing**: the last FEED_HEALTH_ALERT_WINDOW attempts were all
-        `ok=False` (timeout / TLS / SSRF-block / DNS).
-      - **returns_no_entries**: those attempts each parsed to *zero* raw entries
-        (`total == 0`) — a feed that responds but yields nothing at all (a
-        404-served-as-HTML page, a moved feed, or a format change). This is how
-        a dead feed like the Anthropic news.rss 404 surfaces, since a 404 is a
-        completed HTTP request (`ok=True`) whose body parses to zero entries.
+      - **broken**: no successful fetch in FEED_HEALTH_BROKEN_AFTER_DAYS days
+        (timeout / TLS / DNS / SSRF block / non-200). The feed is unreachable.
+      - **stale**: fetches fine, but no usable entry in
+        FEED_HEALTH_STALE_AFTER_DAYS days. Catches a 404-served-as-HTML page, a
+        moved feed, or a format change, while the generous threshold tolerates a
+        genuinely quiet publisher.
 
-    Deliberately keyed on `total` (raw entries the feed returned), NOT `accepted`
-    (entries surviving the 2-day lookback + normalisation): a healthy but
-    low-volume feed can legitimately return entries yet accept none this window,
-    and must not be alerted on (Codex #106).
+    These are deliberately NOT merged into one metric. A single-metric version
+    oscillated between false-positiving on quiet feeds and missing feeds whose
+    entries never parse; they are different failure modes with different
+    thresholds. Time-based rather than counted over recent attempts, so the
+    thresholds do not depend on how many runs happen per day.
 
-    `configured_feeds`, when given, restricts alerting to feeds still in that
-    set — `feed_health.json` retains rows for feeds removed from `RSS_FEEDS`, and
-    a just-removed failing feed (e.g. the dropped Anthropic feed) would otherwise
-    alert forever on its stale failure window (Codex #106). When None, every
-    persisted feed is considered (used by unit tests).
+    A feed with no successful fetch on record yet is skipped: it has no track
+    record, so silence proves nothing. `configured_feeds`, when given, restricts
+    alerting to feeds still in RSS_FEEDS — feed_health.json retains rows for
+    removed feeds, which would otherwise alert forever.
 
-    Only alerts once a feed has at least FEED_HEALTH_ALERT_WINDOW attempts on
-    record, so a newly added feed does not warn before it has a track record.
     Emits one WARN per alerting feed and returns their URLs (for tests/callers).
     """
+    now = now or datetime.now(timezone.utc)
     alerting: List[str] = []
     for url, entry in (feed_health.get("feeds") or {}).items():
         if configured_feeds is not None and url not in configured_feeds:
             continue
-        attempts = entry.get("recent_attempts") or []
-        if len(attempts) < FEED_HEALTH_ALERT_WINDOW:
+        ok_age = _iso_age_days(entry.get("last_ok_at"), now)
+        if ok_age is None:
+            # Never fetched successfully — no baseline, so nothing to compare.
             continue
-        window = attempts[-FEED_HEALTH_ALERT_WINDOW:]
-        all_failed = all(not a.get("ok", False) for a in window)
-        returns_no_entries = all((a.get("total") or 0) == 0 for a in window)
-        if not (all_failed or returns_no_entries):
+        accepted_age = _iso_age_days(entry.get("last_accepted_at"), now)
+
+        if ok_age > FEED_HEALTH_BROKEN_AFTER_DAYS:
+            reason, detail = "broken", f"no successful fetch in {ok_age:.1f} days"
+        elif accepted_age is None or accepted_age > FEED_HEALTH_STALE_AFTER_DAYS:
+            reason = "stale"
+            detail = (
+                "no usable entry on record"
+                if accepted_age is None
+                else f"no usable entry in {accepted_age:.1f} days"
+            )
+        else:
             continue
-        # all_failed implies returns_no_entries (a failed fetch returns nothing),
-        # so report the more specific transport failure when it applies.
-        reason = "fetch_failing" if all_failed else "returns_no_entries"
+
         SafeLogger.warn(
             "feed_persistently_unhealthy",
-            "Feed unhealthy across the recent window; check the URL is still live",
+            f"Feed looks dead ({reason}); check the URL is still live",
             url=url,
             reason=reason,
-            window=FEED_HEALTH_ALERT_WINDOW,
+            detail=detail,
             last_ok_at=entry.get("last_ok_at"),
             last_accepted_at=entry.get("last_accepted_at"),
         )

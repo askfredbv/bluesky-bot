@@ -69,17 +69,28 @@ GROWTH_FILE = Path("growth.json")
 
 # Feed health telemetry (Phase 1)
 FEED_HEALTH_RECENT_ATTEMPTS_LIMIT: int = 28  # ~2 weeks at 2 runs/day
-# Feed-health alerting (v4.25, 2026-09-03). Surface a feed that has silently
-# failed — or 200s but yields nothing (a 404-as-HTML page, moved/format-changed
-# feed) — across the last N attempts, so the next dead feed is caught by a log
-# signal rather than by noticing missing coverage weeks later (as happened with
-# the Anthropic news.rss 404). Feeds are fetched ONCE per day — only the morning
-# Curator run calls fetch_news; the afternoon Mentor run does not — so N attempts
-# ≈ N days (Codex #106, correcting an earlier "2 runs/day" assumption). 3 keeps
-# the signal to ~3 consecutive dead days (a real outage recovers sooner) while
-# not crying wolf on a one-off blip. Only alerts once a feed has this many
-# attempts on record, so a freshly added feed does not warn for its first 3 days.
-FEED_HEALTH_ALERT_WINDOW: int = 3
+# Feed-health alerting (v4.25, 2026-09-04). Surface a feed that has died quietly,
+# so the next one is caught by a log signal rather than by noticing missing
+# coverage weeks later (as happened with the Anthropic news.rss 404).
+#
+# TWO DISTINCT SIGNALS, on purpose. An earlier single-metric version oscillated:
+# keyed on "returned zero usable entries" it false-positived on legitimately quiet
+# low-volume feeds; keyed on "returned zero raw entries" it missed feeds that
+# return entries but can never parse them. They are different failure modes and
+# forcing them into one metric cannot satisfy both (confirmed by a second opinion
+# after several review rounds went in circles).
+#
+#   BROKEN — no successful fetch in FEED_HEALTH_BROKEN_AFTER_DAYS days.
+#            Transport level: timeout, TLS, DNS, SSRF block, non-200.
+#   STALE  — fetches fine, but no usable entry in FEED_HEALTH_STALE_AFTER_DAYS
+#            days. Catches a 404-served-as-HTML, a moved feed, or a format change,
+#            while the generous threshold tolerates a genuinely quiet publisher.
+#
+# Both are time-based rather than counted over recent attempts, which sidesteps
+# the "how many runs per day" question entirely. Feeds are fetched once daily (the
+# morning Curator run only), but these thresholds hold at any cadence.
+FEED_HEALTH_BROKEN_AFTER_DAYS: int = 3
+FEED_HEALTH_STALE_AFTER_DAYS: int = 14
 
 # Post metrics telemetry (Phase 1 Step 4-5)
 POST_METRICS_CONTENT_PREVIEW_MAX_CHARS: int = 80
