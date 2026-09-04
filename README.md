@@ -1,4 +1,4 @@
-# Bluesky & Mastodon Daily Poster (v4.24.0)
+# Bluesky & Mastodon Daily Poster (v4.25.0)
 
 ![Daily Post](https://github.com/askfredbv/bluesky-bot/actions/workflows/daily_post.yml/badge.svg)
 
@@ -101,7 +101,7 @@ The main levers are in `src/config.py`:
 - **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
 - **`LANGUAGE_OPTIONS`** — languages the model may pick from (default `["English"]`)
 - **`IMAGE_MODEL`** — image model (default `gemini-3.1-flash-image`)
-- **`IMAGE_GENERATION_PROBABILITY`** — chance of an image on Mentor/Strategist runs (default `0.5`)
+- **`IMAGE_GENERATION_PROBABILITY`** — chance of a *generated* image (default `0.85`). Applies to the Mentor/Strategist post image and to the Curator fallback card image used when an article has no OG thumbnail; it never strips an article's own thumbnail.
 - **`GEMINI_MODEL_PRIORITY`** — ordered model failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
 - **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; edited quarterly
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed covering the same story
