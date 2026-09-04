@@ -70,7 +70,10 @@ def test_annotate_counts_distinct_publishers_only():
 
 
 def test_consensus_bonus_uses_cross_publisher_signal():
-    base = _item("OpenAI launches GPT-5 reasoning model", "https://example.com/a")
+    # Fixture deliberately names NO momentum flagship: from v4.25 a flagship
+    # crossing LANDMARK_CONSENSUS_MIN_PUBLISHERS also becomes a landmark, which
+    # would add LANDMARK_LAUNCH_BONUS on top and mask the pure consensus delta.
+    base = _item("Acme ships a new reasoning model", "https://example.com/a")
 
     solo = dict(base, cross_publisher_domains=1)
     clustered = dict(base, cross_publisher_domains=3)
@@ -80,7 +83,7 @@ def test_consensus_bonus_uses_cross_publisher_signal():
 
 
 def test_consensus_bonus_is_capped():
-    base = _item("OpenAI launches GPT-5 reasoning model", "https://example.com/a")
+    base = _item("Acme ships a new reasoning model", "https://example.com/a")
     solo = dict(base, cross_publisher_domains=1)
     huge = dict(base, cross_publisher_domains=25)
     delta = (calculate_relevance_score(huge, _NOW, [])
@@ -89,7 +92,7 @@ def test_consensus_bonus_is_capped():
 
 
 def test_exact_url_and_cross_publisher_take_the_stronger():
-    base = _item("OpenAI launches GPT-5 reasoning model", "https://example.com/a")
+    base = _item("Acme ships a new reasoning model", "https://example.com/a")
     # 2 feeds same URL, but 4 distinct publishers → cross-publisher wins
     item = dict(base, source_feeds=["f1", "f2"], cross_publisher_domains=4)
     solo = dict(base, source_feeds=["f1"], cross_publisher_domains=1)

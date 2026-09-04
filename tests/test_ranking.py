@@ -90,10 +90,10 @@ def test_consensus_synergy_three_feeds_adds_double_bonus():
 def test_momentum_product_bonus():
     """Items mentioning flagship 2026 products score MOMENTUM_PRODUCT_BONUS higher."""
     from src.config import MOMENTUM_PRODUCT_BONUS
-    # Identical items from same source and age — only difference is product name
-    # in title. Deliberately NO launch word ("released"/"launches"): a momentum
-    # name + a launch word is a landmark (v4.25) and would add LANDMARK_LAUNCH_BONUS
-    # on top, which this test isolates away from. See the landmark tests below.
+    # Identical items from same source and age — only difference is the product
+    # name in the title. Single publisher on both sides, so neither is a landmark
+    # (v4.25 landmarks need flagship + publisher consensus) and the delta is the
+    # momentum bonus alone.
     base = {'title': 'New AI Model', 'description': 'Details', 'link': 'https://techcrunch.com/1'}
     flagship = {'title': 'claude 4 by Anthropic', 'description': 'Details', 'link': 'https://techcrunch.com/2'}
     now = datetime.now(timezone.utc)
@@ -107,7 +107,7 @@ def test_momentum_product_bonus():
 def test_momentum_product_bonus_case_insensitive():
     """Momentum matching is lowercase — title casing should not matter."""
     from src.config import MOMENTUM_PRODUCT_BONUS
-    # No launch word, so momentum is isolated from the landmark bonus (see above).
+    # Single publisher on both sides, so the landmark gate never fires (see above).
     upper_case = {'title': 'GPT-5 Update', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/1'}
     no_match = {'title': 'New Model Update', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/2'}
     now = datetime.now(timezone.utc)
@@ -118,174 +118,82 @@ def test_momentum_product_bonus_case_insensitive():
     assert score_match == pytest.approx(score_no_match + MOMENTUM_PRODUCT_BONUS)
 
 
-def test_landmark_detection_requires_momentum_plus_signal():
-    """is_landmark is set only for a momentum flagship that is a launch or widely covered."""
+def test_landmark_requires_flagship_plus_publisher_consensus():
+    """is_landmark fires only for a named flagship covered by >= N independent publishers."""
+    from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS as MIN_PUBS
     now = datetime.now(timezone.utc)
 
-    # momentum + launch word → landmark
-    momentum_launch = {'title': 'OpenAI launches GPT-5', 'description': 'x', 'link': 'https://techcrunch.com/1'}
-    calculate_relevance_score(momentum_launch, now, [])
-    assert momentum_launch['is_landmark'] is True
+    # flagship + enough independent publishers -> landmark
+    covered = {'title': 'GPT-5 impressions roundup', 'description': 'analysis',
+               'link': 'https://techcrunch.com/1', 'cross_publisher_domains': MIN_PUBS}
+    calculate_relevance_score(covered, now, [])
+    assert covered['is_landmark'] is True
 
-    # momentum only, no launch word, single publisher → NOT landmark
-    momentum_only = {'title': 'GPT-5 impressions', 'description': 'a review', 'link': 'https://techcrunch.com/2'}
-    calculate_relevance_score(momentum_only, now, [])
-    assert momentum_only['is_landmark'] is False
+    # same flagship, one publisher short -> NOT a landmark
+    thin = {'title': 'GPT-5 impressions roundup', 'description': 'analysis',
+            'link': 'https://techcrunch.com/2', 'cross_publisher_domains': MIN_PUBS - 1}
+    calculate_relevance_score(thin, now, [])
+    assert thin['is_landmark'] is False
 
-    # launch word only, no momentum product → NOT landmark
-    launch_only = {'title': 'Startup launches new app', 'description': 'x', 'link': 'https://techcrunch.com/3'}
-    calculate_relevance_score(launch_only, now, [])
-    assert launch_only['is_landmark'] is False
+    # widely covered but NO named flagship -> NOT a landmark
+    no_flagship = {'title': 'A startup ships a new toaster', 'description': 'x',
+                   'link': 'https://techcrunch.com/3', 'cross_publisher_domains': MIN_PUBS + 2}
+    calculate_relevance_score(no_flagship, now, [])
+    assert no_flagship['is_landmark'] is False
 
 
-def test_landmark_launch_must_be_near_the_flagship():
-    """A launch word far from the flagship (an unrelated launch in the same blurb)
-    must NOT manufacture a landmark — the launch has to be about the flagship."""
+def test_landmark_is_not_inferred_from_launch_wording():
+    """Launch *language* alone no longer creates a landmark (v4.25 simplification).
+
+    The detector is measured (publisher consensus), not parsed, so a single-source
+    "X launches GPT-5" is not a landmark — and neither are the shapes that used to
+    fool the regex ("Unreleased GPT-5...", "Acme launches a tool ... from GPT-5").
+    """
     now = datetime.now(timezone.utc)
-    # "gpt-5" and "launches" are >60 chars apart and about different things.
-    far = {
-        'title': 'GPT-5 remains the model to beat in most evaluations this year',
-        'description': 'In entirely separate news, a small hardware startup launches a kitchen gadget.',
-        'link': 'https://techcrunch.com/1',
-    }
-    calculate_relevance_score(far, now, [])
-    assert far['is_landmark'] is False
-
-    # Same words, now adjacent → about the flagship → landmark.
-    near = {'title': 'OpenAI launches GPT-5', 'description': 'x', 'link': 'https://techcrunch.com/2'}
-    calculate_relevance_score(near, now, [])
-    assert near['is_landmark'] is True
-
-
-def test_landmark_requires_launch_to_govern_the_flagship():
-    """The launch verb must govern the flagship, not merely sit near it (Codex #106).
-
-    'Acme launches a migration tool ... from GPT-5' has launch + flagship close
-    together, but GPT-5 is the migration *source*, not the launched product."""
-    now = datetime.now(timezone.utc)
-    unrelated = {
-        'title': 'Acme launches a migration tool for teams moving projects from GPT-5',
-        'description': 'x', 'link': 'https://techcrunch.com/1',
-    }
-    calculate_relevance_score(unrelated, now, [])
-    assert unrelated['is_landmark'] is False
-
-
-def test_landmark_construction_both_orders_and_versioned():
-    """Launch-verb→flagship and flagship→launch-verb both qualify, incl. version suffixes."""
-    now = datetime.now(timezone.utc)
-    cases = [
-        'OpenAI launches GPT-5',              # verb → flagship
-        'GPT-5 is now available',             # flagship → verb (multi-word signal)
-        'Google unveils Gemini 3.8 today',    # version suffix on the flagship
-        'Introducing GPT-5 to everyone',      # 'introduc' stem → flagship
-        'Introducing: GPT-5',                 # punctuation between verb and flagship
-        'GPT-5, released today by OpenAI',     # comma glued to the flagship
-        'Gemini 3.8 launches today',           # reverse order + decimal version (must not split on the dot)
-        'Gemini 3.5 is now available',         # decimal version, flagship → verb
-    ]
-    for title in cases:
-        item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/x'}
-        calculate_relevance_score(item, now, [])
-        assert item['is_landmark'] is True, title
-
-
-def test_landmark_launch_stems_do_not_match_mid_word():
-    """Negative-prefix words must not trip the launch detector (Codex #106):
-    'unreleased' / 'prelaunch' describe a model that has NOT launched."""
-    now = datetime.now(timezone.utc)
-    for title in ('Unreleased GPT-5 benchmark results leak',
-                  'Prelaunch GPT-5 testing begins at OpenAI'):
+    for title in ('OpenAI launches GPT-5',
+                  'Unreleased GPT-5 benchmark results leak',
+                  'Acme launches a migration tool for teams moving from GPT-5'):
         item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/1'}
         calculate_relevance_score(item, now, [])
         assert item['is_landmark'] is False, title
-
-
-def test_landmark_short_flagship_names_do_not_match_unrelated_identifiers():
-    """The short flagship name 'o3' must not match inside 'O365'/'O3DE' (Codex #106)."""
-    now = datetime.now(timezone.utc)
-    for title in ('Microsoft O365 now available to all',
-                  'O3DE engine launches a new renderer'):
-        item = {'title': title, 'description': '', 'link': 'https://techcrunch.com/1'}
-        calculate_relevance_score(item, now, [])
-        assert item['is_landmark'] is False, title
-
-    # A genuine o3 launch still qualifies.
-    real = {'title': 'OpenAI o3 launches today', 'description': '', 'link': 'https://techcrunch.com/2'}
-    calculate_relevance_score(real, now, [])
-    assert real['is_landmark'] is True
-
-
-def test_landmark_does_not_cross_the_title_description_boundary():
-    """A launch in the description must not attach to a flagship in an
-    unpunctuated title (Codex #106)."""
-    now = datetime.now(timezone.utc)
-    item = {
-        'title': 'GPT-5 review',                       # no trailing punctuation
-        'description': 'Acme launches a migration tool for teams',
-        'link': 'https://techcrunch.com/1',
-    }
-    calculate_relevance_score(item, now, [])
-    assert item['is_landmark'] is False
-
-
-def test_landmark_does_not_cross_a_sentence_boundary():
-    """A launch in a separate sentence must not attach to a flagship in another (Codex #106)."""
-    now = datetime.now(timezone.utc)
-    item = {
-        'title': 'GPT-5 tops the benchmarks this quarter',
-        'description': 'In unrelated news, a hardware startup released a new toaster.',
-        'link': 'https://techcrunch.com/1',
-    }
-    calculate_relevance_score(item, now, [])
-    assert item['is_landmark'] is False
-
-
-def test_landmark_via_high_cross_publisher_consensus():
-    """A momentum flagship covered by >= N independent publishers is a landmark even without a launch word."""
-    from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS
-    now = datetime.now(timezone.utc)
-    item = {
-        'title': 'GPT-5 impressions roundup', 'description': 'analysis',
-        'link': 'https://techcrunch.com/1',
-        'cross_publisher_domains': LANDMARK_CONSENSUS_MIN_PUBLISHERS,
-    }
-    calculate_relevance_score(item, now, [])
-    assert item['is_landmark'] is True
 
 
 def test_landmark_waives_topic_diversity_penalty():
-    """A landmark launch is NOT hit by the -12 repetition penalty; a non-landmark still is."""
+    """A landmark is NOT hit by the -12 repetition penalty; a non-landmark still is."""
+    from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS as MIN_PUBS
     now = datetime.now(timezone.utc)
 
-    landmark = {'title': 'OpenAI launches GPT-5', 'description': 'reasoning model', 'link': 'https://techcrunch.com/1'}
+    landmark = {'title': 'GPT-5 reasoning results', 'description': 'analysis',
+                'link': 'https://techcrunch.com/1', 'cross_publisher_domains': MIN_PUBS}
     score_fresh = calculate_relevance_score(dict(landmark), now, [])
     score_repeat = calculate_relevance_score(dict(landmark), now, ['LLMs'])
     assert score_repeat == pytest.approx(score_fresh)  # penalty waived
 
     # Control: a non-landmark LLM item still eats the -12.
-    plain = {'title': 'Thoughts on LLM scaling', 'description': 'an essay', 'link': 'https://techcrunch.com/2'}
+    plain = {'title': 'Thoughts on LLM scaling', 'description': 'an essay',
+             'link': 'https://techcrunch.com/2'}
     plain_fresh = calculate_relevance_score(dict(plain), now, [])
     plain_repeat = calculate_relevance_score(dict(plain), now, ['LLMs'])
     assert plain_repeat == pytest.approx(plain_fresh - 12.0)
 
 
 def test_landmark_adds_launch_bonus():
-    """The landmark bonus is exactly LANDMARK_LAUNCH_BONUS above the same item without the momentum name.
-
-    Removing the momentum name drops both the momentum bonus and landmark status,
-    so the delta is MOMENTUM_PRODUCT_BONUS + LANDMARK_LAUNCH_BONUS; the launch
-    word, source tier, and age are identical on both sides.
-    """
-    from src.config import MOMENTUM_PRODUCT_BONUS, LANDMARK_LAUNCH_BONUS
+    """A landmark scores exactly LANDMARK_LAUNCH_BONUS above the same item one
+    publisher short of the threshold (which also drops the consensus step)."""
+    from src.config import LANDMARK_LAUNCH_BONUS, CONSENSUS_SYNERGY_BONUS
+    from src.config import LANDMARK_CONSENSUS_MIN_PUBLISHERS as MIN_PUBS
     now = datetime.now(timezone.utc)
-    landmark = {'title': 'GPT-5 launches today', 'description': 'details', 'link': 'https://techcrunch.com/1'}
-    non_landmark = {'title': 'model launches today', 'description': 'details', 'link': 'https://techcrunch.com/2'}
+    landmark = {'title': 'GPT-5 reasoning results', 'description': 'details',
+                'link': 'https://techcrunch.com/1', 'cross_publisher_domains': MIN_PUBS}
+    below = {'title': 'GPT-5 reasoning results', 'description': 'details',
+             'link': 'https://techcrunch.com/1', 'cross_publisher_domains': MIN_PUBS - 1}
 
     score_landmark = calculate_relevance_score(landmark, now, [])
-    score_plain = calculate_relevance_score(non_landmark, now, [])
-    assert non_landmark['is_landmark'] is False
-    assert score_landmark == pytest.approx(score_plain + MOMENTUM_PRODUCT_BONUS + LANDMARK_LAUNCH_BONUS)
+    score_below = calculate_relevance_score(below, now, [])
+    assert below['is_landmark'] is False
+    # The extra publisher adds one consensus step as well as the landmark bonus.
+    assert score_landmark == pytest.approx(
+        score_below + CONSENSUS_SYNERGY_BONUS + LANDMARK_LAUNCH_BONUS)
 
 
 def test_fetch_news_merges_source_feeds_on_duplicate_link(monkeypatch):

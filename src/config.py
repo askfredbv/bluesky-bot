@@ -174,20 +174,22 @@ MOMENTUM_PRODUCTS: List[str] = [
 ]
 MOMENTUM_PRODUCT_BONUS: float = 4.0
 
-# Landmark launch handling (v4.25, 2026-09-03). A flagship model launch must not
-# be buried by the -12 topic-diversity penalty just because we touched its topic
-# in a recent run — that penalty is magnitude-blind and was demoting obvious
-# launches (e.g. a new Gemini) below lighter off-topic news. A story is a
-# "landmark" when it names a MOMENTUM_PRODUCTS flagship AND is framed as a launch
-# (LAUNCH_SIGNAL_KEYWORDS), OR names a flagship covered by many independent
-# publishers (>= LANDMARK_CONSENSUS_MIN_PUBLISHERS). A landmark SKIPS the
-# diversity penalty and gets LANDMARK_LAUNCH_BONUS. Keeping the gate anchored to
-# a named momentum product keeps it tight — a routine LLM think-piece never
-# qualifies. See docs/BACKLOG §2.
-LAUNCH_SIGNAL_KEYWORDS: List[str] = [
-    "launch", "release", "unveil", "introduc", "announce",
-    "now available", "general availability", "debut", "rolling out",
-]
+# Landmark handling (v4.25, 2026-09-03). A flagship model story must not be
+# buried by the -12 topic-diversity penalty just because we touched its topic in a
+# recent run — that penalty is magnitude-blind and was demoting obvious launches
+# (e.g. a new Gemini) below lighter off-topic news. A story is a "landmark" when
+# it names a MOMENTUM_PRODUCTS flagship AND at least
+# LANDMARK_CONSENSUS_MIN_PUBLISHERS independent publishers are covering it. A
+# landmark SKIPS the diversity penalty and gets LANDMARK_LAUNCH_BONUS.
+#
+# The gate is MEASURED (publisher count), not PARSED from launch wording. The
+# first cut tried to detect launch language with a regex and leaked on every
+# review round — word order, punctuation, decimal versions, mid-word stems
+# ("unreleased"), title/description bleed, short names ("o3" inside "o365").
+# Publisher count captures what we actually meant ("enough independent outlets
+# think this is news") and cannot be fooled by phrasing. Anchoring to a named
+# flagship keeps it tight: a widely-covered non-flagship story is not a landmark.
+# See docs/BACKLOG §2.
 LANDMARK_LAUNCH_BONUS: float = 6.0
 LANDMARK_CONSENSUS_MIN_PUBLISHERS: int = 3
 

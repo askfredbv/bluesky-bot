@@ -31,7 +31,6 @@ from src.config import (
     HIDDEN_GEM_SOURCES,
     LANDMARK_CONSENSUS_MIN_PUBLISHERS,
     LANDMARK_LAUNCH_BONUS,
-    LAUNCH_SIGNAL_KEYWORDS,
     MOMENTUM_PRODUCTS,
     MOMENTUM_PRODUCT_BONUS,
     PRODUCT_KEYWORDS,
@@ -119,60 +118,6 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
                 if _titles_cluster(tokens_i, tokens_j):
                     domains.add(domain_j)
         item["cross_publisher_domains"] = max(1, len(domains))
-# Landmark launch *construction*: a launch verb governing a named flagship,
-# within a few words, in either order — so the launch is about the flagship, not
-# an unrelated launch that merely mentions it as context. Raw character distance
-# was insufficient (Codex #106): "Acme launches a migration tool ... from GPT-5"
-# has the words near each other but GPT-5 is the migration source, not the thing
-# launched. Requiring launch-verb → flagship (or flagship → launch-verb) with at
-# most a few intervening words captures "OpenAI launches GPT-5" / "GPT-5 is now
-# available" while rejecting that shape.
-#
-# Built once at import from the config lists:
-#   - launch stems get a \w* tail so "launch" matches "launches"/"launched";
-#   - flagship names get a [\w.]* tail so "gemini 3" matches "gemini 3.8"/"...-pro";
-#   - the gap allows up to 3 intervening WORDS (lazy) on either side, and the
-#     separators are \W (any non-word char) rather than only whitespace, so
-#     punctuation between the verb and the flagship is tolerated — "Introducing:
-#     GPT-5" and "GPT-5, released today" match (Codex #106).
-# The match is applied per CLAUSE (text is split on sentence terminators first),
-# so a launch in the next sentence cannot reach back to a flagship in this one —
-# "GPT-5 tops the charts. A startup released a toaster." is not a landmark.
-_LANDMARK_MAX_GAP_WORDS: int = 3
-# \b anchors each alternative to a word boundary so a stem does not match
-# mid-word: without it "release\w*" fires inside "unreleased" and "launch\w*"
-# inside "prelaunch" — stories about a model that has NOT launched (Codex #106).
-_LAUNCH_ALT = "|".join(r"\b" + re.escape(k) + r"\w*" for k in LAUNCH_SIGNAL_KEYWORDS)
-# The flagship tail allows ONLY a dot-number version suffix ("gemini 3" -> "gemini
-# 3.8"), not arbitrary word chars — a bare "[\w.]*" let the short name "o3" swallow
-# "o365"/"o3de" and manufacture a landmark for unrelated products (Codex #106).
-_FLAGSHIP_ALT = "|".join(r"\b" + re.escape(p) + r"(?:\.\d+)*" for p in MOMENTUM_PRODUCTS)
-_LANDMARK_GAP = r"(?:\W+\w+){0,%d}?\W+" % _LANDMARK_MAX_GAP_WORDS
-_FLAGSHIP_LAUNCH_RE = re.compile(
-    rf"(?:{_LAUNCH_ALT}){_LANDMARK_GAP}(?:{_FLAGSHIP_ALT})"
-    rf"|(?:{_FLAGSHIP_ALT}){_LANDMARK_GAP}(?:{_LAUNCH_ALT})"
-)
-# Clause boundaries: sentence terminators. Deliberately NOT comma/colon — those
-# are intra-clause connectors ("Introducing: GPT-5", "GPT-5, released"). A period
-# is a boundary UNLESS it sits between digits — a decimal version like "3.8" must
-# stay intact, else "Gemini 3.8 launches today" would split into "gemini 3" /
-# "8 launches today" and miss the launch (Codex #106).
-_CLAUSE_SPLIT_RE = re.compile(r"[!?;]+|(?<!\d)\.|\.(?!\d)")
-
-
-def _flagship_launch_nearby(text: str) -> bool:
-    """True if any clause of `text` (already lowercased) contains a launch
-    construction about a named flagship — a launch verb governing a
-    MOMENTUM_PRODUCTS flagship within a few words, in either order.
-
-    Ties the launch to the flagship so an unrelated launch that merely mentions
-    the flagship does not manufacture a landmark (Codex #106): "OpenAI launches
-    GPT-5", "GPT-5 is now available", "Introducing: GPT-5" qualify; "Acme launches
-    a migration tool ... from GPT-5" and a launch in a separate sentence do not.
-    """
-    return any(_FLAGSHIP_LAUNCH_RE.search(clause) for clause in _CLAUSE_SPLIT_RE.split(text))
-
-
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
     score = 0.0
@@ -199,23 +144,23 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     age_hours = (datetime.now(timezone.utc) - pub_date).total_seconds() / 3600
     score -= (age_hours * 0.5)
     
-    # Landmark detection (v4.25): a flagship launch overrides the repetition
-    # penalty below and earns a bonus. Anchored to a named momentum product so a
-    # routine topic repeat never qualifies. Two shapes qualify:
-    #   - a launch CONSTRUCTION about the flagship (_flagship_launch_nearby), so
-    #     "OpenAI launches GPT-5" fires but "GPT-5 review ... Acme launches a
-    #     toaster" does not — the launch must govern the flagship (Codex #106);
-    #   - the flagship is named AND many independent publishers cover it at once
-    #     (a big flagship story even without an explicit launch word).
-    # The launch check runs on title + description joined by a period so the two
-    # metadata fields are separate clauses — a launch in the description must not
-    # attach to a flagship in an unpunctuated title (Codex #106).
-    landmark_text = f"{item['title']}. {item['description']}".lower()
+    # Landmark detection (v4.25): a named flagship that MANY INDEPENDENT
+    # PUBLISHERS are covering at once. A landmark waives the topic-diversity
+    # penalty below and earns LANDMARK_LAUNCH_BONUS, so an obvious flagship story
+    # is not buried just because we posted on its topic the run before.
+    #
+    # Deliberately measured, not parsed. An earlier version tried to detect launch
+    # *language* ("X launches GPT-5") with a regex; six Codex review rounds each
+    # found a fresh leak (word order, punctuation, decimal versions, mid-word
+    # stems like "unreleased", title/description bleed, "o3" inside "o365").
+    # Cross-publisher count measures the thing we actually meant — "enough
+    # independent outlets think this is news" — and cannot be fooled by wording.
+    # Trade-off accepted: a vendor-only announcement no other outlet has picked up
+    # yet gets no landmark. It still scores strongly on source tier + product +
+    # momentum, and by the next daily Curator run real launches clear the bar.
     is_momentum = any(p in text for p in MOMENTUM_PRODUCTS)
     publisher_count = item.get('cross_publisher_domains', 1)
-    is_landmark = _flagship_launch_nearby(landmark_text) or (
-        is_momentum and publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
-    )
+    is_landmark = is_momentum and publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
     item['is_landmark'] = is_landmark
 
     # 5. Topic Diversity Penalty — waived for landmarks.
