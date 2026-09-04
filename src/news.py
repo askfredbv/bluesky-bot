@@ -39,6 +39,7 @@ from src.config import (
 from src.logger import SafeLogger
 from src.metrics import (
     FeedFetchResult,
+    check_feed_health_alerts,
     load_feed_health,
     record_feed_attempt,
     save_feed_health,
@@ -156,7 +157,12 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # the same story across distinct publisher domains (fuzzy title match, set by
     # annotate_cross_publisher_consensus). Take the stronger of the two signals,
     # capped so a very widely-covered story does not dominate the ranking.
-    feed_count = len(item.get('source_feeds', []))
+    #
+    # feed_count counts distinct feed HOSTS, not raw feed URLs: one publisher can
+    # emit the same article on several of its own category feeds (blog.google
+    # ships it on both technology/ai and products/gemini), which is not
+    # independent corroboration and was quietly awarding a consensus bonus.
+    feed_count = len({_publisher_domain(f) for f in item.get('source_feeds', []) if f})
     publisher_count = item.get('cross_publisher_domains', 1)
     consensus_sources = min(max(feed_count, publisher_count),
                             _CROSS_PUBLISHER_MULTIPLIER_CAP + 1)
@@ -194,6 +200,19 @@ async def fetch_single_feed(
                             "Feed fetch failed or was blocked (see prior log for cause)", url=url)
             return FeedFetchResult(url=url, ok=False, entries_total=0,
                                    entries_accepted=0, error_type="FetchFailedOrBlocked")
+        # A non-2xx response is a failed fetch, not a successful one that happens
+        # to contain an error page. Without this check a feed returning 404 or 500
+        # still counted as ok=True (the HTML body just parses to zero entries), so
+        # last_ok_at refreshed every run and the "broken" health gate could never
+        # fire — a dead feed would surface only as "stale" days later, or not at
+        # all if the error page carried parseable entries.
+        if not (200 <= response.status_code < 300):
+            SafeLogger.warn("feed_fetch_http_error",
+                            "Feed returned a non-success HTTP status",
+                            url=url, status_code=response.status_code)
+            return FeedFetchResult(url=url, ok=False, entries_total=0,
+                                   entries_accepted=0,
+                                   error_type=f"HTTP{response.status_code}")
         feed = feedparser.parse(response.text)
         bozo_error_type: Optional[str] = None
         if feed.bozo:
@@ -291,6 +310,12 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         for result in results:
             record_feed_attempt(feed_health, result)
         save_feed_health(feed_health)
+        # Surface any feed that has been silently failing across the window (see
+        # check_feed_health_alerts) — a dead feed like the removed Anthropic
+        # news.rss otherwise stays invisible until someone notices the gap in
+        # coverage. Scoped to RSS_FEEDS so a just-removed feed's stale failure
+        # window does not alert forever.
+        check_feed_health_alerts(feed_health, RSS_FEEDS)
     except Exception as e:
         SafeLogger.warn(
             "feed_health_record_failed",

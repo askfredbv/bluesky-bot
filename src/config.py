@@ -69,6 +69,28 @@ GROWTH_FILE = Path("growth.json")
 
 # Feed health telemetry (Phase 1)
 FEED_HEALTH_RECENT_ATTEMPTS_LIMIT: int = 28  # ~2 weeks at 2 runs/day
+# Feed-health alerting (v4.25, 2026-09-04). Surface a feed that has died quietly,
+# so the next one is caught by a log signal rather than by noticing missing
+# coverage weeks later (as happened with the Anthropic news.rss 404).
+#
+# TWO DISTINCT SIGNALS, on purpose. An earlier single-metric version oscillated:
+# keyed on "returned zero usable entries" it false-positived on legitimately quiet
+# low-volume feeds; keyed on "returned zero raw entries" it missed feeds that
+# return entries but can never parse them. They are different failure modes and
+# forcing them into one metric cannot satisfy both (confirmed by a second opinion
+# after several review rounds went in circles).
+#
+#   BROKEN — no successful fetch in FEED_HEALTH_BROKEN_AFTER_DAYS days.
+#            Transport level: timeout, TLS, DNS, SSRF block, non-200.
+#   STALE  — fetches fine, but no usable entry in FEED_HEALTH_STALE_AFTER_DAYS
+#            days. Catches a 404-served-as-HTML, a moved feed, or a format change,
+#            while the generous threshold tolerates a genuinely quiet publisher.
+#
+# Both are time-based rather than counted over recent attempts, which sidesteps
+# the "how many runs per day" question entirely. Feeds are fetched once daily (the
+# morning Curator run only), but these thresholds hold at any cadence.
+FEED_HEALTH_BROKEN_AFTER_DAYS: int = 3
+FEED_HEALTH_STALE_AFTER_DAYS: int = 14
 
 # Post metrics telemetry (Phase 1 Step 4-5)
 POST_METRICS_CONTENT_PREVIEW_MAX_CHARS: int = 80
@@ -108,9 +130,13 @@ METADATA_FETCH_BLOCKED_DOMAINS: List[str] = []
 
 # Sage Intelligence (v4.5)
 SOURCE_TIERS: Dict[str, int] = {
-    "openai.com": 10,
-    "anthropic.com": 10,
+    "openai.com": 10,        # also matches developers.openai.com (substring)
+    "anthropic.com": 10,     # feed dropped in the claude.com rebrand (see RSS_FEEDS);
+                             # kept so anthropic.com URLs arriving via other feeds score tier-1
     "deepmind.google": 10,
+    "blog.google": 10,       # v4.25 (2026-09-03) — Google AI / product launches (The Keyword)
+    "mistral.ai": 10,        # v4.25 — Mistral AI blog (momentum: mistral large 3)
+    "blogs.nvidia.com": 7,   # v4.25 — NVIDIA blog (hardware launches; marketing-tilted, hence 7)
     "huggingface.co": 10,
     "engineering.fb.com": 10,
     "simonwillison.net": 8,
@@ -158,6 +184,7 @@ MOMENTUM_PRODUCTS: List[str] = [
     "grok 3", "grok 4", "deepseek v4", "mistral large 3",
 ]
 MOMENTUM_PRODUCT_BONUS: float = 4.0
+
 
 # Link-card thumbnails matching any of these substrings are skipped. Generic
 # org logos and default share images add visual clutter without conveying
@@ -208,10 +235,20 @@ GEMINI_MODEL_PRIORITY: List[str] = [
 ]
 
 # Image generation
-# 2026-08-31: raised 0.5 -> 1.0. Every Mentor/Strategist post now gets a
-# generated image, and Curator link cards get a generated fallback image when
-# the article has no OG thumbnail — the visual component drives likes/follows.
-IMAGE_GENERATION_PROBABILITY: float = 1.0
+# 2026-08-31: 0.5 -> 1.0, then 1.0 -> 0.85 (2026-09-04).
+#
+# SCOPE: this gates images the bot GENERATES — the Mentor/Strategist post image
+# and the Curator fallback card image used when an article has no OG thumbnail.
+# It deliberately does NOT touch an article's own OG thumbnail: that is the
+# publisher's image and part of a normal link card, and stripping it would not
+# produce a "text-only" post, just a worse-looking card. So the roll applies to
+# every generated visual, not to every post — a Curator post about an article
+# that ships its own thumbnail still shows one, as it should.
+#
+# Rationale for 0.85: the visual drives likes/follows, so most posts should carry
+# one, but an unbroken run of images reads template-like. Cost is a non-factor
+# (free AI Studio tier, ~4 calls/day); a feel choice, trivially reversible.
+IMAGE_GENERATION_PROBABILITY: float = 0.85
 # Hard bound on the image request (step 2). The image is optional, so a stalled
 # request must never block the post — on timeout we log and post without it.
 IMAGE_GENERATION_TIMEOUT_SECONDS: float = 30.0
@@ -255,7 +292,12 @@ RSS_FEEDS = [
     "https://simonwillison.net/atom/everything/",
     "https://engineering.fb.com/category/ml-ai/feed/",
     "https://arstechnica.com/tag/ai/feed/",
-    "https://www.anthropic.com/news.rss",
+    # v4.25 (2026-09-03): www.anthropic.com/news.rss REMOVED — it 404s since the
+    # claude.com rebrand and claude.com publishes no usable RSS (/blog/rss 404,
+    # /rss 403 Cloudflare-blocked). It had been silently failing every run.
+    # Anthropic/Claude news now arrives via secondary feeds + cross-publisher
+    # consensus until Anthropic republishes a feed. The feed-health alert
+    # (check_feed_health_alerts) exists so the next silent feed death surfaces.
     "https://the-decoder.com/feed/",
     "https://www.deeplearning.ai/the-batch/rss/",
     "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss",
@@ -282,6 +324,16 @@ RSS_FEEDS = [
     "https://krebsonsecurity.com/feed/",
     "https://lobste.rs/rss",
     "https://hnrss.org/best",
+    # v4.25 (2026-09-03) primary-source vendor blogs — verified live (HTTP 200,
+    # valid RSS) 2026-09-03. Closes the gap where flagship model/product launches
+    # reached us only second-hand (later, lower-tier), which stacked time-decay
+    # against them: a vendor's own announcement now enters the pool immediately at
+    # SOURCE_TIERS 10 instead of arriving hours later via a lower-tier aggregator.
+    "https://blog.google/technology/ai/rss/",   # Google AI (the Gemini-launch gap)
+    "https://blog.google/products/gemini/rss/",  # Gemini-specific, higher precision
+    "https://mistral.ai/rss.xml",                # Mistral AI blog (/news)
+    "https://developers.openai.com/rss.xml",     # OpenAI Developers (dev tooling/MCP)
+    "https://blogs.nvidia.com/feed/",            # NVIDIA (hardware launches)
 ]
 
 # Mentor mode topic pool (was 4 hardcoded entries inline in agents.py until

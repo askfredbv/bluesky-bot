@@ -7,9 +7,9 @@ import feedparser
 from src import net_safety, news
 
 
-def _safe_response(text="<rss />"):
+def _safe_response(text="<rss />", status_code=200):
     # mimic the httpx.Response surface get_with_safe_redirects returns
-    return SimpleNamespace(text=text, is_redirect=False)
+    return SimpleNamespace(text=text, is_redirect=False, status_code=status_code)
 
 
 def test_fetch_single_feed_keeps_entries_when_bozo(monkeypatch):
@@ -110,3 +110,36 @@ def test_resolver_pin_serialized_across_concurrent_fetches(monkeypatch):
 
     asyncio.run(_run())
     assert state["max"] == 1, "pinned fetches overlapped — resolver pin can be clobbered"
+
+
+def test_fetch_single_feed_treats_non_2xx_as_failed(monkeypatch):
+    """A 404/500 is a failed fetch, not a success that happens to return HTML.
+
+    Without this the error page merely parsed to zero entries, so ok stayed True,
+    last_ok_at refreshed every run, and the "broken" feed-health gate could never
+    fire — a dead feed surfaced only as "stale" days later, or not at all if the
+    error page carried parseable entries (Codex #106).
+    """
+    for status in (404, 500):
+        async def _fake_safe_get(client, url, _status=status, **kwargs):
+            return _safe_response(text="<html>Not Found</html>", status_code=_status)
+
+        monkeypatch.setattr(news, "get_with_safe_redirects", _fake_safe_get)
+        result = asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss"))
+
+        assert result.ok is False, status
+        assert result.error_type == f"HTTP{status}"
+        assert result.entries_total == 0
+        assert result.entries_accepted == 0
+
+
+def test_fetch_single_feed_still_ok_on_2xx(monkeypatch):
+    """The status check must not reject ordinary success responses."""
+    async def _fake_safe_get(client, url, **kwargs):
+        return _safe_response(status_code=200)
+
+    monkeypatch.setattr(news, "get_with_safe_redirects", _fake_safe_get)
+    monkeypatch.setattr(news.feedparser, "parse",
+                        lambda _: feedparser.FeedParserDict({"bozo": 0, "entries": []}))
+    result = asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss"))
+    assert result.ok is True

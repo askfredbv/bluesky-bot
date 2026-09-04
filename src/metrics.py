@@ -12,9 +12,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Collection, Dict, List, Optional
 
 from src.config import (
+    FEED_HEALTH_BROKEN_AFTER_DAYS,
+    FEED_HEALTH_STALE_AFTER_DAYS,
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
     GROWTH_FILE,
@@ -120,6 +122,13 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
     Bumps `last_fetch_at` always, `last_ok_at` on any successful request,
     `last_accepted_at` only when at least one entry survived lookback and
     normalisation (the strongest signal a feed is actually producing value).
+
+    `first_seen_at` is stamped once and never updated. It is the reference point
+    the health alert needs for a feed that has NEVER succeeded or never yielded a
+    usable entry: without it those stay `None` forever, so a feed that was broken
+    from its very first request could never be aged out and alerted on. Backfilled
+    via setdefault for rows written before this field existed — they get a fresh
+    grace period, which errs toward silence rather than a false alarm.
     """
     feeds = feed_health.setdefault("feeds", {})
     entry = feeds.setdefault(result.url, {
@@ -130,6 +139,7 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
     })
 
     now = _now_iso()
+    entry.setdefault("first_seen_at", now)
     entry["last_fetch_at"] = now
     if result.ok:
         entry["last_ok_at"] = now
@@ -147,6 +157,96 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
     # Trim from the left so the most recent survive.
     if len(attempts) > FEED_HEALTH_RECENT_ATTEMPTS_LIMIT:
         del attempts[:-FEED_HEALTH_RECENT_ATTEMPTS_LIMIT]
+
+
+def _iso_age_days(stamp: Optional[str], now: datetime) -> Optional[float]:
+    """Age in days of an ISO timestamp, or None if absent/unparseable."""
+    if not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now - parsed).total_seconds() / 86400.0
+
+
+def check_feed_health_alerts(
+    feed_health: Dict[str, Any],
+    configured_feeds: Optional[Collection[str]] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> List[str]:
+    """Warn on configured feeds that have quietly died. Two distinct signals.
+
+      - **broken**: no successful fetch in FEED_HEALTH_BROKEN_AFTER_DAYS days
+        (timeout / TLS / DNS / SSRF block / non-200). The feed is unreachable.
+      - **stale**: fetches fine, but no usable entry in
+        FEED_HEALTH_STALE_AFTER_DAYS days. Catches a 404-served-as-HTML page, a
+        moved feed, or a format change, while the generous threshold tolerates a
+        genuinely quiet publisher.
+
+    These are deliberately NOT merged into one metric. A single-metric version
+    oscillated between false-positiving on quiet feeds and missing feeds whose
+    entries never parse; they are different failure modes with different
+    thresholds. Time-based rather than counted over recent attempts, so the
+    thresholds do not depend on how many runs happen per day.
+
+    A feed that has NEVER succeeded (or never yielded a usable entry) is aged from
+    `first_seen_at` instead. Both directions matter: skipping such feeds entirely
+    would mean a URL that was wrong from the day it was added could never alert,
+    while treating "never" as instantly overdue would alert on every freshly added
+    feed on its first run. Ageing from first sight gives a new feed the same grace
+    period as an established one, and still catches a feed that was born broken.
+
+    `configured_feeds`, when given, restricts alerting to feeds still in RSS_FEEDS
+    — feed_health.json retains rows for removed feeds, which would otherwise alert
+    forever. Emits one WARN per alerting feed and returns their URLs.
+    """
+    now = now or datetime.now(timezone.utc)
+    alerting: List[str] = []
+    for url, entry in (feed_health.get("feeds") or {}).items():
+        if configured_feeds is not None and url not in configured_feeds:
+            continue
+        first_seen_age = _iso_age_days(entry.get("first_seen_at"), now)
+        ok_age = _iso_age_days(entry.get("last_ok_at"), now)
+        accepted_age = _iso_age_days(entry.get("last_accepted_at"), now)
+        # "Never" is measured from when we first saw the feed, not treated as
+        # infinitely old (false alarm) or infinitely young (never alerts).
+        since_ok = ok_age if ok_age is not None else first_seen_age
+        since_accepted = accepted_age if accepted_age is not None else first_seen_age
+        if since_ok is None or since_accepted is None:
+            continue  # no reference point at all — nothing to judge
+
+        if since_ok > FEED_HEALTH_BROKEN_AFTER_DAYS:
+            detail = (
+                f"no successful fetch in {since_ok:.1f} days"
+                if ok_age is not None
+                else f"never fetched successfully in {since_ok:.1f} days since first seen"
+            )
+            reason = "broken"
+        elif since_accepted > FEED_HEALTH_STALE_AFTER_DAYS:
+            detail = (
+                f"no usable entry in {since_accepted:.1f} days"
+                if accepted_age is not None
+                else f"never produced a usable entry in {since_accepted:.1f} days since first seen"
+            )
+            reason = "stale"
+        else:
+            continue
+
+        SafeLogger.warn(
+            "feed_persistently_unhealthy",
+            f"Feed looks dead ({reason}); check the URL is still live",
+            url=url,
+            reason=reason,
+            detail=detail,
+            last_ok_at=entry.get("last_ok_at"),
+            last_accepted_at=entry.get("last_accepted_at"),
+        )
+        alerting.append(url)
+    return alerting
 
 
 # ---------------------------------------------------------------------------
