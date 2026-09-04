@@ -41,6 +41,16 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ## §2 — Open issues (fix when convenient)
 
+### Curator records the top item's topic, not the one it posted (surfaced 2026-09-04)
+
+`persistence_stage` appends `news_items[0]['detected_topic']` to `recent_topics` (`main.py`, Curator branch). But the Curator is explicitly allowed to write about a *non-top* item — that is the whole point of the `chosen_link` contract added in #51, and `broadcasting_stage` already realigns the link card and `source_domain` to the chosen item. Persistence was never updated to match.
+
+Consequences, both wrong and in opposite directions:
+- The topic actually **posted** is not recorded, so it is not penalised on the next run — the diversity memory under-counts what we really published.
+- A topic that was merely **offered** is recorded, so an unrelated later story in that bucket eats the −12 penalty for a post that never happened. This is a *false* penalty, and it is one of the mechanisms behind "an obvious launch got buried" — the symptom that prompted the v4.25.0 coverage work.
+
+Fix: resolve the chosen item (by `chosen_link`) and persist *its* `detected_topic`. `chosen_link` is known in `broadcasting_stage` but is not currently threaded into `AutomationPayload` / `persistence_stage`, so the change is small plumbing plus a regression test covering the non-top-pick path. Worth doing before any larger scoring rework — it is cheap, and it changes what the data says.
+
 ### Duplicate-source-posts follow-ups (surfaced 2026-05-13)
 
 Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. **All three shipped:** #1 and #3 in `2be1148` (2026-05-14), #2 in `76f1287` (2026-05-15).
@@ -173,7 +183,7 @@ The diagnostic discipline ("never log error_type alone, always include error_msg
 
 ## §3 — Observational (wait for data)
 
-- **Semantic scoring pass — replaces the abandoned "landmark" gate.** The −12 topic-diversity penalty in `calculate_relevance_score` is magnitude-blind: it demotes a flagship launch simply because we posted on its topic the run before, which is how a real Gemini launch got buried. v4.25.0 fixed that from the *coverage* side (primary vendor feeds, so launches arrive first-hand at tier 10), but the penalty itself is untouched.
+- **Semantic scoring pass — replaces the abandoned "landmark" gate.** The −12 topic-diversity penalty in `calculate_relevance_score` is magnitude-blind: it demotes a flagship launch simply because we posted on its topic the run before, which is how a real Gemini launch got buried. v4.25.0 fixed that from the *coverage* side (primary vendor feeds, so launches arrive first-hand at tier 10), but the penalty itself is untouched. **Note the diagnosis is two-part:** the penalty is magnitude-blind *and* it is currently fed the wrong topic (see the §2 entry "Curator records the top item's topic, not the one it posted"). That second half is a plain bug and much cheaper to fix — do it first, and re-measure before assuming the scoring model needs replacing at all.
 
   **Do not rebuild an exemption gate.** Two attempts, ~11 review rounds, neither converged: (1) detect "this is a launch" from the headline with a regex — leaked on word order ("Acme launches a tool for migrating from GPT-5"), punctuation ("Introducing: GPT-5"), decimal versions ("Gemini 3.8" split on the dot), mid-word stems ("Unreleased GPT-5"), title/description bleed, short names ("o3" inside "o365"); (2) count distinct publishers covering the same flagship — leaked on headline variance (punchy titles don't cluster), alias/variant splitting ("GPT-5" vs "GPT 5"; Claude 4 / Opus 4 / Sonnet 4), and same-org domains (`openai.com` + `developers.openai.com`). Both are proxies for "importance" inferred from text, which is an unbounded problem: every fix revealed a new leak of the same kind. A second opinion (Gemini, 2026-09-04) reached the same conclusion independently, and also shot down the obvious "fix" of moving diversity to a selection-time score margin — that swaps one magic number for another on an uncalibrated scale, and removing the penalty from scoring lets the top-5 fill with variants of one story.
 
