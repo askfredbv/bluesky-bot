@@ -144,3 +144,28 @@ def test_fetch_news_merges_source_feeds_on_duplicate_link(monkeypatch):
     assert links == {'https://example.com/story', 'https://example.com/other'}
     shared = next(i for i in result if i['link'] == 'https://example.com/story')
     assert set(shared['source_feeds']) == {'https://feed-a.com/rss', 'https://feed-b.com/rss'}
+
+
+def test_consensus_ignores_same_publisher_category_feeds():
+    """One publisher emitting an article on several of its OWN category feeds is
+    not independent corroboration and must not earn a consensus bonus.
+
+    blog.google ships the same Gemini post on both technology/ai and
+    products/gemini; counting raw feed URLs awarded +1.5 for that (Codex #106).
+    """
+    from src.config import CONSENSUS_SYNERGY_BONUS
+    now = datetime.now(timezone.utc)
+
+    def score(feeds):
+        return calculate_relevance_score(
+            {'title': 'Gemini update', 'description': 'x',
+             'link': 'https://blog.google/a', 'source_feeds': feeds}, now, [])
+
+    one_google = score(['https://blog.google/technology/ai/rss/'])
+    both_google = score(['https://blog.google/technology/ai/rss/',
+                         'https://blog.google/products/gemini/rss/'])
+    two_publishers = score(['https://blog.google/technology/ai/rss/',
+                            'https://techcrunch.com/feed/'])
+
+    assert both_google == pytest.approx(one_google)          # same publisher: no bonus
+    assert two_publishers == pytest.approx(one_google + CONSENSUS_SYNERGY_BONUS)

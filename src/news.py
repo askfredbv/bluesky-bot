@@ -157,7 +157,12 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # the same story across distinct publisher domains (fuzzy title match, set by
     # annotate_cross_publisher_consensus). Take the stronger of the two signals,
     # capped so a very widely-covered story does not dominate the ranking.
-    feed_count = len(item.get('source_feeds', []))
+    #
+    # feed_count counts distinct feed HOSTS, not raw feed URLs: one publisher can
+    # emit the same article on several of its own category feeds (blog.google
+    # ships it on both technology/ai and products/gemini), which is not
+    # independent corroboration and was quietly awarding a consensus bonus.
+    feed_count = len({_publisher_domain(f) for f in item.get('source_feeds', []) if f})
     publisher_count = item.get('cross_publisher_domains', 1)
     consensus_sources = min(max(feed_count, publisher_count),
                             _CROSS_PUBLISHER_MULTIPLIER_CAP + 1)

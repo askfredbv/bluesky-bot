@@ -235,12 +235,19 @@ GEMINI_MODEL_PRIORITY: List[str] = [
 ]
 
 # Image generation
-# 2026-08-31: 0.5 -> 1.0, then 1.0 -> 0.85 (2026-09-03). Every Mentor/Strategist
-# post and every thumbnail-less Curator card is eligible for a generated image
-# (the visual component drives likes/follows), but ~1 in 7 posts now ships
-# text-only for cadence variety — an all-image feed reads more template-like.
-# Cost is a non-factor (free AI Studio tier, ~4 calls/day); this is purely a
-# feel/variety choice and trivially reversible.
+# 2026-08-31: 0.5 -> 1.0, then 1.0 -> 0.85 (2026-09-04).
+#
+# SCOPE: this gates images the bot GENERATES — the Mentor/Strategist post image
+# and the Curator fallback card image used when an article has no OG thumbnail.
+# It deliberately does NOT touch an article's own OG thumbnail: that is the
+# publisher's image and part of a normal link card, and stripping it would not
+# produce a "text-only" post, just a worse-looking card. So the roll applies to
+# every generated visual, not to every post — a Curator post about an article
+# that ships its own thumbnail still shows one, as it should.
+#
+# Rationale for 0.85: the visual drives likes/follows, so most posts should carry
+# one, but an unbroken run of images reads template-like. Cost is a non-factor
+# (free AI Studio tier, ~4 calls/day); a feel choice, trivially reversible.
 IMAGE_GENERATION_PROBABILITY: float = 0.85
 # Hard bound on the image request (step 2). The image is optional, so a stalled
 # request must never block the post — on timeout we log and post without it.
