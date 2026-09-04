@@ -141,3 +141,33 @@ def test_flagship_consensus_is_zero_without_a_named_flagship():
     ]
     annotate_flagship_consensus(items)
     assert [i["flagship_publisher_domains"] for i in items] == [0, 0]
+
+
+def test_flagship_matching_is_word_bounded():
+    """Short flagship names must not fire inside unrelated identifiers (Codex #106).
+
+    "o3" appearing inside "o365"/"o3de" previously only nudged the momentum bonus;
+    with entity-level consensus it could hand a widely-covered unrelated product a
+    landmark, so the matcher is word-bounded (with a dot-number version tail).
+    """
+    from src.news import _flagships_in
+    assert _flagships_in("microsoft o365 now available") == []
+    assert _flagships_in("o3de engine ships") == []
+    assert _flagships_in("gemini 30 rumours") == []
+    assert _flagships_in("chatgpt-5000 clone") == []
+    # genuine mentions still match, including a decimal version tail
+    assert _flagships_in("openai o3 launches") == ["o3"]
+    assert _flagships_in("gpt-5 review") == ["gpt-5"]
+    assert _flagships_in("gemini 3.8 is here") == ["gemini 3"]
+
+
+def test_flagship_consensus_ignores_unrelated_identifier_across_publishers():
+    """Three publishers covering O365 must not produce a flagship consensus."""
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("Microsoft O365 gets new features", "https://techcrunch.com/a"),
+        _item("O365 outage hits users", "https://theverge.com/b"),
+        _item("O365 pricing changes", "https://arstechnica.com/c"),
+    ]
+    annotate_flagship_consensus(items)
+    assert [i["flagship_publisher_domains"] for i in items] == [0, 0, 0]

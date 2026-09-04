@@ -120,6 +120,23 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
         item["cross_publisher_domains"] = max(1, len(domains))
 
 
+# Flagship names are matched on word boundaries, with an optional dot-number
+# version tail ("gemini 3" also matches "gemini 3.8"). A bare substring test lets
+# the two-character name "o3" fire inside unrelated identifiers like "o365" or
+# "o3de" — harmless when it only nudged the momentum bonus, but entity-level
+# consensus counts publishers PER FLAGSHIP, so three outlets covering O365 would
+# hand an unrelated product a landmark (Codex #106). One matcher is used for both
+# the momentum bonus and the consensus count so they cannot disagree.
+_FLAGSHIP_PATTERNS = [
+    (p, re.compile(r"\b" + re.escape(p) + r"(?:\.\d+)*\b")) for p in MOMENTUM_PRODUCTS
+]
+
+
+def _flagships_in(text: str) -> List[str]:
+    """Named MOMENTUM_PRODUCTS flagships present in `text` (already lowercased)."""
+    return [product for product, pattern in _FLAGSHIP_PATTERNS if pattern.search(text)]
+
+
 def annotate_flagship_consensus(items: List[Dict[str, Any]]) -> None:
     """Set item['flagship_publisher_domains']: how many DISTINCT publisher domains
     mention the same named MOMENTUM_PRODUCTS flagship anywhere in the batch.
@@ -142,7 +159,7 @@ def annotate_flagship_consensus(items: List[Dict[str, Any]]) -> None:
     for item in items:
         text = f"{item.get('title', '')} {item.get('description', '')}".lower()
         domain = _publisher_domain(item.get("link", ""))
-        matched = [p for p in MOMENTUM_PRODUCTS if p in text]
+        matched = _flagships_in(text)
         matches.append(matched)
         if domain:
             for product in matched:
@@ -169,8 +186,11 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # 2. Product Boost
     if any(kw in text for kw in PRODUCT_KEYWORDS): score += 5.0
 
-    # 2b. Momentum Product Boost — flagship 2026 models score higher than generic product news
-    if any(p in text for p in MOMENTUM_PRODUCTS): score += MOMENTUM_PRODUCT_BONUS
+    # 2b. Momentum Product Boost — flagship 2026 models score higher than generic
+    # product news. Word-boundary matched (see _flagships_in) so "o3" does not fire
+    # inside "o365".
+    flagships = _flagships_in(text)
+    if flagships: score += MOMENTUM_PRODUCT_BONUS
 
     # 3. Groundbreaking Tech Boost
     if any(kw in text for kw in GROUNDBREAKING_KEYWORDS): score += 7.0
@@ -198,7 +218,7 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # Trade-off accepted: a vendor-only announcement no other outlet has picked up
     # yet gets no landmark. It still scores strongly on source tier + product +
     # momentum, and by the next daily Curator run real launches clear the bar.
-    is_momentum = any(p in text for p in MOMENTUM_PRODUCTS)
+    is_momentum = bool(flagships)
     publisher_count = item.get('cross_publisher_domains', 1)
     landmark_publishers = max(publisher_count, item.get('flagship_publisher_domains', 0))
     is_landmark = is_momentum and landmark_publishers >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
