@@ -112,6 +112,112 @@ def test_record_feed_attempt_trims_recent_attempts_to_limit():
 
 
 # ---------------------------------------------------------------------------
+# check_feed_health_alerts
+# ---------------------------------------------------------------------------
+
+def _fill_attempts(health, url, *, ok, accepted, n, total=None):
+    # total defaults to accepted (the common case); pass it explicitly to model a
+    # feed that returned raw entries but accepted none this window (quiet feed).
+    total = accepted if total is None else total
+    for _ in range(n):
+        record_feed_attempt(
+            health,
+            FeedFetchResult(url=url, ok=ok, entries_total=total, entries_accepted=accepted),
+        )
+
+
+def _capture_warns(monkeypatch):
+    warns = []
+    monkeypatch.setattr(
+        "src.metrics.SafeLogger.warn",
+        lambda event, msg, **kw: warns.append({"event": event, **kw}),
+    )
+    return warns
+
+
+def test_feed_health_alert_fires_on_sustained_fetch_failure(monkeypatch):
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://dead", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+
+    alerting = metrics.check_feed_health_alerts(health)
+
+    assert alerting == ["https://dead"]
+    assert warns and warns[0]["reason"] == "fetch_failing"
+
+
+def test_feed_health_alert_fires_on_200_but_no_entries(monkeypatch):
+    """A feed that responds OK but returns zero raw entries (the Anthropic-404-as-HTML shape)."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://empty", ok=True, accepted=0, total=0, n=FEED_HEALTH_ALERT_WINDOW)
+
+    alerting = metrics.check_feed_health_alerts(health)
+
+    assert alerting == ["https://empty"]
+    assert warns[0]["reason"] == "returns_no_entries"
+
+
+def test_feed_health_alert_silent_for_quiet_low_volume_feed(monkeypatch):
+    """A live feed that returns entries but accepts none this window (all older than
+    the 2-day lookback) must NOT alert — total>0 means the feed is alive (Codex #106)."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://quiet", ok=True, accepted=0, total=5, n=FEED_HEALTH_ALERT_WINDOW)
+
+    assert metrics.check_feed_health_alerts(health) == []
+    assert warns == []
+
+
+def test_feed_health_alert_silent_for_healthy_feed(monkeypatch):
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://good", ok=True, accepted=4, n=FEED_HEALTH_ALERT_WINDOW)
+
+    assert metrics.check_feed_health_alerts(health) == []
+    assert warns == []
+
+
+def test_feed_health_alert_ignores_feeds_not_in_configured_set(monkeypatch):
+    """A persisted-but-removed feed (still failing in feed_health.json) must not
+    alert once it is no longer in RSS_FEEDS (Codex #106)."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://removed", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+    _fill_attempts(health, "https://kept", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+
+    alerting = metrics.check_feed_health_alerts(health, {"https://kept"})
+
+    assert alerting == ["https://kept"]  # the removed feed is skipped
+
+
+def test_feed_health_alert_needs_a_track_record(monkeypatch):
+    """Fewer than the window's worth of attempts must not alert, even if all failed."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://new", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW - 1)
+
+    assert metrics.check_feed_health_alerts(health) == []
+
+
+def test_feed_health_alert_uses_only_the_recent_window(monkeypatch):
+    """A feed that failed in the past but has recovered in the last window must not alert."""
+    from src.config import FEED_HEALTH_ALERT_WINDOW
+    _capture_warns(monkeypatch)
+    health = {"feeds": {}}
+    _fill_attempts(health, "https://recovered", ok=False, accepted=0, n=FEED_HEALTH_ALERT_WINDOW)
+    _fill_attempts(health, "https://recovered", ok=True, accepted=3, n=FEED_HEALTH_ALERT_WINDOW)
+
+    assert metrics.check_feed_health_alerts(health) == []
+
+
+# ---------------------------------------------------------------------------
 # load_feed_health / save_feed_health
 # ---------------------------------------------------------------------------
 

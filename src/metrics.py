@@ -12,9 +12,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Collection, Dict, List, Optional
 
 from src.config import (
+    FEED_HEALTH_ALERT_WINDOW,
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
     GROWTH_FILE,
@@ -147,6 +148,64 @@ def record_feed_attempt(feed_health: Dict[str, Any], result: "FeedFetchResult") 
     # Trim from the left so the most recent survive.
     if len(attempts) > FEED_HEALTH_RECENT_ATTEMPTS_LIMIT:
         del attempts[:-FEED_HEALTH_RECENT_ATTEMPTS_LIMIT]
+
+
+def check_feed_health_alerts(
+    feed_health: Dict[str, Any],
+    configured_feeds: Optional[Collection[str]] = None,
+) -> List[str]:
+    """Warn on configured feeds that have been unhealthy across the recent window.
+
+    Two failure shapes, both read from the tail of each feed's `recent_attempts`:
+      - **fetch_failing**: the last FEED_HEALTH_ALERT_WINDOW attempts were all
+        `ok=False` (timeout / TLS / SSRF-block / DNS).
+      - **returns_no_entries**: those attempts each parsed to *zero* raw entries
+        (`total == 0`) — a feed that responds but yields nothing at all (a
+        404-served-as-HTML page, a moved feed, or a format change). This is how
+        a dead feed like the Anthropic news.rss 404 surfaces, since a 404 is a
+        completed HTTP request (`ok=True`) whose body parses to zero entries.
+
+    Deliberately keyed on `total` (raw entries the feed returned), NOT `accepted`
+    (entries surviving the 2-day lookback + normalisation): a healthy but
+    low-volume feed can legitimately return entries yet accept none this window,
+    and must not be alerted on (Codex #106).
+
+    `configured_feeds`, when given, restricts alerting to feeds still in that
+    set — `feed_health.json` retains rows for feeds removed from `RSS_FEEDS`, and
+    a just-removed failing feed (e.g. the dropped Anthropic feed) would otherwise
+    alert forever on its stale failure window (Codex #106). When None, every
+    persisted feed is considered (used by unit tests).
+
+    Only alerts once a feed has at least FEED_HEALTH_ALERT_WINDOW attempts on
+    record, so a newly added feed does not warn before it has a track record.
+    Emits one WARN per alerting feed and returns their URLs (for tests/callers).
+    """
+    alerting: List[str] = []
+    for url, entry in (feed_health.get("feeds") or {}).items():
+        if configured_feeds is not None and url not in configured_feeds:
+            continue
+        attempts = entry.get("recent_attempts") or []
+        if len(attempts) < FEED_HEALTH_ALERT_WINDOW:
+            continue
+        window = attempts[-FEED_HEALTH_ALERT_WINDOW:]
+        all_failed = all(not a.get("ok", False) for a in window)
+        returns_no_entries = all((a.get("total") or 0) == 0 for a in window)
+        if not (all_failed or returns_no_entries):
+            continue
+        # all_failed implies returns_no_entries (a failed fetch returns nothing),
+        # so report the more specific transport failure when it applies.
+        reason = "fetch_failing" if all_failed else "returns_no_entries"
+        SafeLogger.warn(
+            "feed_persistently_unhealthy",
+            "Feed unhealthy across the recent window; check the URL is still live",
+            url=url,
+            reason=reason,
+            window=FEED_HEALTH_ALERT_WINDOW,
+            last_ok_at=entry.get("last_ok_at"),
+            last_accepted_at=entry.get("last_accepted_at"),
+        )
+        alerting.append(url)
+    return alerting
 
 
 # ---------------------------------------------------------------------------

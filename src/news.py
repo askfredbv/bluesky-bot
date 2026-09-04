@@ -39,6 +39,7 @@ from src.config import (
 from src.logger import SafeLogger
 from src.metrics import (
     FeedFetchResult,
+    check_feed_health_alerts,
     load_feed_health,
     record_feed_attempt,
     save_feed_health,
@@ -291,6 +292,12 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         for result in results:
             record_feed_attempt(feed_health, result)
         save_feed_health(feed_health)
+        # Surface any feed that has been silently failing across the window (see
+        # check_feed_health_alerts) — a dead feed like the removed Anthropic
+        # news.rss otherwise stays invisible until someone notices the gap in
+        # coverage. Scoped to RSS_FEEDS so a just-removed feed's stale failure
+        # window does not alert forever.
+        check_feed_health_alerts(feed_health, RSS_FEEDS)
     except Exception as e:
         SafeLogger.warn(
             "feed_health_record_failed",
