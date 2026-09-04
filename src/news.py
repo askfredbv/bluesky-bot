@@ -118,6 +118,41 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
                 if _titles_cluster(tokens_i, tokens_j):
                     domains.add(domain_j)
         item["cross_publisher_domains"] = max(1, len(domains))
+
+
+def annotate_flagship_consensus(items: List[Dict[str, Any]]) -> None:
+    """Set item['flagship_publisher_domains']: how many DISTINCT publisher domains
+    mention the same named MOMENTUM_PRODUCTS flagship anywhere in the batch.
+
+    ENTITY-level consensus, complementing the STORY-level title clustering above.
+    Title clustering needs >= 3 shared significant tokens at Jaccard >= 0.5, which
+    punchy launch headlines never reach: "OpenAI launches GPT-5", "GPT-5 is here"
+    and "Introducing GPT-5" share only {gpt, 5}, so three independent publishers
+    each report a story-level count of 1 and a broadly covered launch would miss
+    the landmark gate entirely (Codex #106). Counting publishers per flagship is
+    immune to headline wording.
+
+    Deliberately topic-level, not story-level: three outlets writing about GPT-5
+    from different angles on the same day is exactly when the topic-diversity
+    penalty should not bury it. Mutates in place; feeds the landmark gate only,
+    never the consensus-synergy bonus (which stays story-level).
+    """
+    domains_by_flagship: Dict[str, set] = {}
+    matches: List[List[str]] = []
+    for item in items:
+        text = f"{item.get('title', '')} {item.get('description', '')}".lower()
+        domain = _publisher_domain(item.get("link", ""))
+        matched = [p for p in MOMENTUM_PRODUCTS if p in text]
+        matches.append(matched)
+        if domain:
+            for product in matched:
+                domains_by_flagship.setdefault(product, set()).add(domain)
+    for item, matched in zip(items, matches):
+        item["flagship_publisher_domains"] = max(
+            (len(domains_by_flagship.get(p, ())) for p in matched), default=0
+        )
+
+
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
     score = 0.0
@@ -153,14 +188,20 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # *language* ("X launches GPT-5") with a regex; six Codex review rounds each
     # found a fresh leak (word order, punctuation, decimal versions, mid-word
     # stems like "unreleased", title/description bleed, "o3" inside "o365").
-    # Cross-publisher count measures the thing we actually meant — "enough
-    # independent outlets think this is news" — and cannot be fooled by wording.
+    # Publisher count measures the thing we actually meant — "enough independent
+    # outlets think this is news" — and cannot be fooled by wording.
+    #
+    # Takes the STRONGER of story-level clustering (cross_publisher_domains) and
+    # entity-level flagship coverage (flagship_publisher_domains). Story-level
+    # alone is not enough: punchy launch headlines share too few title tokens to
+    # cluster, so three publishers covering one launch each report 1 (Codex #106).
     # Trade-off accepted: a vendor-only announcement no other outlet has picked up
     # yet gets no landmark. It still scores strongly on source tier + product +
     # momentum, and by the next daily Curator run real launches clear the bar.
     is_momentum = any(p in text for p in MOMENTUM_PRODUCTS)
     publisher_count = item.get('cross_publisher_domains', 1)
-    is_landmark = is_momentum and publisher_count >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
+    landmark_publishers = max(publisher_count, item.get('flagship_publisher_domains', 0))
+    is_landmark = is_momentum and landmark_publishers >= LANDMARK_CONSENSUS_MIN_PUBLISHERS
     item['is_landmark'] = is_landmark
 
     # 5. Topic Diversity Penalty — waived for landmarks.
@@ -341,8 +382,11 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
     unique_unseen = [i for i in seen.values() if canonical_url(i['link']) not in seen_canonical]
 
     # Cross-publisher consensus: mark stories that multiple distinct publishers
-    # cover under different URLs, before scoring reads the signal.
+    # cover under different URLs, before scoring reads the signal. Story-level
+    # (title clustering) feeds the synergy bonus; entity-level (per flagship)
+    # feeds the landmark gate, which punchy headlines would otherwise never trip.
     annotate_cross_publisher_consensus(unique_unseen)
+    annotate_flagship_consensus(unique_unseen)
 
     # Apply Sage Scoring
     for item in unique_unseen:

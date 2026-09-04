@@ -98,3 +98,46 @@ def test_exact_url_and_cross_publisher_take_the_stronger():
     solo = dict(base, source_feeds=["f1"], cross_publisher_domains=1)
     delta = calculate_relevance_score(item, _NOW, []) - calculate_relevance_score(solo, _NOW, [])
     assert delta == pytest.approx(CONSENSUS_SYNERGY_BONUS * 3, abs=1e-3)  # max(2,4) - 1
+
+
+# ---------------------------------------------------------------------------
+# annotate_flagship_consensus — entity-level consensus for the landmark gate
+# ---------------------------------------------------------------------------
+
+def test_flagship_consensus_counts_publishers_across_worded_headlines():
+    """Punchy launch headlines share too few title tokens to cluster, so the
+    STORY-level signal reports 1 for each. Entity-level flagship counting must
+    still see three independent publishers (Codex #106)."""
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("OpenAI launches GPT-5", "https://techcrunch.com/a"),
+        _item("GPT-5 is here", "https://theverge.com/b"),
+        _item("Introducing GPT-5", "https://arstechnica.com/c"),
+    ]
+    annotate_cross_publisher_consensus(items)
+    annotate_flagship_consensus(items)
+
+    assert [i["cross_publisher_domains"] for i in items] == [1, 1, 1]   # story-level blind
+    assert [i["flagship_publisher_domains"] for i in items] == [3, 3, 3]
+
+
+def test_flagship_consensus_ignores_same_publisher_repeats():
+    """Three stories from ONE publisher must not inflate the flagship count."""
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("OpenAI launches GPT-5", "https://techcrunch.com/a"),
+        _item("GPT-5 is here", "https://techcrunch.com/b"),
+        _item("Introducing GPT-5", "https://techcrunch.com/c"),
+    ]
+    annotate_flagship_consensus(items)
+    assert [i["flagship_publisher_domains"] for i in items] == [1, 1, 1]
+
+
+def test_flagship_consensus_is_zero_without_a_named_flagship():
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("A startup ships a toaster", "https://techcrunch.com/a"),
+        _item("The toaster is here", "https://theverge.com/b"),
+    ]
+    annotate_flagship_consensus(items)
+    assert [i["flagship_publisher_domains"] for i in items] == [0, 0]

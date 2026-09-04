@@ -142,6 +142,30 @@ def test_landmark_requires_flagship_plus_publisher_consensus():
     assert no_flagship['is_landmark'] is False
 
 
+def test_landmark_fires_for_a_broadly_covered_launch_with_varied_headlines():
+    """End-to-end guard for the motivating case (Codex #106).
+
+    Three independent publishers cover one flagship launch with short, differently
+    worded headlines. Story-level title clustering cannot group them, so the
+    landmark gate must come from entity-level flagship consensus — otherwise the
+    obvious launch takes the -12 diversity penalty it exists to dodge.
+    """
+    from src.news import annotate_cross_publisher_consensus, annotate_flagship_consensus
+    now = datetime.now(timezone.utc)
+    items = [
+        {'title': 'OpenAI launches GPT-5', 'description': '', 'link': 'https://techcrunch.com/a'},
+        {'title': 'GPT-5 is here', 'description': '', 'link': 'https://theverge.com/b'},
+        {'title': 'Introducing GPT-5', 'description': '', 'link': 'https://arstechnica.com/c'},
+    ]
+    annotate_cross_publisher_consensus(items)
+    annotate_flagship_consensus(items)
+    for item in items:
+        calculate_relevance_score(item, now, ['LLMs'])  # topic already used recently
+
+    assert [i['cross_publisher_domains'] for i in items] == [1, 1, 1]  # story-level is blind here
+    assert all(i['is_landmark'] for i in items)
+
+
 def test_landmark_is_not_inferred_from_launch_wording():
     """Launch *language* alone no longer creates a landmark (v4.25 simplification).
 
