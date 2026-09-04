@@ -1,6 +1,6 @@
 [project]
 name = "bluesky-bot"
-version = "4.24.0"
+version = "4.25.0"
 description = "AI/tech curation + IT-mentorship bot posting to Bluesky and Mastodon."
 requires-python = ">=3.11"
 
