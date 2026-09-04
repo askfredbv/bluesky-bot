@@ -120,11 +120,12 @@ def test_record_feed_attempt_trims_recent_attempts_to_limit():
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
 
 
-def _feed(*, ok_days_ago=None, accepted_days_ago=None):
-    """A feed_health entry with last_ok_at / last_accepted_at set N days back."""
+def _feed(*, ok_days_ago=None, accepted_days_ago=None, first_seen_days_ago=0):
+    """A feed_health entry with its timestamps set N days back (None = never)."""
     def stamp(days):
         return None if days is None else (_NOW - timedelta(days=days)).isoformat()
-    return {"last_ok_at": stamp(ok_days_ago),
+    return {"first_seen_at": stamp(first_seen_days_ago),
+            "last_ok_at": stamp(ok_days_ago),
             "last_accepted_at": stamp(accepted_days_ago),
             "recent_attempts": []}
 
@@ -161,10 +162,48 @@ def test_feed_health_alert_stale_when_fetching_but_never_usable(monkeypatch):
 
 
 def test_feed_health_alert_stale_when_no_usable_entry_ever(monkeypatch):
-    """Fetches fine but has never produced a usable entry — a wrong/moved URL."""
+    """Fetches fine but has never produced a usable entry, and has had long enough
+    to — a wrong or moved URL. Aged from first_seen_at."""
+    from src.config import FEED_HEALTH_STALE_AFTER_DAYS
     _capture_warns(monkeypatch)
-    health = {"feeds": {"https://wrong": _feed(ok_days_ago=0, accepted_days_ago=None)}}
+    health = {"feeds": {"https://wrong": _feed(
+        ok_days_ago=0, accepted_days_ago=None,
+        first_seen_days_ago=FEED_HEALTH_STALE_AFTER_DAYS + 1)}}
     assert metrics.check_feed_health_alerts(health, now=_NOW) == ["https://wrong"]
+
+
+def test_feed_health_alert_gives_a_new_feed_its_grace_period(monkeypatch):
+    """A freshly added feed whose first run accepts nothing must NOT alert.
+
+    Treating last_accepted_at=None as instantly overdue alerted on every newly
+    added feed on day one (Codex #106)."""
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {"https://new": _feed(
+        ok_days_ago=0, accepted_days_ago=None, first_seen_days_ago=0)}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == []
+    assert warns == []
+
+
+def test_feed_health_alert_catches_a_feed_broken_since_it_was_added(monkeypatch):
+    """A URL that never once fetched must still alert — aged from first_seen_at.
+
+    Skipping feeds with last_ok_at=None meant a typo'd URL could never alert
+    (Codex #106)."""
+    from src.config import FEED_HEALTH_BROKEN_AFTER_DAYS
+    warns = _capture_warns(monkeypatch)
+    health = {"feeds": {"https://typo": _feed(
+        ok_days_ago=None, accepted_days_ago=None,
+        first_seen_days_ago=FEED_HEALTH_BROKEN_AFTER_DAYS + 1)}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == ["https://typo"]
+    assert warns[0]["reason"] == "broken"
+
+
+def test_feed_health_alert_new_broken_feed_waits_out_the_threshold(monkeypatch):
+    """...but not before the broken threshold has elapsed."""
+    _capture_warns(monkeypatch)
+    health = {"feeds": {"https://justadded": _feed(
+        ok_days_ago=None, accepted_days_ago=None, first_seen_days_ago=0)}}
+    assert metrics.check_feed_health_alerts(health, now=_NOW) == []
 
 
 def test_feed_health_alert_silent_for_quiet_low_volume_feed(monkeypatch):
@@ -186,10 +225,11 @@ def test_feed_health_alert_silent_for_healthy_feed(monkeypatch):
     assert warns == []
 
 
-def test_feed_health_alert_skips_feed_with_no_track_record(monkeypatch):
-    """A feed that has never fetched successfully has no baseline to judge."""
+def test_feed_health_alert_skips_entry_with_no_reference_point(monkeypatch):
+    """No timestamps at all (a legacy row) gives nothing to measure against."""
     _capture_warns(monkeypatch)
-    health = {"feeds": {"https://new": _feed(ok_days_ago=None, accepted_days_ago=None)}}
+    health = {"feeds": {"https://legacy": {"last_ok_at": None, "last_accepted_at": None,
+                                           "recent_attempts": []}}}
     assert metrics.check_feed_health_alerts(health, now=_NOW) == []
 
 
