@@ -171,3 +171,50 @@ def test_flagship_consensus_ignores_unrelated_identifier_across_publishers():
     ]
     annotate_flagship_consensus(items)
     assert [i["flagship_publisher_domains"] for i in items] == [0, 0, 0]
+
+
+def test_flagship_family_normalizes_aliases_and_variants():
+    """Aliases and model variants of one family share a canonical key (Codex #106)."""
+    from src.news import _flagship_family
+    assert _flagship_family("gpt-5") == _flagship_family("gpt 5")
+    assert _flagship_family("claude 4") == _flagship_family("claude opus 4") \
+        == _flagship_family("claude sonnet 4")
+    assert _flagship_family("deepseek v4") == "deepseek4"
+    # genuinely different versions must NOT merge
+    assert _flagship_family("grok 3") != _flagship_family("grok 4")
+
+
+def test_flagship_consensus_counts_across_aliases():
+    """Publishers split across "GPT-5" and "GPT 5" still form one consensus."""
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("OpenAI launches GPT-5", "https://techcrunch.com/a"),
+        _item("GPT 5 is here", "https://theverge.com/b"),
+        _item("Introducing GPT-5", "https://arstechnica.com/c"),
+    ]
+    annotate_flagship_consensus(items)
+    assert [i["flagship_publisher_domains"] for i in items] == [3, 3, 3]
+
+
+def test_flagship_consensus_counts_across_model_variants():
+    """Claude 4 / Opus 4 / Sonnet 4 are one family launch, not three lone stories."""
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("Claude 4 launches", "https://techcrunch.com/a"),
+        _item("Claude Opus 4 benchmarks", "https://theverge.com/b"),
+        _item("Claude Sonnet 4 is here", "https://arstechnica.com/c"),
+    ]
+    annotate_flagship_consensus(items)
+    assert [i["flagship_publisher_domains"] for i in items] == [3, 3, 3]
+
+
+def test_flagship_consensus_keeps_distinct_versions_apart():
+    """A Grok 3 story must not borrow consensus from Grok 4 coverage."""
+    from src.news import annotate_flagship_consensus
+    items = [
+        _item("Grok 3 review", "https://techcrunch.com/a"),
+        _item("Grok 4 launches", "https://theverge.com/b"),
+        _item("Grok 4 benchmarks", "https://arstechnica.com/c"),
+    ]
+    annotate_flagship_consensus(items)
+    assert [i["flagship_publisher_domains"] for i in items] == [1, 2, 2]

@@ -137,6 +137,33 @@ def _flagships_in(text: str) -> List[str]:
     return [product for product, pattern in _FLAGSHIP_PATTERNS if pattern.search(text)]
 
 
+def _flagship_family(product: str) -> str:
+    """Canonical key grouping aliases and variants of one flagship family.
+
+    Consensus must be counted per FAMILY, not per configured string: publishers
+    write the same launch differently, and MOMENTUM_PRODUCTS carries both spelling
+    aliases and model variants. Without this, three outlets split across "GPT-5"
+    and "GPT 5" score 2/1/2, and "Claude 4" / "Claude Opus 4" / "Claude Sonnet 4"
+    score 1/1/1 — neither reaches the threshold, so a broadly covered launch is
+    still penalised (Codex #106).
+
+    Derived algorithmically (leading brand token + version digits), NOT from a
+    hand-maintained alias table: MOMENTUM_PRODUCTS is auto-refreshed monthly by
+    the refresh-momentum workflow, so a manual map would silently drift.
+        "gpt-5" / "gpt 5"                                    -> "gpt5"
+        "claude 4" / "claude opus 4" / "claude sonnet 4"      -> "claude4"
+        "deepseek v4" -> "deepseek4";  "grok 3" -> "grok3" (distinct from grok4)
+    """
+    tokens = re.findall(r"[a-z]+|\d+", product.lower())
+    brand = next((t for t in tokens if t.isalpha()), "")
+    digits = "".join(t for t in tokens if t.isdigit())
+    return f"{brand}{digits}"
+
+
+# product string -> family key, resolved once at import.
+_FLAGSHIP_FAMILY = {product: _flagship_family(product) for product in MOMENTUM_PRODUCTS}
+
+
 def annotate_flagship_consensus(items: List[Dict[str, Any]]) -> None:
     """Set item['flagship_publisher_domains']: how many DISTINCT publisher domains
     mention the same named MOMENTUM_PRODUCTS flagship anywhere in the batch.
@@ -163,10 +190,11 @@ def annotate_flagship_consensus(items: List[Dict[str, Any]]) -> None:
         matches.append(matched)
         if domain:
             for product in matched:
-                domains_by_flagship.setdefault(product, set()).add(domain)
+                domains_by_flagship.setdefault(_FLAGSHIP_FAMILY[product], set()).add(domain)
     for item, matched in zip(items, matches):
         item["flagship_publisher_domains"] = max(
-            (len(domains_by_flagship.get(p, ())) for p in matched), default=0
+            (len(domains_by_flagship.get(_FLAGSHIP_FAMILY[p], ())) for p in matched),
+            default=0,
         )
 
 
