@@ -41,7 +41,7 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ## §2 — Open issues (fix when convenient)
 
-### Curator records the top item's topic, not the one it posted (surfaced 2026-09-04)
+### Curator topic memory records the wrong topic, and records it even when nothing shipped (surfaced 2026-09-04)
 
 `persistence_stage` appends `news_items[0]['detected_topic']` to `recent_topics` (`main.py`, Curator branch). But the Curator is explicitly allowed to write about a *non-top* item — that is the whole point of the `chosen_link` contract added in #51, and `broadcasting_stage` already realigns the link card and `source_domain` to the chosen item. Persistence was never updated to match.
 
@@ -49,7 +49,13 @@ Consequences, both wrong and in opposite directions:
 - The topic actually **posted** is not recorded, so it is not penalised on the next run — the diversity memory under-counts what we really published.
 - A topic that was merely **offered** is recorded, so an unrelated later story in that bucket eats the −12 penalty for a post that never happened. This is a *false* penalty, and it is one of the mechanisms behind "an obvious launch got buried" — the symptom that prompted the v4.25.0 coverage work.
 
-Fix: resolve the chosen item (by `chosen_link`) and persist *its* `detected_topic`. `chosen_link` is known in `broadcasting_stage` but is not currently threaded into `AutomationPayload` / `persistence_stage`, so the change is small plumbing plus a regression test covering the non-top-pick path. Worth doing before any larger scoring rework — it is cheap, and it changes what the data says.
+**Second, independent half — the topic is recorded even when no post went live.** `main()` calls `persistence_stage` unconditionally, and `AutomationPayload` drops the `bsky_sent_uris` / `mastodon_sent_ids` that `BroadcastPayload` carries. So a run where the model chain exhausted (`broadcast_skipped_no_content`) or where both platform broadcasts failed still appends a topic to `recent_topics` — and a later story eats −12 for a post that never happened. This affects *every* Curator run that fails to deliver, not just non-top picks.
+
+Fix, one change covering both halves: thread `chosen_link` **and** delivery status into `AutomationPayload` / `persistence_stage`; persist the *chosen* item's `detected_topic`, and only when at least one platform actually delivered. Regression tests for both paths: a non-top pick records the chosen topic, and a run with no successful delivery records nothing.
+
+Open question while in there: `seen_data["links"]` is updated on the same unconditional path, so a failed run also marks its articles as seen and they are never reconsidered. That may be deliberate (avoid re-offering stale items) or the same bug in a second place — decide explicitly rather than by accident.
+
+Worth doing before any larger scoring rework — it is cheap, and it changes what the data says.
 
 ### Duplicate-source-posts follow-ups (surfaced 2026-05-13)
 
