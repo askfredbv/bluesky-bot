@@ -1042,3 +1042,173 @@ async def test_pioneer_post_without_link_field_skips_url_check(monkeypatch):
     )
 
     assert len(content) == 1
+
+
+# ---------------------------------------------------------------------------
+# Mention bookkeeping (freeze audit X5, found by Codex).
+#
+# replied_to used to be persisted once, after the whole mention loop, with
+# `update_replied_to(lambda _: list(replied_to))`. A failure on a later mention
+# skipped that write entirely, so replies that had already reached real people
+# left no record and the next run sent them again.
+# ---------------------------------------------------------------------------
+
+
+def _mention(uri: str, text: str = "Any advice on architecture tradeoffs?"):
+    class DummyMention:
+        reason = "mention"
+        is_read = False
+
+        class record:
+            pass
+
+        class author:
+            handle = "alice.example"
+
+    DummyMention.uri = uri
+    DummyMention.cid = f"cid-{uri[-1]}"
+    DummyMention.record.text = text
+    return DummyMention()
+
+
+def _client_for(mentions, sent_posts):
+    class DummyNotifications:
+        notifications = mentions
+
+    class DummyNotificationAPI:
+        async def list_notifications(self):
+            return DummyNotifications()
+
+    class DummyBsky:
+        notification = DummyNotificationAPI()
+
+    class DummyApp:
+        bsky = DummyBsky()
+
+    class DummyClient:
+        app = DummyApp()
+
+        async def send_post(self, text, reply_to):
+            sent_posts.append({"text": text, "reply_to": reply_to})
+
+    return DummyClient()
+
+
+@pytest.mark.asyncio
+async def test_a_reply_is_recorded_before_a_later_mention_can_fail(monkeypatch):
+    """The first reply landed. The second mention blows up. The first must still
+    be recorded, or the next run replies to that person a second time."""
+    sent_posts = []
+    replied_state = []
+    generate_calls = []
+
+    def exploding_generate(*_args, **_kwargs):
+        generate_calls.append(1)
+        if len(generate_calls) == 1:
+            return "A perfectly good reply."
+        raise RuntimeError("model refused the second mention")
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)  # never skip
+    monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", exploding_generate)
+
+    mentions = [_mention("at://mention/1"), _mention("at://mention/2")]
+    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+
+    assert len(sent_posts) == 1, "only the first mention should have been answered"
+    assert "at://mention/1" in replied_state, "the answered mention must be recorded"
+    assert "at://mention/2" not in replied_state, "the failed mention must stay unanswered"
+
+
+@pytest.mark.asyncio
+async def test_a_deliberate_skip_is_recorded_immediately(monkeypatch):
+    """A cadence skip consumes the mention too; losing it means reconsidering
+    someone the bot already decided not to answer."""
+    sent_posts = []
+    replied_state = []
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.0)  # always skip
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+
+    mentions = [_mention("at://mention/9")]
+    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+
+    assert sent_posts == []
+    assert "at://mention/9" in replied_state
+
+
+@pytest.mark.asyncio
+async def test_recording_a_mention_merges_into_existing_state(monkeypatch):
+    """The mutator appends to the state it is handed rather than replacing it
+    with a snapshot from the top of the run."""
+    sent_posts = []
+    replied_state = ["at://mention/old"]
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)
+    monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "Reply text.")
+
+    mentions = [_mention("at://mention/new")]
+    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+
+    assert replied_state == ["at://mention/old", "at://mention/new"]
+
+
+async def _noop():
+    return None
+
+
+@pytest.mark.asyncio
+async def test_a_concurrently_recorded_mention_is_not_clobbered(monkeypatch):
+    """Another writer records a mention after this run's initial read.
+
+    The old end-of-loop write was `lambda _: list(replied_to)` — it ignored the
+    state read under the lock and replaced the whole list with a snapshot seeded
+    at the top of the run, dropping anything recorded in between."""
+    sent_posts = []
+    replied_state: list = []
+    reads = {"n": 0}
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        reads["n"] += 1
+        if reads["n"] == 1:
+            # This run's initial read sees an empty list...
+            seen_by_this_run = mutator(replied_state)
+            # ...and a different writer lands its own mention immediately after.
+            replied_state = list(seen_by_this_run) + ["at://mention/from-elsewhere"]
+            return seen_by_this_run
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)
+    monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "Reply text.")
+
+    mentions = [_mention("at://mention/ours")]
+    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+
+    assert "at://mention/from-elsewhere" in replied_state, "a concurrent record was clobbered"
+    assert "at://mention/ours" in replied_state
