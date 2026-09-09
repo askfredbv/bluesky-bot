@@ -145,3 +145,67 @@ def test_load_gist_state_wrapper_still_returns_none_on_failure(monkeypatch):
     assert state_store._load_gist_state("pending_replies.json") is None
 
 
+
+
+def _no_local_state(monkeypatch, tmp_path):
+    """No Gist, no STATE_STORE, no local file -- a fresh Actions runner."""
+    monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
+    monkeypatch.delenv("STATE_STORE_URL", raising=False)
+
+
+def test_strict_seen_read_is_untrusted_when_the_gist_is_unreachable(monkeypatch, tmp_path):
+    """An unreachable Gist plus no fallback state is UNKNOWN, not empty.
+
+    seen_articles.json is gitignored, so a fresh Actions runner has no local copy
+    and STATE_STORE_URL is normally unset. One failed Gist GET therefore walks the
+    whole chain to the empty default -- which must not be written back."""
+    _no_local_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, False))
+
+    data, trusted = state_store.load_seen_articles_strict()
+
+    assert data == {"links": [], "recent_topics": [], "pioneer_recent": []}
+    assert trusted is False
+
+
+def test_strict_seen_read_is_trusted_on_a_genuine_first_run(monkeypatch, tmp_path):
+    """A reachable Gist with no file yet is a legitimate empty, and must stay
+    writable -- otherwise the very first run could never persist anything."""
+    _no_local_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, True))
+
+    data, trusted = state_store.load_seen_articles_strict()
+
+    assert data == {"links": [], "recent_topics": [], "pioneer_recent": []}
+    assert trusted is True
+
+
+def test_update_seen_articles_skips_the_write_on_an_untrusted_read(monkeypatch, tmp_path):
+    """Missing one run's bookkeeping beats erasing every seen link."""
+    _no_local_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: ({"links": []}, False))
+    saved, mutated = [], []
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d))
+
+    def mutator(current):
+        mutated.append(current)
+        return {"links": ["https://new"]}
+
+    state_store.update_seen_articles(mutator)
+
+    assert saved == [], "an untrusted read must not be written back"
+    assert mutated == [], "the mutator must not even run"
+
+
+def test_update_seen_articles_hands_the_mutator_the_fresh_read(monkeypatch, tmp_path):
+    """The mutator receives the state read under the lock. Callers that ignore it
+    and return an earlier snapshot defeat both the lock and the trust guard."""
+    _no_local_state(monkeypatch, tmp_path)
+    fresh = {"links": ["https://already-seen"], "recent_topics": [], "pioneer_recent": []}
+    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: (fresh, True))
+    saved = []
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d))
+
+    state_store.update_seen_articles(lambda current: {**current, "links": current["links"] + ["https://new"]})
+
+    assert saved == [{"links": ["https://already-seen", "https://new"], "recent_topics": [], "pioneer_recent": []}]

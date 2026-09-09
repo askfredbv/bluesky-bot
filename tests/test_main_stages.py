@@ -819,6 +819,44 @@ async def test_persistence_stage_seen_link_is_canonicalised(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_persistence_stage_appends_to_the_state_it_is_handed(monkeypatch):
+    """The mutator must build on the state update_seen_articles just re-read under
+    the lock, not on the copy this run loaded back in content_prep.
+
+    persistence_stage used to pass `lambda _: seen_data`, discarding the fresh read.
+    When the content_prep load had failed -- seen_articles.json is gitignored, so a
+    fresh Actions runner has no local copy and STATE_STORE_URL is normally unset,
+    meaning one failed Gist GET walks the chain to the empty default -- that empty
+    snapshot was written straight over the real state. Every seen link, recent topic
+    and Pioneer cooldown, gone on a transient read blip. It also made the lock
+    pointless: take it, re-read, discard the read."""
+    existing = {
+        "links": ["https://old-1", "https://old-2"],
+        "recent_topics": ["LLMs"],
+        "pioneer_recent": [{"id": "ada-lovelace", "posted_at": "2026-09-01T00:00:00+00:00"}],
+    }
+    captured = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: captured.update(value=t(existing)))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        # Deliberately stale and empty: this is what a failed content_prep read
+        # produces, and it must NOT be what gets written.
+        seen_data={"links": [], "recent_topics": [], "pioneer_recent": []},
+        news_items=[{"link": "https://new", "detected_topic": "Compute/HW"}],
+        delivered=True,
+        posted_link="https://new",
+        posted_topic_category="Compute/HW",
+    )
+    await main.persistence_stage(payload)
+
+    assert captured["value"]["links"] == ["https://old-1", "https://old-2", "https://new"]
+    assert captured["value"]["recent_topics"] == ["LLMs", "Compute/HW"]
+    # Untouched history survives a write that does not concern it.
+    assert captured["value"]["pioneer_recent"] == existing["pioneer_recent"]
+
+
+@pytest.mark.asyncio
 async def test_persistence_stage_writes_nothing_when_nothing_was_delivered(monkeypatch):
     """A run that reached no platform must leave every post-dependent cooldown alone.
 

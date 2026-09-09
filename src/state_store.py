@@ -292,32 +292,71 @@ def _ensure_pioneer_field(data: Dict[str, Any]) -> Dict[str, Any]:
     if "pioneer_recent" not in data:
         data["pioneer_recent"] = []
     return data
-def load_seen_articles() -> Dict[str, Any]:
-    """Load seen state including links, recent topics, and pioneer cooldown."""
+def load_seen_articles_strict() -> Tuple[Dict[str, Any], bool]:
+    """``load_seen_articles``, plus whether the result is safe to write back.
+
+    ``trusted=False`` means the Gist read itself failed AND no other tier supplied
+    real state. The empty default that comes back then means "could not read", not
+    "no state exists" — writing it back erases every seen link, recent topic and
+    Pioneer cooldown the bot has accumulated.
+
+    That is not hypothetical. ``seen_articles.json`` is gitignored, so a fresh
+    GitHub Actions runner has no local copy, and ``STATE_STORE_URL`` is usually
+    unset. One transient Gist GET failure therefore walks the whole chain to the
+    empty default. This is the same distinction ``_load_gist_state_strict`` draws
+    for ``pending_replies.json`` (Codex review, 2026-06-12); it was never extended
+    to the seen state, which is the larger loss of the two.
+    """
     default: Dict[str, Any] = {"links": [], "recent_topics": [], "pioneer_recent": []}
     # 1. Try Gist
-    gist_data = _load_gist_state("seen_articles.json")
+    gist_data, gist_trusted = _load_gist_state_strict("seen_articles.json")
     if isinstance(gist_data, dict) and "links" in gist_data and "recent_topics" in gist_data:
-        return _ensure_pioneer_field(gist_data)
+        return _ensure_pioneer_field(gist_data), True
     # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("seen_articles")
     if isinstance(remote_data, dict) and "links" in remote_data and "recent_topics" in remote_data:
-        return _ensure_pioneer_field(remote_data)
+        return _ensure_pioneer_field(remote_data), True
     if isinstance(remote_data, list):
         migrated = {"links": remote_data, "recent_topics": [], "pioneer_recent": []}
         _save_state_to_store("seen_articles", migrated)
-        return migrated
+        return migrated, True
     # 3. Local file fallback
+    local_exists = SEEN_FILE.exists() or SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".bak").exists()
     data = _load_json_with_repair(
         SEEN_FILE,
         lambda: default,
         migrate_list_to_seen_shape=True
     )
     if isinstance(data, dict) and "links" in data and "recent_topics" in data:
-        return _ensure_pioneer_field(data)
+        # An absent local file yields the well-shaped default, which is
+        # indistinguishable from genuinely-empty state. Real local state (the
+        # file is there) is trustworthy on its own; the synthesised default is
+        # only trustworthy if the Gist read ahead of it actually succeeded.
+        return _ensure_pioneer_field(data), (local_exists or gist_trusted)
+    # 4. Nothing supplied real state. Whether the empty default is trustworthy
+    #    depends entirely on whether the Gist read succeeded: a reachable Gist
+    #    with no file yet is a legitimate first run, an unreachable one is not.
+    if not gist_trusted:
+        SafeLogger.error(
+            "seen_articles_read_untrusted",
+            "Seen-state read failed and no fallback tier had state; treating empty as UNKNOWN",
+        )
+        return default, False
     SafeLogger.warn("seen_articles_format_repaired", "Unexpected seen_articles format detected; repairing to default shape")
     _atomic_write_json(SEEN_FILE, default)
-    return default
+    return default, True
+
+
+def load_seen_articles() -> Dict[str, Any]:
+    """Load seen state including links, recent topics, and pioneer cooldown.
+
+    Thin wrapper over ``load_seen_articles_strict`` that drops the trust flag,
+    preserving the original contract for read-only callers. Anything that will
+    WRITE the result back must use the strict variant and honour ``trusted``.
+    """
+    return load_seen_articles_strict()[0]
+
+
 def save_seen_articles(seen_data: Dict[str, Any]) -> None:
     if _save_gist_state("seen_articles.json", seen_data):
         return
@@ -355,10 +394,27 @@ def save_replied_to(replied_ids: List[str]) -> None:
     except Exception as e:
         SafeLogger.error("replied_to_save_failed", "Failed to save replied state", exception=e)
 def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
-    """Lock-protected read-modify-write for seen_articles.json."""
+    """Lock-protected read-modify-write for seen_articles.json.
+
+    Skips the write entirely when the read could not be trusted. An untrusted
+    read yields the empty default, and saving that would replace the real state
+    with nothing — one transient Gist failure costing every seen link, recent
+    topic and Pioneer cooldown. Missing one run's bookkeeping is the cheaper
+    failure, the same trade AGENTS.md principle 2 makes for content.
+
+    The mutator is handed the state just read under the lock. Callers must apply
+    their changes to THAT value rather than returning a snapshot captured earlier
+    in the run — a stale snapshot defeats both the lock and this guard.
+    """
     lock_path = SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".lock")
     with _file_lock(lock_path):
-        current = load_seen_articles()
+        current, trusted = load_seen_articles_strict()
+        if not trusted:
+            SafeLogger.error(
+                "seen_articles_update_skipped",
+                "Seen-state read was untrusted; skipping the write rather than erasing history",
+            )
+            return current
         updated = mutator(current)
         save_seen_articles(updated)
     return updated
