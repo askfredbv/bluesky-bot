@@ -406,21 +406,30 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         )
     # Mastodon-only discovery tags (v4.26): named per-post by a small model
     # call that reads the finished text, so they describe THIS post rather
-    # than its category. Best-effort — returns [] on any failure and the
-    # post ships untagged. The Bluesky copy never gets tags.
-    mastodon_tags: List[str] = []
-    if creds.mastodon_access_token:
-        mastodon_tags = await generate_mastodon_tags(
+    # than its category. Best-effort — [] on any failure, and the post
+    # ships untagged. The Bluesky copy never gets tags.
+    #
+    # Tagging is awaited INSIDE the Mastodon coroutine, not before the
+    # gather below. Awaiting it here delayed both platforms — Bluesky sat
+    # waiting on a decoration it never receives, for up to the tag budget
+    # (Codex review, 2026-09-09). Now the two broadcasts start together and
+    # only the Mastodon side pays for its own tags.
+    async def _tag_and_post_mastodon():
+        tags = await generate_mastodon_tags(
             creds.gemini_api_key, content_list, model_priority=active_models
         )
-    broadcast_tasks.append(post_to_mastodon(
-        creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
-        # Curator has no post image, but if we generated a fallback for the
-        # (Bluesky) card, attach it to Mastodon too so both platforms show it.
-        image_bytes=image_bytes or curator_fallback_image,
-        thread_pause_profile=thread_pause_profile,
-        tags=mastodon_tags,
-    ))
+        return await post_to_mastodon(
+            creds.mastodon_access_token, creds.mastodon_api_base_url,
+            content_list,
+            # Curator has no post image, but if we generated a fallback for
+            # the (Bluesky) card, attach it to Mastodon too so both
+            # platforms show it.
+            image_bytes=image_bytes or curator_fallback_image,
+            thread_pause_profile=thread_pause_profile,
+            tags=tags,
+        )
+
+    broadcast_tasks.append(_tag_and_post_mastodon())
 
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     for r in results:

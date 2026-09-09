@@ -49,6 +49,13 @@ THREAD_PAUSE_PROFILES = {
 }
 DEFAULT_THREAD_PAUSE_PROFILE: str = "normal"
 HASHTAG_OPTIONAL_MIN_CHARS: int = 110
+# The hashtag ceiling for a single post, shared by the generated-content
+# voice trim (agents._strip_excess_hashtags) and the Mastodon tag appender
+# (broadcasters.apply_mastodon_tags). One number: the appender allocates
+# only the allowance the post has not already spent, so a post that already
+# carries two hashtags gets no discovery tags rather than four. Was
+# agents.MAX_HASHTAGS_PER_POST until v4.26.
+MAX_HASHTAGS_PER_POST: int = 2
 MIN_THREAD_POSTS: int = 1
 MAX_THREAD_POSTS: int = 5
 # v4.21 (2026-05-21): Dutch removed. 7 of 25 recent posts shipped in
@@ -59,28 +66,43 @@ MAX_THREAD_POSTS: int = 5
 LANGUAGE_OPTIONS: List[str] = ["English"]
 MENTION_SANITIZE_MAX_CHARS: int = 500
 
-# ─ Mastodon discovery tags (v4.26, 2026-09-09) ─────────────────────────
+# ── Mastodon discovery tags (v4.26, 2026-09-09) ─────────────────────────
 # Appended to the Mastodon copy at broadcast time; the Bluesky copy gets
 # none. Mastodon has no algorithmic feed, so a followed hashtag is how
 # people find posts there; Bluesky's Discover feed does that job instead.
-# Not a voice change: the post is generated once, platform-neutral, and the
-# STYLE_GUIDELINES zero-hashtag rule is unchanged. See AGENTS.md #7.
+# The post is generated once, platform-neutral. See AGENTS.md #7.
 #
-# The tags are named per-post by a small follow-up model call that reads the
-# finished text (agents.generate_mastodon_tags), NOT drawn from a fixed
-# per-category list. A fixed list would put the same two tags on every
-# Mentor post forever — a bot tell in the profile view, and useless in a tag
-# timeline where the point is that the tag describes THIS post.
-MASTODON_TAGS_ENABLED: bool = True
-MASTODON_MAX_TAGS: int = 2
+# The tags are named per-post by a small model call that reads the finished
+# text (agents.generate_mastodon_tags), NOT drawn from a fixed per-category
+# list. A fixed list would put the same two tags on every Mentor post forever
+# — a bot tell in the profile view, and useless in a tag timeline where the
+# point is that the tag describes THIS post.
+#
+# Ships OFF. workflow_dispatch needs the probe workflow on the default branch,
+# so the tags cannot be seen before this merges — and merging with tags ON
+# would put unvetted tags on the live feed, the one thing the probe exists to
+# prevent. Merge dormant, run `Mastodon Tag Probe (diagnostic)`, read the
+# output, then flip this to True.
+MASTODON_TAGS_ENABLED: bool = False
 
-# Tags too broad to earn a boost. #AI on mastodon.social moves fast enough
-# that a post scrolls out of the tag timeline in minutes, and STYLE_GUIDELINES
-# already bans this shape inline ("never a generic mood tag"). Matched
-# case-insensitively, without the leading '#'.
-MASTODON_TAGS_BANNED: List[str] = [
-    "ai", "tech", "technology", "technews", "news", "innovation",
-    "thoughts", "future", "digital", "software", "computing", "internet",
+# Total wall-clock budget for naming tags. Tagging runs concurrently with the
+# Bluesky broadcast (main.broadcasting_stage), so this never delays that post
+# — but the Mastodon post must not wait on it indefinitely either. One model,
+# one attempt: a retry chain would multiply this budget by the chain length for
+# a decoration. On expiry the post ships untagged.
+MASTODON_TAGS_TIMEOUT_SECONDS: float = 20.0
+
+# Mood tags — excluded unconditionally because they say nothing about the
+# post, which is the same rule STYLE_GUIDELINES already applies inline
+# ("never a generic mood tag"). This is a brand exclusion, NOT a claim about
+# audience size: broad-but-substantive tags (#Internet, #Software, #Computing)
+# are deliberately absent, because an internet-history post really can be
+# about the internet. The preference for specificity lives in the prompt,
+# where it belongs — a ban list cannot express "prefer the narrower one".
+# Matched case-insensitively, without the leading '#'.
+MASTODON_TAGS_EXCLUDED: List[str] = [
+    "ai", "tech", "technology", "technews", "news",
+    "innovation", "thoughts", "future", "digital",
 ]
 FEED_SUMMARY_MAX_CHARS: int = 500
 

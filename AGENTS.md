@@ -62,6 +62,17 @@ for the hard-won context before proposing structural changes.
    and generation stays platform-neutral — divergence lives in the broadcaster, never
    in the prompt. Partial delivery must be handled cleanly (`*_partial_delivery`),
    never re-send already-posted thread parts.
+
+   **"Mechanics" is not an exemption from editorial scrutiny.** Anything appended
+   after `validate_summary` bypasses the voice validators by construction, so the
+   bar it must clear is stated here instead: a discovery tag describes the subject
+   the post already has. It may not introduce a claim, an endorsement, a product
+   affiliation, or a framing the prose does not carry, and it spends the shared
+   `MAX_HASHTAGS_PER_POST` ceiling rather than adding a second allowance on top of
+   it — a Mastodon post must never carry more hashtags than the same post on
+   Bluesky is allowed to. Flag any appended-after-validation content that cannot
+   meet that bar, and any new per-platform mechanic that widens what the reader
+   sees rather than adapting how they find it.
 8. **Tests and lint are the floor.** `ruff` clean and `pytest` green are required. New
    behaviour — especially defensive and failure paths — needs tests. The strongest
    reviews here have caught missing-edge-case handling (e.g. a required field that wasn't

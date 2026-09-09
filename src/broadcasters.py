@@ -8,6 +8,7 @@ from mastodon import Mastodon
 from src.config import (
     MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON,
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
+    MAX_HASHTAGS_PER_POST,
 )
 from src.utils import classify_retry, sleep_for_rate_limit, sleep_for_transient
 from src.logger import SafeLogger
@@ -37,19 +38,31 @@ def apply_mastodon_tags(
     the thread in a tag timeline, and tagging every post in a thread spams that
     timeline with the same item.
 
-    Two ways this declines to act, both silent and both correct:
-    a tag already present in the root post is dropped (the generator is still
-    allowed its own ≤2 inline hashtags, and duplicating one reads as a bot
-    tell), and if the suffix would breach ``max_length`` the tags are shed one
-    at a time until it fits — down to appending nothing. Content is never
-    trimmed to make room for a tag; the post is the point, the tag is not.
+    Three ways this declines to act, all silent and all correct:
+
+    - **The shared ceiling.** MAX_HASHTAGS_PER_POST is a per-post total, not a
+      per-source one. The generator is allowed its own inline hashtags, and
+      this only ever spends the remainder — a root that already carries two
+      gets none from here. Without that the two limits stacked and a post could
+      ship four hashtags, breaking the STYLE_GUIDELINES ceiling on one platform
+      only, which is exactly the divergence AGENTS.md #7 forbids (Codex review,
+      2026-09-09).
+    - **Duplicates.** A tag already in the root is dropped; repeating one reads
+      as a bot tell.
+    - **Length.** If the suffix would breach ``max_length`` the tags are shed
+      one at a time until it fits, down to appending nothing. Content is never
+      trimmed to make room: the post is the point, the tag is not.
     """
     if not content_list or not tags:
         return list(content_list)
 
     root = content_list[0]
     present = {t.lower() for t in _TAG_RE.findall(root)}
-    candidates = [t for t in tags if t.lstrip("#").lower() not in present]
+    allowance = MAX_HASHTAGS_PER_POST - len(present)
+    if allowance <= 0:
+        return list(content_list)
+
+    candidates = [t for t in tags if t.lstrip("#").lower() not in present][:allowance]
 
     while candidates:
         suffix = _MASTODON_TAG_SEPARATOR + " ".join(candidates)

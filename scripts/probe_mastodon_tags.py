@@ -1,8 +1,8 @@
 """Diagnostic: see what discovery tags the tagger actually picks.
 
-Read-only — posts nothing, changes nothing. Runs `generate_mastodon_tags`
-against the bot's own recent live posts and prints the tags beside each one,
-so the tag quality can be judged on real text before it ships to the feed.
+Read-only — posts nothing, changes nothing. Runs the real tagging call against
+the bot's own recent live posts and prints the tags beside each one, so tag
+quality can be judged on real text before it ships to the feed.
 
 Why this exists: the tagger's whole value is whether it names a tag someone
 browsing that tag would want to find. That is a judgement call about model
@@ -11,21 +11,29 @@ GEMINI_API_KEY is IP-restricted to the GitHub runners, so this is the only
 place the probe is truthful — same rationale as model-discovery.yml and
 image-probe.yml. Trigger from the Actions UI.
 
-Reading the output: `raw` is what the model returned, `tags` is what survives
-_sanitize_mastodon_tags. A row where raw is non-empty but tags is empty means
-the sanitizer rejected everything — usually the model reaching for a banned
-broad tag (#AI, #tech). A few of those are the rule working; all of them means
-the prompt is not steering hard enough toward specifics.
+Reading the output: `raw` is what the model returned and `tags` is what
+survives the sanitizer, both from the SAME call — so the gap between them is
+attributable to sanitizing and nothing else. `post ends` shows the suffix a
+Mastodon reader would actually see, after the broadcaster's ceiling and length
+handling. A few rows where tags is empty is the exclusion rule working; all of
+them means the prompt is not steering toward specifics.
+
+Calls request_mastodon_tags directly, which carries no enablement gate, so this
+stays truthful while MASTODON_TAGS_ENABLED is False in production.
 """
 import asyncio
 import json
 import os
+import re
 import sys
 import urllib.request
 from typing import Any, Dict, List
 
-from src.agents import generate_mastodon_tags, _sync_generate
-from src.config import GEMINI_MODEL_PRIORITY, MASTODON_TAGS_BANNED
+from src.agents import request_mastodon_tags
+from src.broadcasters import apply_mastodon_tags
+from src.config import (
+    GEMINI_MODEL_PRIORITY, MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
+)
 
 # The bot's own feed, via the public read-only AppView (no auth needed).
 _FEED_URL = (
@@ -46,6 +54,8 @@ _FALLBACK_POSTS = [
     "That is a bigger deal for open-weight releases than the headline suggests.",
 ]
 
+_HASHTAG_RE = re.compile(r"(?<!\w)#\w+")
+
 
 def _fetch_recent_posts(limit: int) -> List[str]:
     """Pull the bot's recent post text from the public Bluesky AppView."""
@@ -65,18 +75,35 @@ def _fetch_recent_posts(limit: int) -> List[str]:
     return posts
 
 
-def _raw_tags(post: str) -> Any:
-    """One un-sanitized call, so the printout separates 'the model said' from
-    'the sanitizer allowed'."""
-    from src.agents import _MASTODON_TAG_PROMPT
+async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
+    """Print one post's tagging result. Returns True if it ended up tagged."""
+    preview = post.replace("\n", " ")
+    if len(preview) > 150:
+        preview = preview[:149] + "…"
+    print(f"[{idx}] {preview}")
 
-    text = _sync_generate(
-        os.environ["GEMINI_API_KEY"],
-        "You return only JSON. No prose, no explanation.",
-        _MASTODON_TAG_PROMPT.format(post=post),
-        GEMINI_MODEL_PRIORITY[0],
-    )
-    return json.loads(text.replace("```json", "").replace("```", "").strip())
+    spent = len(_HASHTAG_RE.findall(post))
+    allowance = MAX_HASHTAGS_PER_POST - spent
+    if allowance <= 0:
+        print(f"    tags: (none — the post already spends the "
+              f"{MAX_HASHTAGS_PER_POST}-hashtag ceiling)\n")
+        return False
+
+    # ONE call: raw and tags come from the same response, so the gap between
+    # them is attributable to the sanitizer and nothing else.
+    try:
+        raw, tags = await request_mastodon_tags(key, post, model, allowance)
+    except Exception as exc:
+        print(f"    FAILED {type(exc).__name__}: {str(exc)[:140]}\n")
+        return False
+
+    print(f"    raw : {raw}")
+    print(f"    tags: {' '.join(tags) if tags else '(none)'}")
+    # What a Mastodon reader would actually see, after the broadcaster's
+    # dedup / ceiling / length handling.
+    suffix = apply_mastodon_tags([post], tags)[0][len(post):]
+    print(f"    ends: {suffix!r}\n" if suffix else "    ends: (unchanged)\n")
+    return bool(tags)
 
 
 async def _run(posts: List[str]) -> int:
@@ -85,32 +112,22 @@ async def _run(posts: List[str]) -> int:
         print("GEMINI_API_KEY not set", file=sys.stderr)
         return 1
 
-    print(f"model:  {GEMINI_MODEL_PRIORITY[0]}")
-    print(f"banned: {', '.join(MASTODON_TAGS_BANNED)}\n")
+    model = GEMINI_MODEL_PRIORITY[0]
+    print(f"model:    {model}")
+    print(f"excluded: {', '.join(MASTODON_TAGS_EXCLUDED)}")
+    print(f"ceiling:  {MAX_HASHTAGS_PER_POST} per post, shared with the "
+          f"generated text\n")
 
-    empty = 0
+    tagged = 0
     for idx, post in enumerate(posts, 1):
-        preview = post.replace("\n", " ")
-        if len(preview) > 150:
-            preview = preview[:149] + "…"
-        print(f"[{idx}] {preview}")
-        # Two calls per post: the raw one shows what the model reached for,
-        # the second exercises the real function the bot uses. Both are cheap
-        # and the raw/sanitized gap is the whole diagnostic.
-        try:
-            print(f"    raw : {_raw_tags(post)}")
-        except Exception as exc:
-            print(f"    raw : FAILED {type(exc).__name__}: {str(exc)[:120]}")
-        tags = await generate_mastodon_tags(key, [post])
-        print(f"    tags: {' '.join(tags) if tags else '(none)'}\n")
-        if not tags:
-            empty += 1
+        if await _probe_one(key, model, idx, post):
+            tagged += 1
 
     total = len(posts)
-    print(f"summary: {total - empty}/{total} posts got tags, {empty} untagged")
-    if empty == total:
-        print("  ALL posts came back untagged — check the prompt or the ban list "
-              "before shipping.")
+    print(f"summary: {tagged}/{total} posts got tags, {total - tagged} untagged")
+    if tagged == 0:
+        print("  NOTHING got tagged — check the prompt or the exclusion list "
+              "before flipping MASTODON_TAGS_ENABLED.")
     return 0
 
 
