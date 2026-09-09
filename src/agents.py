@@ -1016,19 +1016,54 @@ async def review_mastodon_tags(
     return decisions, [t for i, t in enumerate(candidates) if decisions[i]]
 
 
+def _select_tag_models(
+    model_priority: Optional[List[str]] = None,
+) -> Tuple[str, Optional[str]]:
+    """Pick (proposer, reviewer). ``reviewer`` is None when none is available.
+
+    Codex raised the pairing as a P1 against enabling the feature: when the
+    proposer and reviewer are the same model, a candidate can be approved
+    solely because that model returned ``keep: true``, so a correlated semantic
+    mistake reviews itself. Taking the next distinct model in the chain breaks
+    that specific path. It does not make errors impossible, and a different
+    model is not automatically a better judge, which is why the probe measures
+    the pairing against known answers rather than assuming it.
+
+    **No distinct reviewer means no tags.** The first version of this fell back
+    to reviewing with the proposer, reasoning that a second independently
+    prompted pass beat no review {D} which quietly recreated the exact
+    self-approval path the change exists to close (Codex review, 2026-09-09).
+    That state is reachable in production: ``filter_available_models`` prunes
+    the chain at startup to what the key can actually reach, so a one-model
+    chain is a supported degraded mode, not a hypothetical. Tags are
+    decoration, so refusing to tag costs a discovery opportunity and nothing
+    else; publishing an unreviewed affiliation costs more.
+    """
+    chain = list(model_priority or GEMINI_MODEL_PRIORITY)
+    if not chain:
+        chain = list(GEMINI_MODEL_PRIORITY)
+    proposer = chain[0]
+    reviewer = next((m for m in chain[1:] if m != proposer), None)
+    return proposer, reviewer
+
+
 async def _tag_pipeline(
-    api_key: str, post: str, model: str, allowance: int
+    api_key: str,
+    post: str,
+    proposer: str,
+    reviewer: str,
+    allowance: int,
 ) -> Tuple[Any, List[str], Optional[List[bool]], List[str]]:
-    """Generate candidates, then review them.
+    """Propose candidates with one model, review them with another.
 
     Returns ``(raw, candidates, decisions, kept)``. ``decisions`` is None when
     the reviewer's response was unusable, so the caller can log that as its own
     outcome rather than as an ordinary all-DROP verdict.
     """
-    raw, candidates = await request_mastodon_tags(api_key, post, model, allowance)
+    raw, candidates = await request_mastodon_tags(api_key, post, proposer, allowance)
     if not candidates:
         return raw, [], [], []
-    decisions, kept = await review_mastodon_tags(api_key, post, candidates, model)
+    decisions, kept = await review_mastodon_tags(api_key, post, candidates, reviewer)
     return raw, candidates, decisions, kept
 
 
@@ -1062,10 +1097,20 @@ async def generate_mastodon_tags(
     allowance = MAX_HASHTAGS_PER_POST - len(re.findall(r"(?<!\w)#\w+", root))
     if allowance <= 0:
         return []
-    model = (model_priority or GEMINI_MODEL_PRIORITY)[0]
+    model, reviewer = _select_tag_models(model_priority)
+    if reviewer is None:
+        # Fail closed. A same-model review is not a review (see
+        # _select_tag_models); shipping untagged is the safe outcome.
+        SafeLogger.warn(
+            "mastodon_tags_no_reviewer",
+            "No distinct reviewer model available; posting untagged",
+            platform="mastodon",
+            model=model,
+        )
+        return []
     try:
         raw, candidates, decisions, tags = await asyncio.wait_for(
-            _tag_pipeline(api_key, root, model, allowance),
+            _tag_pipeline(api_key, root, model, reviewer, allowance),
             timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
         )
     except Exception as e:
@@ -1073,7 +1118,10 @@ async def generate_mastodon_tags(
             "mastodon_tags_failed",
             "Could not generate Mastodon discovery tags; posting untagged",
             platform="mastodon",
+            # Either call can raise, so naming only the proposer would
+            # misattribute a reviewer outage to it (Codex review, 2026-09-09).
             model=model,
+            reviewer=reviewer,
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
         )
@@ -1088,6 +1136,7 @@ async def generate_mastodon_tags(
             "Reviewer returned an unusable decision set; posting untagged",
             platform="mastodon",
             model=model,
+            reviewer=reviewer,
             candidates=" ".join(candidates),
         )
     elif tags:
@@ -1096,6 +1145,7 @@ async def generate_mastodon_tags(
             "Discovery tags chosen for the Mastodon copy",
             platform="mastodon",
             model=model,
+            reviewer=reviewer,
             tags=" ".join(tags),
             dropped_in_review=" ".join(t for t in candidates if t not in tags) or "none",
         )
@@ -1105,6 +1155,7 @@ async def generate_mastodon_tags(
             "No discovery tag survived review; posting untagged",
             platform="mastodon",
             model=model,
+            reviewer=reviewer,
             candidates=" ".join(candidates) or "none",
             raw=str(raw)[:200],
         )

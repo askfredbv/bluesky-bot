@@ -97,7 +97,7 @@ async def test_probe_shows_all_three_stages(monkeypatch, capsys):
         monkeypatch, ["#AI", "#Semiconductors", "#NVIDIA"],
         ["#Semiconductors", "#NVIDIA"], ["#Semiconductors"],
     )
-    tagged = await probe._probe_one("key", "model", 1, "a post about chips")
+    tagged = await probe._probe_one("key", "proposer", "reviewer", 1, "a post about chips")
 
     assert proposals == ["a post about chips"]
     assert reviews == [["#Semiconductors", "#NVIDIA"]]
@@ -115,7 +115,7 @@ async def test_probe_shows_the_suffix_a_reader_would_see(monkeypatch, capsys):
     raw/sanitized/reviewed lines already contain it (Codex review, 2026-09-09).
     """
     _patch_pipeline(monkeypatch, ["#Python"], ["#Python"], ["#Python"])
-    await probe._probe_one("key", "model", 1, "a note")
+    await probe._probe_one("key", "proposer", "reviewer", 1, "a note")
     ends = [ln for ln in capsys.readouterr().out.splitlines() if "ends" in ln]
     assert ends, "no `ends` line was printed"
     assert "\\n\\n#Python" in ends[0]
@@ -136,7 +136,7 @@ async def test_probe_reports_an_invalid_verdict_as_invalid(monkeypatch, capsys):
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
     monkeypatch.setattr(probe, "review_mastodon_tags", invalid)
-    assert await probe._probe_one("key", "model", 1, "a note") is False
+    assert await probe._probe_one("key", "proposer", "reviewer", 1, "a note") is False
     out = capsys.readouterr().out
     assert "INVALID" in out
     assert "dropped" not in out
@@ -153,7 +153,7 @@ async def test_probe_reports_a_review_failure_distinctly(monkeypatch, capsys):
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
     monkeypatch.setattr(probe, "review_mastodon_tags", boom)
-    assert await probe._probe_one("key", "model", 1, "a note") is False
+    assert await probe._probe_one("key", "proposer", "reviewer", 1, "a note") is False
     assert "FAILED (review)" in capsys.readouterr().out
 
 
@@ -223,7 +223,7 @@ async def test_probe_skips_a_post_that_already_spends_the_ceiling(monkeypatch, c
         return [], []
 
     monkeypatch.setattr(probe, "request_mastodon_tags", one_call)
-    tagged = await probe._probe_one("key", "model", 1, "a #Python #Linux post")
+    tagged = await probe._probe_one("key", "proposer", "reviewer", 1, "a #Python #Linux post")
 
     assert called == []
     assert tagged is False
@@ -236,7 +236,7 @@ async def test_a_failing_call_does_not_stop_the_run(monkeypatch, capsys):
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(probe, "request_mastodon_tags", boom)
-    assert await probe._probe_one("key", "model", 1, "a note") is False
+    assert await probe._probe_one("key", "proposer", "reviewer", 1, "a note") is False
     assert "FAILED" in capsys.readouterr().out
 
 
