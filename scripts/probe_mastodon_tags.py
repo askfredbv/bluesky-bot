@@ -11,14 +11,21 @@ GEMINI_API_KEY is IP-restricted to the GitHub runners, so this is the only
 place the probe is truthful — same rationale as model-discovery.yml and
 image-probe.yml. Trigger from the Actions UI.
 
-Reading the output: `raw` is what the model returned and `tags` is what
-survives the sanitizer, both from the SAME call — so the gap between them is
-attributable to sanitizing and nothing else. `post ends` shows the suffix a
-Mastodon reader would actually see, after the broadcaster's ceiling and length
-handling. A few rows where tags is empty is the exclusion rule working; all of
-them means the prompt is not steering toward specifics.
+Reading the per-post output, three stages so a lost tag can be blamed on the
+right gate: `raw` is what the model proposed, `sanitized` is what the lexical
+gate allowed (raw and sanitized come from the SAME call, so their difference is
+attributable to sanitizing alone), and `reviewed` is what the semantic pass
+kept. `ends` shows the suffix a Mastodon reader would actually see, after the
+broadcaster's ceiling and length handling. Each post runs under the production
+deadline, so `retention` is not optimistic about timing.
 
-Calls request_mastodon_tags directly, which carries no enablement gate, so this
+Then a controlled set with known answers, because retention alone cannot
+validate the reviewer. Negatives must be DROPPED, positives must be KEPT, and a
+verdict the parser refuses is reported as INVALID rather than scored as a
+rejection — otherwise a model returning junk would post a perfect record while
+making no decisions at all.
+
+Calls the underlying functions directly; they carry no enablement gate, so this
 stays truthful while MASTODON_TAGS_ENABLED is False in production.
 """
 import asyncio
@@ -26,13 +33,15 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from typing import Any, Dict, List
 
-from src.agents import request_mastodon_tags
+from src.agents import request_mastodon_tags, review_mastodon_tags_detailed
 from src.broadcasters import apply_mastodon_tags
 from src.config import (
     GEMINI_MODEL_PRIORITY, MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
+    MASTODON_TAGS_TIMEOUT_SECONDS,
 )
 
 # The bot's own feed, via the public read-only AppView (no auth needed).
@@ -76,7 +85,12 @@ def _fetch_recent_posts(limit: int) -> List[str]:
 
 
 async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
-    """Print one post's tagging result. Returns True if it ended up tagged."""
+    """Print one post's tagging result. Returns True if it ended up tagged.
+
+    Shows all three stages so a lost tag can be attributed to the right gate:
+    what the model proposed, what the lexical sanitizer allowed, and what the
+    semantic reviewer kept.
+    """
     preview = post.replace("\n", " ")
     if len(preview) > 150:
         preview = preview[:149] + "…"
@@ -89,21 +103,102 @@ async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
               f"{MAX_HASHTAGS_PER_POST}-hashtag ceiling)\n")
         return False
 
-    # ONE call: raw and tags come from the same response, so the gap between
-    # them is attributable to the sanitizer and nothing else.
+    # raw and candidates come from ONE call, so the gap between them is
+    # attributable to the sanitizer and nothing else.
     try:
-        raw, tags = await request_mastodon_tags(key, post, model, allowance)
+        raw, candidates = await request_mastodon_tags(key, post, model, allowance)
     except Exception as exc:
-        print(f"    FAILED {type(exc).__name__}: {str(exc)[:140]}\n")
+        print(f"    FAILED (propose) {type(exc).__name__}: {str(exc)[:140]}\n")
         return False
 
-    print(f"    raw : {raw}")
-    print(f"    tags: {' '.join(tags) if tags else '(none)'}")
+    print(f"    raw       : {raw}")
+    print(f"    sanitized : {' '.join(candidates) if candidates else '(none)'}")
+
+    try:
+        _, tags = await review_mastodon_tags_detailed(key, post, candidates, model)
+    except Exception as exc:
+        print(f"    FAILED (review) {type(exc).__name__}: {str(exc)[:140]}\n")
+        return False
+
+    dropped = [t for t in candidates if t not in tags]
+    print(f"    reviewed  : {' '.join(tags) if tags else '(none)'}"
+          f"{'   dropped: ' + ' '.join(dropped) if dropped else ''}")
     # What a Mastodon reader would actually see, after the broadcaster's
     # dedup / ceiling / length handling.
     suffix = apply_mastodon_tags([post], tags)[0][len(post):]
-    print(f"    ends: {suffix!r}\n" if suffix else "    ends: (unchanged)\n")
+    print(f"    ends      : {suffix!r}\n" if suffix else "    ends      : (unchanged)\n")
     return bool(tags)
+
+
+async def _probe_adversarial(key: str, model: str) -> tuple:
+    """Measure the reviewer's DECISION quality, both directions.
+
+    Ten posts the model tagged sensibly say nothing about what it does with a
+    bad tag, and rejection is the entire reason this pass exists. But counting
+    "no tags came back" as a correct rejection would let a model returning junk
+    score a perfect record while making no decisions at all — so a response the
+    parser refuses is reported as `INVALID`, never as a rejection (Codex
+    reviews, 2026-09-09).
+
+    Positive controls are included for the same reason in reverse: a reviewer
+    that drops everything would look flawless against negatives alone.
+
+    Returns (valid_correct, invalid_responses, total).
+    """
+    # (post, tag, must_keep, why)
+    cases = [
+        ("A migration rarely stalls on the data pipeline. It stalls on "
+         "decommissioning. As long as the legacy system stays reachable, teams "
+         "quietly keep dual-writing to it.",
+         "#NVIDIA", False, "company the post never mentions"),
+        ("Teams keep buying observability tools and then routing half their "
+         "services around them. The gap is ownership, not tooling.",
+         "#Datadog", False, "plausible vendor the post never names"),
+        ("A clever workaround feels like borrowing time. Adjacent systems adapt "
+         "to its quirks rather than the intended design.",
+         "#QuantumComputing", False, "invented specificity"),
+        ("Kubernetes autoscaling worked exactly as configured. The configuration "
+         "was the problem, and nobody owned it.",
+         "#BestPractices", False, "adds framing the prose does not carry"),
+        # Positive controls: a reviewer that drops everything must not pass.
+        ("Alan Kay coined \"object-oriented\", but later regretted the choice. "
+         "He cared about messaging between objects, not classes.",
+         "#OOP", True, "acronym for the post's actual subject"),
+        ("The Edge add-ons store is drowning in AI-generated extensions, forcing "
+         "Microsoft to build automated triage for the review queue.",
+         "#BrowserExtensions", True, "the subject, by a conventional name"),
+        ("NVIDIA's next chip is a packaging story, not a silicon one. The "
+         "constraint is CoWoS capacity, not transistor density.",
+         "#NVIDIA", True, "company the post is genuinely about"),
+    ]
+    print("=" * 68)
+    print("decision quality: negatives must DROP, positives must KEEP")
+    print("=" * 68)
+    correct = invalid = 0
+    for post, tag, must_keep, why in cases:
+        want = "KEEP" if must_keep else "DROP"
+        try:
+            decisions, kept = await review_mastodon_tags_detailed(
+                key, post, [tag], model
+            )
+        except Exception as exc:
+            invalid += 1
+            print(f"  {tag:<20} want {want:<4}  ERROR {type(exc).__name__}: "
+                  f"{str(exc)[:60]}")
+            continue
+        if decisions is None:
+            # Fail-closed, but NOT a semantic decision. Never scored as correct.
+            invalid += 1
+            print(f"  {tag:<20} want {want:<4}  INVALID (unparseable verdict)  "
+                  f"[{why}]")
+            continue
+        got_keep = bool(kept)
+        ok = got_keep == must_keep
+        correct += ok
+        print(f"  {tag:<20} want {want:<4}  got {'KEEP' if got_keep else 'DROP':<4}  "
+              f"{'ok' if ok else 'WRONG':<5} [{why}]")
+    print(f"\n  correct {correct}/{len(cases)}, invalid responses {invalid}\n")
+    return correct, invalid, len(cases)
 
 
 async def _run(posts: List[str]) -> int:
@@ -118,16 +213,47 @@ async def _run(posts: List[str]) -> int:
     print(f"ceiling:  {MAX_HASHTAGS_PER_POST} per post, shared with the "
           f"generated text\n")
 
-    tagged = 0
+    print(f"budget:   {MASTODON_TAGS_TIMEOUT_SECONDS}s shared by both calls "
+          f"(production deadline, applied below)\n")
+
+    tagged = over_budget = 0
     for idx, post in enumerate(posts, 1):
-        if await _probe_one(key, model, idx, post):
+        started = time.perf_counter()
+        try:
+            # Apply the PRODUCTION deadline. Without it the probe reports
+            # retention production would never achieve, because two calls that
+            # comfortably finish untimed can still blow the shared budget
+            # (Codex review, 2026-09-09).
+            got = await asyncio.wait_for(
+                _probe_one(key, model, idx, post),
+                timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            over_budget += 1
+            print(f"    OVER BUDGET (>{MASTODON_TAGS_TIMEOUT_SECONDS}s) — "
+                  f"production would ship this untagged\n")
+            continue
+        print(f"    elapsed   : {time.perf_counter() - started:.1f}s\n")
+        if got:
             tagged += 1
 
+    correct, invalid, adversarial_total = await _probe_adversarial(key, model)
+
     total = len(posts)
-    print(f"summary: {tagged}/{total} posts got tags, {total - tagged} untagged")
+    print("=" * 68)
+    print(f"retention : {tagged}/{total} real posts got tags "
+          f"({over_budget} exceeded the budget)")
+    print(f"decisions : {correct}/{adversarial_total} correct, "
+          f"{invalid} unparseable")
+    print("=" * 68)
     if tagged == 0:
-        print("  NOTHING got tagged — check the prompt or the exclusion list "
-              "before flipping MASTODON_TAGS_ENABLED.")
+        print("  NOTHING got tagged — the gates are too tight to be useful.")
+    if correct < adversarial_total:
+        print("  The reviewer got a controlled case wrong. Do NOT flip "
+              "MASTODON_TAGS_ENABLED until that is understood.")
+    if invalid:
+        print("  Some verdicts were unparseable. Those fail closed, but they "
+              "are not evidence the reviewer judges well.")
     return 0
 
 

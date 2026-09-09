@@ -3,8 +3,13 @@
 The probe's job is to show real tag quality on representative text before the
 feature is enabled. Two things have to hold or its output misleads: it must
 feed the tagger the same shape production does (root posts only), and its
-`raw` and `tags` lines must come from one call — an earlier version made two
-independent calls and compared unrelated outputs (Codex review, 2026-09-09).
+`raw` and `sanitized` lines must come from one call — an earlier version made
+two independent calls and compared unrelated outputs.
+
+The controlled cases carry their own expectations in both directions, and a
+verdict the parser refuses is counted as INVALID rather than as a rejection,
+so neither a reviewer that drops everything nor one returning junk can score
+well (Codex reviews, 2026-09-09).
 """
 import json
 from types import SimpleNamespace
@@ -65,36 +70,127 @@ def test_malformed_entries_do_not_raise(monkeypatch):
     assert probe._fetch_recent_posts(10) == ["ok"]
 
 
-# ── one call, not two ───────────────────────────────────────────────────────
+# ── attributing a lost tag to the right gate ───────────────────────────────
+
+def _patch_pipeline(monkeypatch, raw, candidates, kept):
+    proposals, reviews = [], []
+
+    async def propose(key, post, model, allowance):
+        proposals.append(post)
+        return raw, candidates
+
+    async def review(key, post, cands, model):
+        reviews.append(cands)
+        return [c in kept for c in cands], kept
+
+    monkeypatch.setattr(probe, "request_mastodon_tags", propose)
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", review)
+    return proposals, reviews
+
 
 @pytest.mark.asyncio
-async def test_probe_makes_exactly_one_call_per_post(monkeypatch, capsys):
-    """raw and tags must be attributable to the same response, or a difference
-    between them proves nothing about the sanitizer."""
-    calls = []
-
-    async def one_call(key, post, model, allowance):
-        calls.append(post)
-        return ["#AI", "#Semiconductors"], ["#Semiconductors"]
-
-    monkeypatch.setattr(probe, "request_mastodon_tags", one_call)
+async def test_probe_shows_all_three_stages(monkeypatch, capsys):
+    """raw and sanitized come from one propose call so their difference is
+    attributable to the sanitizer; reviewed shows what the semantic pass
+    dropped. Without all three, a lost tag cannot be blamed on the right gate."""
+    proposals, reviews = _patch_pipeline(
+        monkeypatch, ["#AI", "#Semiconductors", "#NVIDIA"],
+        ["#Semiconductors", "#NVIDIA"], ["#Semiconductors"],
+    )
     tagged = await probe._probe_one("key", "model", 1, "a post about chips")
 
-    assert calls == ["a post about chips"]
+    assert proposals == ["a post about chips"]
+    assert reviews == [["#Semiconductors", "#NVIDIA"]]
     assert tagged is True
     out = capsys.readouterr().out
-    assert "#AI" in out          # raw shows what the model reached for
-    assert "#Semiconductors" in out
+    assert "#AI" in out                  # raw: what the model reached for
+    assert "sanitized" in out            # what the lexical gate allowed
+    assert "dropped: #NVIDIA" in out     # what the semantic gate refused
 
 
 @pytest.mark.asyncio
 async def test_probe_shows_the_suffix_a_reader_would_see(monkeypatch, capsys):
-    async def one_call(key, post, model, allowance):
+    """Asserts the `ends` line specifically. Checking only that the tag appears
+    somewhere in the output would pass with suffix reporting deleted, since the
+    raw/sanitized/reviewed lines already contain it (Codex review, 2026-09-09).
+    """
+    _patch_pipeline(monkeypatch, ["#Python"], ["#Python"], ["#Python"])
+    await probe._probe_one("key", "model", 1, "a note")
+    ends = [ln for ln in capsys.readouterr().out.splitlines() if "ends" in ln]
+    assert ends, "no `ends` line was printed"
+    assert "\\n\\n#Python" in ends[0]
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_a_review_failure_distinctly(monkeypatch, capsys):
+    """A failure in review must not read as 'the model proposed nothing'."""
+    async def propose(key, post, model, allowance):
         return ["#Python"], ["#Python"]
 
-    monkeypatch.setattr(probe, "request_mastodon_tags", one_call)
-    await probe._probe_one("key", "model", 1, "a note")
-    assert "#Python" in capsys.readouterr().out
+    async def boom(key, post, cands, model):
+        raise RuntimeError("review exploded")
+
+    monkeypatch.setattr(probe, "request_mastodon_tags", propose)
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", boom)
+    assert await probe._probe_one("key", "model", 1, "a note") is False
+    assert "FAILED (review)" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_that_drops_everything_does_not_score_perfectly(
+    monkeypatch, capsys
+):
+    """The positive controls exist for this. Against negatives alone, a
+    reviewer that refuses every tag would look flawless."""
+    async def drops_everything(key, post, cands, model):
+        return [False] * len(cands), []
+
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", drops_everything)
+    correct, invalid, total = await probe._probe_adversarial("key", "model")
+    assert invalid == 0
+    assert 0 < correct < total, "positives should have been marked wrong"
+    assert "WRONG" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_that_keeps_everything_is_flagged(monkeypatch, capsys):
+    async def keeps_everything(key, post, cands, model):
+        return [True] * len(cands), list(cands)
+
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", keeps_everything)
+    correct, invalid, total = await probe._probe_adversarial("key", "model")
+    assert 0 < correct < total
+    assert "WRONG" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_perfect_reviewer_scores_perfectly(monkeypatch):
+    """Sanity check on the scoring itself, using the cases' own expectations."""
+    async def oracle(key, post, cands, model):
+        # Positive controls are the three tags the case table marks must-keep.
+        keep = [c in ("#OOP", "#BrowserExtensions") or
+                (c == "#NVIDIA" and "CoWoS" in post) for c in cands]
+        return keep, [c for c, k in zip(cands, keep) if k]
+
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", oracle)
+    correct, invalid, total = await probe._probe_adversarial("key", "model")
+    assert (correct, invalid) == (total, 0)
+
+
+@pytest.mark.asyncio
+async def test_an_unparseable_verdict_is_never_scored_as_a_rejection(
+    monkeypatch, capsys
+):
+    """The finding that mattered: `[]` from a parser failure is not a semantic
+    rejection. A model returning junk must not post a perfect record."""
+    async def unparseable(key, post, cands, model):
+        return None, []
+
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", unparseable)
+    correct, invalid, total = await probe._probe_adversarial("key", "model")
+    assert correct == 0
+    assert invalid == total
+    assert "INVALID" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
