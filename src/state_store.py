@@ -413,22 +413,52 @@ def save_seen_articles(seen_data: Dict[str, Any]) -> None:
         _atomic_write_json(SEEN_FILE, seen_data)
     except Exception as e:
         SafeLogger.error("seen_articles_save_failed", "Failed to save seen articles", exception=e)
-def load_replied_to() -> List[str]:
+def load_replied_to_strict() -> Tuple[List[str], bool]:
+    """``load_replied_to``, plus whether the result is safe to write back.
+
+    The same distinction ``load_seen_articles_strict`` draws, for the same reason:
+    ``replied_to.json`` is gitignored, so a fresh Actions runner has no local copy
+    and ``STATE_STORE_URL`` is usually unset. One transient Gist GET failure walks
+    the chain to an empty list, which is indistinguishable from "nobody has been
+    replied to yet" — and writing it back forgets every mention already answered.
+
+    The cost is not silent here. ``handle_interactions`` skips a mention that is
+    already in this list, so an erased list means the bot replies a second time to
+    people it has already answered, on their timeline.
+    """
     # 1. Try Gist
-    gist_data = _load_gist_state("replied_to.json")
+    gist_data, gist_trusted = _load_gist_state_strict("replied_to.json")
     if isinstance(gist_data, list):
-        return gist_data
+        return gist_data, True
     # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("replied_to")
     if isinstance(remote_data, list):
-        return remote_data
+        return remote_data, True
     # 3. Local file fallback
+    local_exists = REPLIED_FILE.exists() or REPLIED_FILE.with_suffix(REPLIED_FILE.suffix + ".bak").exists()
     data: List[str] = _load_json_with_repair(REPLIED_FILE, lambda: [])
     if isinstance(data, list):
-        return data
+        # An absent local file yields the empty list, which is indistinguishable
+        # from a genuinely empty history. Real local state is trustworthy on its
+        # own; the synthesised empty is only trustworthy if the Gist read ahead of
+        # it actually succeeded.
+        return data, (local_exists or gist_trusted)
+    if not gist_trusted:
+        SafeLogger.error(
+            "replied_to_read_untrusted",
+            "Replied-to read failed and no fallback tier had state; treating empty as UNKNOWN",
+        )
+        return [], False
     SafeLogger.warn("replied_to_format_repaired", "Unexpected replied_to format detected; repairing to default shape")
     _atomic_write_json(REPLIED_FILE, [])
-    return []
+    return [], True
+
+
+def load_replied_to() -> List[str]:
+    """Thin wrapper over ``load_replied_to_strict`` that drops the trust flag,
+    preserving the original contract for read-only callers. Anything that will
+    WRITE the result back must use the strict variant and honour ``trusted``."""
+    return load_replied_to_strict()[0]
 def save_replied_to(replied_ids: List[str]) -> None:
     if _save_gist_state("replied_to.json", replied_ids):
         return
@@ -465,10 +495,26 @@ def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) ->
         save_seen_articles(updated)
     return updated
 def update_replied_to(mutator: Callable[[List[str]], List[str]]) -> List[str]:
-    """Lock-protected read-modify-write for replied_to.json."""
+    """Lock-protected read-modify-write for replied_to.json.
+
+    Skips the write when the read could not be trusted, mirroring
+    ``update_seen_articles``. Saving an untrusted empty here would forget every
+    mention already answered, and the next run would reply to those people again.
+    Missing one run's bookkeeping is the cheaper failure.
+
+    The mutator is handed the state just read under the lock. Callers must apply
+    their changes to THAT value rather than returning a snapshot captured earlier
+    in the run — a stale snapshot defeats both the lock and this guard.
+    """
     lock_path = REPLIED_FILE.with_suffix(REPLIED_FILE.suffix + ".lock")
     with _file_lock(lock_path):
-        current = load_replied_to()
+        current, trusted = load_replied_to_strict()
+        if not trusted:
+            SafeLogger.error(
+                "replied_to_update_skipped",
+                "Replied-to read was untrusted; skipping the write rather than forgetting who was answered",
+            )
+            return current
         updated = mutator(current)
         save_replied_to(updated)
     return updated

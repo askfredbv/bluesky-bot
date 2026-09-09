@@ -316,3 +316,48 @@ def test_save_seen_articles_still_writes_locally_when_the_remote_lies(monkeypatc
 
     assert state_store.SEEN_FILE.exists(), "remote reported success it could not deliver"
     assert json.loads(state_store.SEEN_FILE.read_text()) == seen
+
+
+def _no_local_replied(monkeypatch, tmp_path):
+    monkeypatch.setattr(state_store, "REPLIED_FILE", tmp_path / "replied_to.json")
+    monkeypatch.delenv("STATE_STORE_URL", raising=False)
+
+
+def test_strict_replied_read_is_untrusted_when_the_gist_is_unreachable(monkeypatch, tmp_path):
+    """An empty list from a failed read means "unknown", not "nobody answered yet"."""
+    _no_local_replied(monkeypatch, tmp_path)
+    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, False))
+
+    data, trusted = state_store.load_replied_to_strict()
+
+    assert data == []
+    assert trusted is False
+
+
+def test_strict_replied_read_is_trusted_on_a_genuine_first_run(monkeypatch, tmp_path):
+    """A reachable Gist with no file yet is a real empty history and must stay
+    writable, or the first mention could never be recorded."""
+    _no_local_replied(monkeypatch, tmp_path)
+    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, True))
+
+    data, trusted = state_store.load_replied_to_strict()
+
+    assert data == []
+    assert trusted is True
+
+
+def test_update_replied_to_skips_the_write_on_an_untrusted_read(monkeypatch, tmp_path):
+    """Writing an untrusted empty forgets everyone already answered."""
+    _no_local_replied(monkeypatch, tmp_path)
+    monkeypatch.setattr(state_store, "load_replied_to_strict", lambda: ([], False))
+    saved, mutated = [], []
+    monkeypatch.setattr(state_store, "save_replied_to", lambda d: saved.append(d))
+
+    def mutator(current):
+        mutated.append(current)
+        return current + ["at://new"]
+
+    state_store.update_replied_to(mutator)
+
+    assert saved == [], "an untrusted read must not be written back"
+    assert mutated == [], "the mutator must not even run"
