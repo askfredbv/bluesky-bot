@@ -37,10 +37,12 @@ import time
 import urllib.request
 from typing import Any, Dict, List
 
-from src.agents import request_mastodon_tags, review_mastodon_tags
+from src.agents import (
+    request_mastodon_tags, review_mastodon_tags, _select_tag_models,
+)
 from src.broadcasters import apply_mastodon_tags
 from src.config import (
-    GEMINI_MODEL_PRIORITY, MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
+    MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
     MASTODON_TAGS_TIMEOUT_SECONDS,
 )
 
@@ -84,7 +86,9 @@ def _fetch_recent_posts(limit: int) -> List[str]:
     return posts
 
 
-async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
+async def _probe_one(
+    key: str, proposer: str, reviewer: str, idx: int, post: str
+) -> bool:
     """Print one post's tagging result. Returns True if it ended up tagged.
 
     Shows all three stages so a lost tag can be attributed to the right gate:
@@ -106,7 +110,9 @@ async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
     # raw and candidates come from ONE call, so the gap between them is
     # attributable to the sanitizer and nothing else.
     try:
-        raw, candidates = await request_mastodon_tags(key, post, model, allowance)
+        raw, candidates = await request_mastodon_tags(
+            key, post, proposer, allowance
+        )
     except Exception as exc:
         print(f"    FAILED (propose) {type(exc).__name__}: {str(exc)[:140]}\n")
         return False
@@ -116,7 +122,7 @@ async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
 
     try:
         decisions, tags = await review_mastodon_tags(
-            key, post, candidates, model
+            key, post, candidates, reviewer
         )
     except Exception as exc:
         print(f"    FAILED (review) {type(exc).__name__}: {str(exc)[:140]}\n")
@@ -141,7 +147,7 @@ async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
     return bool(tags)
 
 
-async def _probe_adversarial(key: str, model: str) -> tuple:
+async def _probe_adversarial(key: str, reviewer: str) -> tuple:
     """Measure the reviewer's DECISION quality, both directions.
 
     Ten posts the model tagged sensibly say nothing about what it does with a
@@ -190,7 +196,7 @@ async def _probe_adversarial(key: str, model: str) -> tuple:
         want = "KEEP" if must_keep else "DROP"
         try:
             decisions, kept = await review_mastodon_tags(
-                key, post, [tag], model
+                key, post, [tag], reviewer
             )
         except Exception as exc:
             invalid += 1
@@ -218,8 +224,10 @@ async def _run(posts: List[str]) -> int:
         print("GEMINI_API_KEY not set", file=sys.stderr)
         return 1
 
-    model = GEMINI_MODEL_PRIORITY[0]
-    print(f"model:    {model}")
+    proposer, reviewer = _select_tag_models()
+    print(f"proposer: {proposer}")
+    pairing = "SAME MODEL" if reviewer == proposer else "cross-model"
+    print(f"reviewer: {reviewer} ({pairing})")
     print(f"excluded: {', '.join(MASTODON_TAGS_EXCLUDED)}")
     print(f"ceiling:  {MAX_HASHTAGS_PER_POST} per post, shared with the "
           f"generated text\n")
@@ -236,7 +244,7 @@ async def _run(posts: List[str]) -> int:
             # comfortably finish untimed can still blow the shared budget
             # (Codex review, 2026-09-09).
             got = await asyncio.wait_for(
-                _probe_one(key, model, idx, post),
+                _probe_one(key, proposer, reviewer, idx, post),
                 timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
@@ -248,7 +256,7 @@ async def _run(posts: List[str]) -> int:
         if got:
             tagged += 1
 
-    correct, invalid, adversarial_total = await _probe_adversarial(key, model)
+    correct, invalid, adversarial_total = await _probe_adversarial(key, reviewer)
 
     total = len(posts)
     print("=" * 68)

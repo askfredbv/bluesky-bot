@@ -497,6 +497,47 @@ async def test_a_genuine_all_drop_verdict_is_not_reported_as_invalid(
     assert "mastodon_tags_invalid_verdict" not in events
 
 
+# ── cross-model review (Codex P1 on #116: grounding must not self-approve) ─
+
+def test_reviewer_is_a_different_model_from_the_proposer():
+    """A correlated semantic mistake must not be able to approve itself by
+    the same judgement twice."""
+    proposer, reviewer = agents._select_tag_models()
+    assert proposer != reviewer
+
+
+def test_selection_walks_past_a_duplicated_first_entry():
+    assert agents._select_tag_models(["a", "a", "b"]) == ("a", "b")
+
+
+def test_a_single_model_chain_falls_back_to_the_same_model():
+    """Weaker than cross-model, but a second independently-prompted pass
+    still beats no review at all."""
+    assert agents._select_tag_models(["only"]) == ("only", "only")
+
+
+@pytest.mark.asyncio
+async def test_the_two_calls_actually_use_the_two_models(monkeypatch, tags_on):
+    """Pins the wiring, not just the selection helper: it would be easy to
+    choose two models and then pass one of them to both calls."""
+    used = []
+    responses = iter([
+        json.dumps(["#Python"]),
+        json.dumps([{"id": 1, "keep": True}]),
+    ])
+
+    async def record(fn, api_key, instr, task, model, *a, **kw):
+        used.append(model)
+        return next(responses)
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", record)
+    tags = await agents.generate_mastodon_tags(
+        "key", ["a post"], model_priority=["proposer-model", "reviewer-model"]
+    )
+    assert tags == ["#Python"]
+    assert used == ["proposer-model", "reviewer-model"]
+
+
 # ── append: the shared ceiling ─────────────────────────────────────────────
 
 def test_tags_land_on_root_post_only():

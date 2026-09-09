@@ -1016,19 +1016,48 @@ async def review_mastodon_tags(
     return decisions, [t for i, t in enumerate(candidates) if decisions[i]]
 
 
+def _select_tag_models(
+    model_priority: Optional[List[str]] = None,
+) -> Tuple[str, str]:
+    """Pick (proposer, reviewer). Different models where the chain allows.
+
+    Codex raised this as a P1 against enabling the feature: when the proposer
+    and reviewer are the same model, a candidate can be approved solely because
+    the same model returned ``keep: true``, so a correlated semantic mistake
+    reviews itself. Using the next model in the chain breaks that specific
+    path — it does not make errors impossible, and a different model is not
+    automatically a better judge, which is why the probe measures the pairing
+    against known answers rather than assuming it.
+
+    Falls back to the same model when the chain has only one entry (a
+    single-model chain still gets a second, independently-prompted pass, which
+    is weaker but better than no review).
+    """
+    chain = list(model_priority or GEMINI_MODEL_PRIORITY)
+    if not chain:
+        chain = list(GEMINI_MODEL_PRIORITY)
+    proposer = chain[0]
+    reviewer = next((m for m in chain[1:] if m != proposer), proposer)
+    return proposer, reviewer
+
+
 async def _tag_pipeline(
-    api_key: str, post: str, model: str, allowance: int
+    api_key: str,
+    post: str,
+    proposer: str,
+    reviewer: str,
+    allowance: int,
 ) -> Tuple[Any, List[str], Optional[List[bool]], List[str]]:
-    """Generate candidates, then review them.
+    """Propose candidates with one model, review them with another.
 
     Returns ``(raw, candidates, decisions, kept)``. ``decisions`` is None when
     the reviewer's response was unusable, so the caller can log that as its own
     outcome rather than as an ordinary all-DROP verdict.
     """
-    raw, candidates = await request_mastodon_tags(api_key, post, model, allowance)
+    raw, candidates = await request_mastodon_tags(api_key, post, proposer, allowance)
     if not candidates:
         return raw, [], [], []
-    decisions, kept = await review_mastodon_tags(api_key, post, candidates, model)
+    decisions, kept = await review_mastodon_tags(api_key, post, candidates, reviewer)
     return raw, candidates, decisions, kept
 
 
@@ -1062,10 +1091,10 @@ async def generate_mastodon_tags(
     allowance = MAX_HASHTAGS_PER_POST - len(re.findall(r"(?<!\w)#\w+", root))
     if allowance <= 0:
         return []
-    model = (model_priority or GEMINI_MODEL_PRIORITY)[0]
+    model, reviewer = _select_tag_models(model_priority)
     try:
         raw, candidates, decisions, tags = await asyncio.wait_for(
-            _tag_pipeline(api_key, root, model, allowance),
+            _tag_pipeline(api_key, root, model, reviewer, allowance),
             timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
         )
     except Exception as e:
@@ -1088,6 +1117,7 @@ async def generate_mastodon_tags(
             "Reviewer returned an unusable decision set; posting untagged",
             platform="mastodon",
             model=model,
+            reviewer=reviewer,
             candidates=" ".join(candidates),
         )
     elif tags:
@@ -1096,6 +1126,7 @@ async def generate_mastodon_tags(
             "Discovery tags chosen for the Mastodon copy",
             platform="mastodon",
             model=model,
+            reviewer=reviewer,
             tags=" ".join(tags),
             dropped_in_review=" ".join(t for t in candidates if t not in tags) or "none",
         )
@@ -1105,6 +1136,7 @@ async def generate_mastodon_tags(
             "No discovery tag survived review; posting untagged",
             platform="mastodon",
             model=model,
+            reviewer=reviewer,
             candidates=" ".join(candidates) or "none",
             raw=str(raw)[:200],
         )
