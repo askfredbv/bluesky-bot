@@ -190,6 +190,19 @@ async def _probe_adversarial(key: str, reviewer: str) -> tuple:
         ("Kubernetes autoscaling worked exactly as configured. The configuration "
          "was the problem, and nobody owned it.",
          "#GoogleCloud", False, "entity leap from a related technology"),
+        # ...but ADDED rather than swapped, because dropping the framing case
+        # would have left the set with no framing control at all: a reviewer
+        # that reliably refuses entity leaps while accepting praise or
+        # endorsement would then score a clean sweep and suppress this probe's
+        # do-not-enable warning, even though AGENTS.md #7 forbids a tag that
+        # introduces framing the prose does not carry (Codex review, 2026-09-09).
+        #
+        # Unambiguous where "#BestPractices" was contestable: the prose reports
+        # a tool quietly losing data, so an endorsement tag is not a reading
+        # anyone could defend.
+        ("The vendor's migration tooling handled 80% of the tables and silently "
+         "skipped the rest. We found out in production.",
+         "#Recommended", False, "endorsement the prose contradicts"),
         # Positive controls: a reviewer that drops everything must not pass.
         ("Alan Kay coined \"object-oriented\", but later regretted the choice. "
          "He cared about messaging between objects, not classes.",
