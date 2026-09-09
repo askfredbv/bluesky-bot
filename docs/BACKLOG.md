@@ -41,6 +41,27 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ## §2 — Open issues (fix when convenient)
 
+### Freeze-audit leftovers — confirmed, unfixed [opened 2026-09-09]
+
+The 2026-09-09 whole-system audit (freeze tag `audit-freeze-2026-09-09`, PRs #121–#130) fixed ten findings. Six were confirmed by trace and deliberately left. They are recorded here so they do not evaporate with the session that found them.
+
+Full evidence, including the five findings that were **refuted** under cross-examination and should not be re-filed, is in the audit ledger: `C:\claude\bluesky-bot\scratch\AUDIT_2026-09-09_ledger.md`.
+
+**X6 — a Curator post can reach Mastodon with no source link.** `post_to_mastodon` receives `content_list` and never `link_meta` or `chosen_link`. Bluesky renders the source as an embed card built from `link_meta`; on Mastodon the URL reaches the reader only if it is inside the post text. Curator validation (`agents.py`, the `{"url", "posts"}` branch) requires a non-empty `url` **field** and never checks the URL appears in `posts`. `SYSTEM_INSTRUCTIONS_CURATOR` does say "THE LINK at the end", so the model is asked to inline it and usually will — but nothing enforces it, and the failure is invisible on Bluesky because the card covers it. A belt with no buckle. Fix is a validator; frequency unmeasured, so measure before assuming it is rare.
+
+**X7 — the proactive scan and approval can clobber each other.** `_save_gist_state` PATCHes `pending_replies.json` whole with no compare-and-swap, and `proactive_scan.yml` / `approve_pending_reply.yml` use **different** concurrency groups (`proactive-scan-*` vs `proactive-approve-*`), so GitHub will run them concurrently. A scan that loaded before an approval finished writes back state that resurrects an approved draft and erases its posted cooldown. Requires overlapping runs; unquantified. Cheapest mitigation is a shared concurrency group.
+
+**F2b — `scripts/` is not in the mypy gate.** #129 moved the config into `[tool.mypy]` so local and CI agree, but the gate still covers only `src/` and `main.py`. Running the same flags over `scripts/` reports 5 real errors, including two `Item "None" ... has no attribute "get"` in `run_proactive_approve.py` — which is on the human-approval path for proactive replies. Widening the gate means fixing those first.
+
+**C2 — the `utils.py` split (#81–#84) moved the definitions and never moved the callers.** `src/utils.py` is ~170 lines of which ~56 are pure backward-compat re-exports for `src.news`, `src.retry`, `src.net_safety` and `src.state_store`. Four production modules plus `main.py` still import through the shim, so it is load-bearing, not dead — the migration is simply half done, and `src.utils` is now an import hub whose own content is three functions. #130 imported `load_replied_to_strict` from `src.state_store` directly rather than deepen the shim; that is the direction to finish in.
+
+**C3 — two image compressors, and the weaker one is on the live path.** `utils.compress_image` steps JPEG quality down to 10 and never downscales, so it can return bytes still over budget. `broadcasters._compress_image_to_fit` re-encodes *and* progressively downscales and returns a `fits` flag — written 2026-06-14 precisely because the first was not getting images under the Bluesky blob gate. The weaker one still runs on the Curator fallback image and on publisher og:images; the better one is reachable only from the image-embed branch.
+
+**C6 — the publisher og:image path is not size-validated.** The generated fallback image is validated with `is_usable_image` before it is attached (`main.py`); an og:image reaching `link_meta['image_data']` via `get_link_metadata` is not, and goes to `upload_blob` unchecked. Contained (the upload sits in a try that logs `thumbnail_upload_failed` and continues), so this is consistency rather than breakage. **Attempted inside #123 and withdrawn:** adding the check breaks `test_logo_filter.py::test_non_generic_image_is_fetched_normally`, which asserts `meta["image_data"] == b"real-image-bytes"` — a placeholder that is not a decodable image. That test pins the current behaviour, so the change needs its own PR and a deliberate decision about the placeholder, not an assertion quietly rewritten to fit.
+
+**ARG001 — `bsky_username` is threaded into `handle_interactions` and never used** (`agents.py`, passed from `main.py`). Two lines. Left until the PR queue drained to avoid a conflict on an open review; the queue is now empty.
+
+
 ### ~~Post-dependent state is recorded even when nothing was posted — and Curator records the wrong topic~~ [**resolved 2026-09-04, v4.25.1**]
 
 `persistence_stage` appends `news_items[0]['detected_topic']` to `recent_topics` (`main.py`, Curator branch). But the Curator is explicitly allowed to write about a *non-top* item — that is the whole point of the `chosen_link` contract added in #51, and `broadcasting_stage` already realigns the link card and `source_domain` to the chosen item. Persistence was never updated to match.
