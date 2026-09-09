@@ -90,22 +90,35 @@ def test_allowance_caps_the_result():
 
 # ── generator: cannot fail a run, cannot stall one ─────────────────────────
 
+def _script(monkeypatch, *responses):
+    """Feed the two model calls (propose, then review) in order."""
+    queue = iter(responses)
+
+    async def scripted(fn, *args, **kwargs):
+        return next(queue)
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", scripted)
+
+
 @pytest.mark.asyncio
 async def test_generator_returns_model_tags(monkeypatch, tags_on):
-    async def fake_thread(fn, *args, **kwargs):
-        return json.dumps(["#Semiconductors", "#NVIDIA"])
-
-    monkeypatch.setattr(agents.asyncio, "to_thread", fake_thread)
+    _script(
+        monkeypatch,
+        json.dumps(["#Semiconductors", "#NVIDIA"]),
+        json.dumps([{"id": 1, "keep": True}, {"id": 2, "keep": True}]),
+    )
     assert await agents.generate_mastodon_tags("key", ["a post about chips"]) == \
         ["#Semiconductors", "#NVIDIA"]
 
 
 @pytest.mark.asyncio
 async def test_generator_strips_code_fences(monkeypatch, tags_on):
-    async def fake_thread(fn, *args, **kwargs):
-        return '```json\n["#RetroComputing"]\n```'
-
-    monkeypatch.setattr(agents.asyncio, "to_thread", fake_thread)
+    """Both calls may come back fenced."""
+    _script(
+        monkeypatch,
+        '```json\n["#RetroComputing"]\n```',
+        '```json\n[{"id": 1, "keep": true}]\n```',
+    )
     assert await agents.generate_mastodon_tags("key", ["p"]) == ["#RetroComputing"]
 
 
@@ -207,6 +220,281 @@ async def test_request_mastodon_tags_has_no_enablement_gate(monkeypatch):
     raw, tags = await agents.request_mastodon_tags("key", "p", "model")
     assert raw == ["#Python"]
     assert tags == ["#Python"]
+
+
+# ── voice gate (Codex review of #112: banned words passed the sanitizer) ────
+
+def test_banned_hype_words_are_rejected_as_tags():
+    """#Revolutionary and #Groundbreaking are literally in BANNED_HYPE_WORDS.
+    They shipped before this gate: tags are appended after _apply_voice_trim,
+    which is log-only for hype, and validate_summary does not reject it."""
+    assert agents._sanitize_mastodon_tags(["#Revolutionary", "#Groundbreaking"]) == []
+
+
+def test_the_tag_gate_does_not_depend_on_the_prose_validators():
+    """The tag rule must stand on its own.
+
+    When this was written `_apply_voice_trim` logged hype without removing it
+    and `validate_summary` did not reject it, so "route tags through the
+    existing validators" would have fixed nothing. Asserting that deficiency
+    directly would make this test fail if prose validation ever improved, which
+    is backwards. So assert the property that must hold either way: the tag
+    gate rejects hype regardless of what the prose path does with it.
+    """
+    assert agents._sanitize_mastodon_tags(["#Revolutionary"]) == []
+    assert agents._banned_fragment_in("Revolutionary") == "revolutionary"
+
+
+def test_multi_word_bans_are_caught_through_camelcase():
+    """Ban entries are phrases ('game-changing'); tags are concatenations."""
+    assert agents._sanitize_mastodon_tags(["#GameChanging"]) == []
+    assert agents._sanitize_mastodon_tags(["#WatchThisSpace"]) == []
+    assert agents._sanitize_mastodon_tags(["#StayTuned"]) == []
+
+
+def test_banned_fragment_is_caught_as_a_substring():
+    assert agents._sanitize_mastodon_tags(["#RevolutionaryAI"]) == []
+
+
+def test_the_empty_normalized_ban_entry_is_excluded():
+    """BANNED_TEASER_PATTERNS contains the thread emoji, which normalises to
+    "" — and "" is a substring of everything. Without the guard the ban list
+    would reject every tag ever proposed."""
+    assert "" not in agents._BANNED_TAG_FRAGMENTS
+    assert agents._sanitize_mastodon_tags(["#Python"]) == ["#Python"]
+
+
+def test_the_known_over_rejection_is_deliberate():
+    """'epic' is a banned hype word, so #EpicGames — a real company — is
+    refused. Accepted cost: no exception catalogue, because rescuing individual
+    names starts a second definition of acceptable voice."""
+    assert agents._sanitize_mastodon_tags(["#EpicGames"]) == []
+
+
+def test_the_voice_gate_does_not_touch_known_good_tags():
+    """Every tag the live probe produced must still survive."""
+    good = ["#MicrosoftEdge", "#BrowserExtensions", "#OOP", "#TheMotherOfAllDemos",
+            "#DataMigration", "#AIObservability", "#NVIDIA", "#ComputerHistory",
+            "#InfoSec", "#TechnicalDebt", "#SoftwareEngineering", "#RetroComputing"]
+    for tag in good:
+        assert agents._sanitize_mastodon_tags([tag]) == [tag], tag
+
+
+# ── semantic review (Codex review of #113: entity tags were ungrounded) ────
+
+@pytest.mark.asyncio
+async def test_review_keeps_only_what_the_model_approves(monkeypatch):
+    async def verdicts(fn, *args, **kwargs):
+        return json.dumps([{"id": 1, "keep": True}, {"id": 2, "keep": False}])
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", verdicts)
+    _, kept = await agents.review_mastodon_tags(
+        "key", "post", ["#Semiconductors", "#NVIDIA"], "model"
+    )
+    assert kept == ["#Semiconductors"]
+
+
+@pytest.mark.asyncio
+async def test_review_reads_indices_only_never_text(monkeypatch):
+    """The reviewer must not be able to introduce a tag. Only keep/drop by id
+    is read, so a hallucinated tag in the response has no route into the post."""
+    async def sneaky(fn, *args, **kwargs):
+        return json.dumps([{"id": 1, "keep": True, "tag": "#Hallucinated"}])
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", sneaky)
+    _, kept = await agents.review_mastodon_tags("key", "post", ["#Python"], "model")
+    assert kept == ["#Python"]
+
+
+@pytest.mark.asyncio
+async def test_review_treats_anything_not_true_as_a_drop(monkeypatch):
+    """Uncertain means reject."""
+    async def mushy(fn, *args, **kwargs):
+        return json.dumps([
+            {"id": 1, "keep": "yes"}, {"id": 2, "keep": None}, {"id": 3},
+        ])
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", mushy)
+    _, kept = await agents.review_mastodon_tags("key", "p", ["#A", "#B", "#C"], "model")
+    assert kept == []
+
+
+@pytest.mark.asyncio
+async def test_review_of_malformed_output_drops_everything(monkeypatch):
+    async def garbage(fn, *args, **kwargs):
+        return json.dumps({"verdict": "looks fine to me"})
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", garbage)
+    assert await agents.review_mastodon_tags("key", "p", ["#A"], "model") == (None, [])
+
+
+@pytest.mark.parametrize("raw, count, why", [
+    ([{"id": True, "keep": True}], 1, "bool is an int subclass; True must not index 1"),
+    ([{"id": "1", "keep": True}], 1, "string id coerced by int()"),
+    ([{"id": 1.9, "keep": True}], 1, "float id truncated by int()"),
+    ([{"id": 1, "keep": False}, {"id": 1, "keep": True}], 2,
+     "contradiction must not resolve to approve"),
+    ([{"id": 1, "keep": True}], 2, "incomplete coverage"),
+    ([None, {"id": 1, "keep": True}], 2, "a junk entry must void the set"),
+    ([{"id": 1, "keep": "yes"}], 1, "keep must be a real bool"),
+    ([{"id": 5, "keep": True}], 1, "id out of range"),
+    ({"verdict": "fine"}, 1, "not a list"),
+    ([{"id": 1, "keep": True}, {"id": 2, "keep": True}], 1, "too many decisions"),
+])
+def test_no_malformed_shape_can_approve_a_tag(raw, count, why):
+    """Every one of these approved a tag before the whole-set validator.
+
+    Partial salvage inverts the fail-closed contract: a malformed answer became
+    a publish (Codex review, 2026-09-09).
+    """
+    assert agents._parse_tag_verdicts(raw, count) is None, why
+
+
+def test_a_well_formed_decision_set_is_honoured():
+    assert agents._parse_tag_verdicts(
+        [{"id": 2, "keep": True}, {"id": 1, "keep": False}], 2
+    ) == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_review_skips_the_call_when_there_is_nothing_to_review(monkeypatch):
+    called = []
+
+    async def tracker(fn, *args, **kwargs):
+        called.append(1)
+        return "[]"
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", tracker)
+    assert await agents.review_mastodon_tags("key", "p", [], "model") == ([], [])
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_a_tag_rejected_in_review_never_reaches_the_post(monkeypatch, tags_on):
+    """End to end: the model proposes an ungrounded company tag, review drops
+    it, and generate_mastodon_tags returns nothing to append."""
+    responses = iter([
+        json.dumps(["#NVIDIA"]),                      # propose
+        json.dumps([{"id": 1, "keep": False}]),       # review
+    ])
+
+    async def scripted(fn, *args, **kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", scripted)
+    tags = await agents.generate_mastodon_tags(
+        "key", ["A migration stalls on decommissioning, not the data pipeline."]
+    )
+    assert tags == []
+
+
+@pytest.mark.asyncio
+async def test_both_calls_share_one_deadline(monkeypatch, tags_on):
+    """Adding a second gate must not buy a second delay allowance.
+
+    Both calls take 0.15s against a 0.20s budget. Each fits comfortably inside
+    a budget of its own, so a two-deadline implementation would return the tag;
+    only one SHARED deadline times out. A test where generation is instant
+    would pass either way and prove nothing (Codex review, 2026-09-09).
+    """
+    calls = []
+
+    async def slow_each_time(fn, *args, **kwargs):
+        calls.append(1)
+        await asyncio.sleep(0.15)
+        if len(calls) == 1:
+            return json.dumps(["#Python"])
+        return json.dumps([{"id": 1, "keep": True}])
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", slow_each_time)
+    monkeypatch.setattr(agents, "MASTODON_TAGS_TIMEOUT_SECONDS", 0.20)
+
+    tags = await asyncio.wait_for(
+        agents.generate_mastodon_tags("key", ["a post"]), timeout=5
+    )
+    assert tags == []
+    assert len(calls) == 2, "both calls should have started under one budget"
+
+
+@pytest.mark.asyncio
+async def test_two_fast_calls_still_fit_the_shared_budget(monkeypatch, tags_on):
+    """The companion to the test above: a shared deadline must not be so tight
+    that the normal two-call path cannot complete."""
+    responses = iter([
+        json.dumps(["#Python"]),
+        json.dumps([{"id": 1, "keep": True}]),
+    ])
+
+    async def quick(fn, *args, **kwargs):
+        await asyncio.sleep(0.01)
+        return next(responses)
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", quick)
+    monkeypatch.setattr(agents, "MASTODON_TAGS_TIMEOUT_SECONDS", 1.0)
+    assert await agents.generate_mastodon_tags("key", ["a post"]) == ["#Python"]
+
+
+@pytest.mark.asyncio
+async def test_review_failure_ships_the_post_untagged(monkeypatch, tags_on):
+    responses = iter([json.dumps(["#Python"])])
+
+    async def propose_then_fail(fn, *args, **kwargs):
+        try:
+            return next(responses)
+        except StopIteration:
+            raise RuntimeError("review call exploded")
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", propose_then_fail)
+    assert await agents.generate_mastodon_tags("key", ["a post"]) == []
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_verdict_logs_its_own_event(monkeypatch, tags_on):
+    """A parser regression and a genuine all-DROP verdict both end with no
+    tags. Logging them identically is how a broken reviewer hides for weeks,
+    which is the failure mode AGENTS.md #3 exists to prevent (Codex review,
+    2026-09-09 - the same conflation was found in three places)."""
+    events = []
+    monkeypatch.setattr(
+        agents.SafeLogger, "warn",
+        lambda event, message="", **f: events.append(event),
+    )
+    monkeypatch.setattr(
+        agents.SafeLogger, "info",
+        lambda event, message="", **f: events.append(event),
+    )
+    _script(
+        monkeypatch,
+        json.dumps(["#Python"]),
+        json.dumps([{"id": 1, "keep": "maybe"}]),   # parseable, not a decision
+    )
+    assert await agents.generate_mastodon_tags("key", ["a post"]) == []
+    assert "mastodon_tags_invalid_verdict" in events
+    assert "mastodon_tags_empty" not in events
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_all_drop_verdict_is_not_reported_as_invalid(
+    monkeypatch, tags_on
+):
+    """The other side of the same distinction."""
+    events = []
+    monkeypatch.setattr(
+        agents.SafeLogger, "warn",
+        lambda event, message="", **f: events.append(event),
+    )
+    monkeypatch.setattr(
+        agents.SafeLogger, "info",
+        lambda event, message="", **f: events.append(event),
+    )
+    _script(
+        monkeypatch,
+        json.dumps(["#Python"]),
+        json.dumps([{"id": 1, "keep": False}]),
+    )
+    assert await agents.generate_mastodon_tags("key", ["a post"]) == []
+    assert "mastodon_tags_empty" in events
+    assert "mastodon_tags_invalid_verdict" not in events
 
 
 # ── append: the shared ceiling ─────────────────────────────────────────────

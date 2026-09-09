@@ -748,24 +748,96 @@ _MASTODON_TAG_PROMPT = (
 )
 
 
+_MASTODON_REVIEW_PROMPT = (
+    "POST:\n{post}\n\n"
+    "CANDIDATE TAGS:\n{candidates}\n\n"
+    "For each candidate, decide whether the post supports it as a subject the "
+    "post is genuinely about.\n"
+    "- KEEP a tag that names a subject of the post, including by a conventional "
+    "synonym, acronym, or established name. A post about object-oriented "
+    "programming supports #OOP. A post about browser add-ons supports "
+    "#BrowserExtensions. A post about a 1968 Engelbart demo supports "
+    "#ComputerHistory.\n"
+    "- DROP a tag that is merely associated with the topic, names a company or "
+    "product the post does not actually discuss, invents specificity the post "
+    "does not have, or adds framing, praise or endorsement the post does not "
+    "carry.\n"
+    "- If you are unsure, DROP it.\n\n"
+    "Return a decision for EVERY candidate, exactly once, using its number.\n"
+    "Output ONLY a JSON array of objects: "
+    '[{{"id": 1, "keep": true}}, {{"id": 2, "keep": false}}]'
+)
+
+
+def _normalize_for_ban_match(text: str) -> str:
+    """Lowercase, strip everything but letters and digits.
+
+    Both sides of the ban check go through this. Ban entries are phrases with
+    spaces and hyphens ("game-changing", "watch this space"); tag bodies are
+    CamelCase concatenations ("#GameChanging", "#WatchThisSpace"). Normalising
+    both to bare alphanumerics is what lets one list govern both.
+    """
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# Banned voice fragments, normalised once at import.
+#
+# The empty-string filter is load-bearing: BANNED_TEASER_PATTERNS contains the
+# thread emoji, which normalises to "", and "" is a substring of every string
+# — without the guard this list would reject every tag ever proposed.
+#
+# Matching is *containment*, not equality, so "#RevolutionaryAI" and
+# "#GameChanger" are caught along with "#Revolutionary". The known cost is
+# over-rejection: "epic" is a banned hype word, so "#EpicGames" — a real
+# company — is refused. That cost is accepted deliberately (Codex design
+# consult, 2026-09-09). A tag is optional; dropping one loses a discovery
+# opportunity, while publishing brand-banned language on a public feed is a
+# voice failure. No exception catalogue: rescuing individual companies would
+# start a second, drifting definition of acceptable voice. Rejections are
+# logged so the collision rate is visible if it ever gets expensive.
+_BANNED_TAG_FRAGMENTS: frozenset = frozenset(
+    fragment for fragment in (
+        _normalize_for_ban_match(entry)
+        for entry in (*BANNED_HYPE_WORDS, *BANNED_TEASER_PATTERNS)
+    ) if fragment
+)
+
+
+def _banned_fragment_in(tag_body: str) -> Optional[str]:
+    """Return the banned fragment a tag body contains, or None.
+
+    Needed because the voice pipeline does NOT catch this: `_apply_voice_trim`
+    logs hype words without removing them and `validate_summary` does not
+    reject them, so "routing tags through the existing validators" would have
+    fixed nothing. The rejection rule has to be explicit here.
+    """
+    normalized = _normalize_for_ban_match(tag_body)
+    for fragment in _BANNED_TAG_FRAGMENTS:
+        if fragment in normalized:
+            return fragment
+    return None
+
+
 def _sanitize_mastodon_tags(
     raw: Any, post_text: str = "", allowance: int = MAX_HASHTAGS_PER_POST
 ) -> List[str]:
     """Coerce a model's tag output into at most ``allowance`` safe tags.
 
-    Drops anything that is not a plain alphanumeric hashtag, anything in
-    MASTODON_TAGS_EXCLUDED, and anything already present in the post. Never
+    Rejects, in order: non-strings, anything failing the shape regex, banned
+    voice fragments (see _BANNED_TAG_FRAGMENTS), mood tags in
+    MASTODON_TAGS_EXCLUDED, tags already in the post, and duplicates. Never
     raises: bad input yields fewer tags, or none.
 
     ``allowance`` is what the post has not already spent of the shared
     MAX_HASHTAGS_PER_POST ceiling, so a post the generator gave two hashtags
-    gets none from here rather than shipping four (Codex review, 2026-09-09).
+    gets none from here rather than shipping four.
+
+    This is lexical only. It cannot tell whether a well-formed, unbanned tag is
+    actually *about* the post — that is `review_mastodon_tags`' job.
 
     Known coverage limit: the shape regex is ASCII-only, so a valid Mastodon
     tag containing an underscore or non-ASCII characters is silently dropped.
-    That loses a discovery opportunity, never a post — an acceptable trade for
-    not having to reason about normalisation of arbitrary unicode in a
-    decoration. Single-letter tags (#R, #C) ARE allowed.
+    That loses a discovery opportunity, never a post.
     """
     if not isinstance(raw, list) or allowance <= 0:
         return []
@@ -773,20 +845,37 @@ def _sanitize_mastodon_tags(
     already = {m.lower() for m in re.findall(r"(?<!\w)#(\w+)", post_text or "")}
     out: List[str] = []
     seen = set()
+    rejected: List[str] = []
     for item in raw:
         if not isinstance(item, str):
             continue
         match = _MASTODON_TAG_SHAPE.match(item.strip())
         if not match:
+            rejected.append(f"{item!r}:shape")
             continue
-        body_text = match.group(1)
-        key = body_text.lower()
-        if key in excluded or key in already or key in seen:
+        body = match.group(1)
+        key = body.lower()
+        banned = _banned_fragment_in(body)
+        if banned:
+            rejected.append(f"#{body}:voice({banned})")
+            continue
+        if key in excluded:
+            rejected.append(f"#{body}:mood")
+            continue
+        if key in already or key in seen:
+            rejected.append(f"#{body}:duplicate")
             continue
         seen.add(key)
-        out.append("#" + body_text)
+        out.append("#" + body)
         if len(out) >= allowance:
             break
+    if rejected:
+        SafeLogger.info(
+            "mastodon_tags_rejected",
+            "Candidate tags refused by the sanitizer",
+            platform="mastodon",
+            rejected=", ".join(rejected)[:300],
+        )
     return out
 
 
@@ -796,16 +885,16 @@ async def request_mastodon_tags(
     model: str,
     allowance: int = MAX_HASHTAGS_PER_POST,
 ) -> Tuple[Any, List[str]]:
-    """One tagging call. Returns ``(raw_model_output, sanitized_tags)``.
+    """One tagging call. Returns ``(raw_model_output, sanitized_candidates)``.
 
     Both halves come from the SAME response, which is the point: the probe
-    prints them side by side to show what the sanitizer actually rejected. An
-    earlier probe made two independent calls and compared unrelated outputs,
-    so a difference proved nothing (Codex review, 2026-09-09).
+    prints them side by side to show what the sanitizer rejected.
 
     Deliberately carries no enablement gate — that lives in
     ``generate_mastodon_tags``, so the read-only probe can exercise this while
     the feature is dormant in production. Raises on failure; callers decide.
+
+    The result is *candidates*, not tags to publish: this pass is lexical only.
     """
     response = await asyncio.to_thread(
         _sync_generate,
@@ -819,6 +908,130 @@ async def request_mastodon_tags(
     return raw, _sanitize_mastodon_tags(raw, post, allowance)
 
 
+def _parse_tag_verdicts(raw: Any, count: int) -> Optional[List[bool]]:
+    """Validate a reviewer response as a COMPLETE decision set.
+
+    Returns one bool per candidate in order, or None if the response is not a
+    well-formed set of decisions covering every candidate exactly once.
+
+    Whole-set validation rather than per-entry salvage, because partial
+    acceptance quietly inverts the fail-closed contract (Codex review,
+    2026-09-09). The earlier version collected approvals into a set and coerced
+    ids with ``int()``, which meant:
+
+      - ``{"id": true}`` and ``{"id": "1"}`` and ``{"id": 1.9}`` all approved
+        candidate 1, because bool is an int subclass and int() is permissive;
+      - ``[{"id":1,"keep":false},{"id":1,"keep":true}]`` approved candidate 1,
+        because a contradiction resolved to the approval;
+      - a response missing decisions entirely still approved whatever it did
+        mention.
+
+    Each of those turns a malformed answer into a publish. So: real ints (bools
+    rejected explicitly), in range, no duplicates, full coverage, and ``keep``
+    an actual bool — or the whole response is discarded.
+    """
+    if not isinstance(raw, list) or len(raw) != count:
+        return None
+    decisions: dict = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        candidate_id = entry.get("id")
+        # bool is a subclass of int; True would otherwise pass as index 1.
+        if isinstance(candidate_id, bool) or not isinstance(candidate_id, int):
+            return None
+        if not 1 <= candidate_id <= count or candidate_id in decisions:
+            return None
+        keep = entry.get("keep")
+        if not isinstance(keep, bool):
+            return None
+        decisions[candidate_id] = keep
+    if len(decisions) != count:
+        return None
+    return [decisions[i] for i in range(1, count + 1)]
+
+
+async def review_mastodon_tags(
+    api_key: str,
+    post: str,
+    candidates: List[str],
+    model: str,
+) -> Tuple[Optional[List[bool]], List[str]]:
+    """Keep only the candidates the post actually supports.
+
+    Returns ``(decisions, kept)``. ``decisions`` is None when the response
+    was not a valid decision set, and that distinction is the whole return
+    type: "the reviewer judged and dropped everything" and "the reviewer
+    returned something unusable" both yield no tags, but they are not the same
+    fact and must not be logged as one.
+
+    There is deliberately no convenience wrapper returning just ``kept``.
+    There was one, and the same conflation was then found in three separate
+    places — the adversarial probe, the per-post probe, and production
+    telemetry — because each caller quietly discarded the None (Codex
+    reviews, 2026-09-09). A caller that cannot see the difference will not
+    report it, so the type no longer lets them look away.
+
+    The lexical sanitizer cannot answer "is this tag about this post". Nor can
+    string matching: measured against real output, requiring the tag to appear
+    in the text rejects #BrowserExtensions on a post about browser add-ons and
+    #OOP on a post about object-oriented programming, which are exactly the
+    abstractions that make a tag worth having. So this asks a model, with a
+    deliberately narrow remit.
+
+    Design constraints, each for a reason:
+
+    - **Every candidate is reviewed**, entity or concept. There is no safe
+      boundary between them: #Leadership can misframe a post as easily as a
+      wrong #NVIDIA names the wrong company, and an entity classifier would
+      just add another fallible gate in front of the one that matters.
+    - **Decisions are read by index and nothing else is read from the
+      response.** The reviewer cannot propose or rewrite a tag, only keep or
+      drop one, so a hallucinated tag has no route into the post.
+    - **It never sees the generator's reasoning**, only the post and the
+      candidates, so it evaluates the claim rather than the rationale.
+    - **Uncertain means reject**, and any malformed response drops everything.
+      Enforced by `_parse_tag_verdicts` validating the whole decision set
+      before a single approval is honoured.
+
+    Honest limitation: this reduces semantic errors, it does not eliminate
+    them. Both passes use the same model, so their mistakes can correlate.
+    """
+    if not candidates:
+        return [], []
+    numbered = "\n".join(f"{i}. {t}" for i, t in enumerate(candidates, 1))
+    task = _MASTODON_REVIEW_PROMPT.format(post=post, candidates=numbered)
+    response = await asyncio.to_thread(
+        _sync_generate,
+        api_key,
+        "You return only JSON. No prose, no explanation.",
+        task,
+        model,
+    )
+    clean = response.replace("```json", "").replace("```", "").strip()
+    decisions = _parse_tag_verdicts(json.loads(clean), len(candidates))
+    if decisions is None:
+        return None, []
+    # Index only. Nothing textual from the response reaches the post.
+    return decisions, [t for i, t in enumerate(candidates) if decisions[i]]
+
+
+async def _tag_pipeline(
+    api_key: str, post: str, model: str, allowance: int
+) -> Tuple[Any, List[str], Optional[List[bool]], List[str]]:
+    """Generate candidates, then review them.
+
+    Returns ``(raw, candidates, decisions, kept)``. ``decisions`` is None when
+    the reviewer's response was unusable, so the caller can log that as its own
+    outcome rather than as an ordinary all-DROP verdict.
+    """
+    raw, candidates = await request_mastodon_tags(api_key, post, model, allowance)
+    if not candidates:
+        return raw, [], [], []
+    decisions, kept = await review_mastodon_tags(api_key, post, candidates, model)
+    return raw, candidates, decisions, kept
+
+
 async def generate_mastodon_tags(
     api_key: str,
     posts: List[str],
@@ -826,21 +1039,21 @@ async def generate_mastodon_tags(
 ) -> List[str]:
     """Name up to MAX_HASHTAGS_PER_POST hashtags for a finished post.
 
-    A separate call rather than a field on the generation contract, so it
-    cannot fail a run: the post is already written and validated by the time
-    this is asked, and every failure path returns [] and ships the post
-    untagged. Tags are decoration; the post is the point.
+    Two model calls — propose, then review — inside ONE shared
+    MASTODON_TAGS_TIMEOUT_SECONDS deadline. The review pass gets no budget of
+    its own: adding a second gate must not buy a second delay allowance. One
+    model, no retries, for the same reason.
 
-    Bounded twice over. One model and one attempt (a retry chain would
-    multiply the budget for a decoration), inside a hard
-    MASTODON_TAGS_TIMEOUT_SECONDS deadline — so a hung SDK call cannot hold
-    the post. ``wait_for`` cancels the awaiting coroutine, not the underlying
+    Cannot fail a run: the post is already written and validated by the time
+    this is asked, and every failure path — model error, unparseable output,
+    nothing surviving either pass, the deadline expiring — returns [] and
+    ships the post untagged. Tags are decoration; the post is the point.
+
+    ``wait_for`` cancels the awaiting coroutine, not the underlying
     ``to_thread`` worker, which is why the client also carries a request-level
     SDK timeout (see _get_client); the worker finishes on its own and the post
-    has already gone out.
-
-    The caller runs this concurrently with the Bluesky broadcast, so even the
-    full budget delays only the Mastodon post.
+    has already gone out. The caller runs this concurrently with the Bluesky
+    broadcast, so the budget delays only the Mastodon post.
     """
     if not MASTODON_TAGS_ENABLED or not posts:
         return []
@@ -851,8 +1064,8 @@ async def generate_mastodon_tags(
         return []
     model = (model_priority or GEMINI_MODEL_PRIORITY)[0]
     try:
-        raw, tags = await asyncio.wait_for(
-            request_mastodon_tags(api_key, root, model, allowance),
+        raw, candidates, decisions, tags = await asyncio.wait_for(
+            _tag_pipeline(api_key, root, model, allowance),
             timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
         )
     except Exception as e:
@@ -865,20 +1078,34 @@ async def generate_mastodon_tags(
             error_msg=str(e)[:200],
         )
         return []
-    if tags:
+    if decisions is None and candidates:
+        # A parser regression and a genuine all-DROP verdict both end with no
+        # tags. Logging them identically is how a broken reviewer hides for
+        # weeks (AGENTS.md #3); WARN because a model that stopped returning
+        # usable verdicts is a fault, not a quiet day.
+        SafeLogger.warn(
+            "mastodon_tags_invalid_verdict",
+            "Reviewer returned an unusable decision set; posting untagged",
+            platform="mastodon",
+            model=model,
+            candidates=" ".join(candidates),
+        )
+    elif tags:
         SafeLogger.info(
             "mastodon_tags_generated",
             "Discovery tags chosen for the Mastodon copy",
             platform="mastodon",
             model=model,
             tags=" ".join(tags),
+            dropped_in_review=" ".join(t for t in candidates if t not in tags) or "none",
         )
     else:
         SafeLogger.info(
             "mastodon_tags_empty",
-            "No discovery tag survived sanitizing; posting untagged",
+            "No discovery tag survived review; posting untagged",
             platform="mastodon",
             model=model,
+            candidates=" ".join(candidates) or "none",
             raw=str(raw)[:200],
         )
     return tags
