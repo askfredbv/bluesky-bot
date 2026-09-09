@@ -22,30 +22,31 @@ def test_settings_from_env_rejects_jitter_window_inversion():
         Settings.from_env(env)
 
 
-def test_settings_from_env_rejects_thread_length_inversion():
+def test_settings_no_longer_pretends_to_wire_what_it_never_wired():
+    """Retry budgets, feed timeouts and thread bounds were parsed AND validated
+    here while every runtime caller imported the static constant from src.config
+    instead -- MAX_API_RETRIES=5 passed validation and changed nothing.
+
+    These two tests previously asserted that validation, which was the most
+    convincing part of the illusion: a knob that rejects bad values looks wired.
+    The fields are gone, so the env vars are now plainly ignored rather than
+    ceremonially checked. Same call #85 made for RECENT_POSTS_LIMIT."""
     env = {
         **VALID_ENV,
-        "MIN_THREAD_POSTS": "4",
-        "MAX_THREAD_POSTS": "2",
+        "MAX_API_RETRIES": "-1",                   # would once have raised
+        "FEED_REQUEST_READ_TIMEOUT_SECONDS": "0",  # would once have raised
+        "MIN_THREAD_POSTS": "4",                   # would once have raised
+        "MAX_THREAD_POSTS": "2",                   # against MIN above
     }
 
-    with pytest.raises(SettingsValidationError, match="MAX_THREAD_POSTS must be >= MIN_THREAD_POSTS"):
-        Settings.from_env(env)
+    settings = Settings.from_env(env)  # no error: these are not settings any more
 
-
-def test_settings_from_env_rejects_negative_retries_and_nonpositive_timeouts():
-    env = {
-        **VALID_ENV,
-        "MAX_API_RETRIES": "-1",
-        "FEED_REQUEST_READ_TIMEOUT_SECONDS": "0",
-    }
-
-    with pytest.raises(SettingsValidationError) as excinfo:
-        Settings.from_env(env)
-
-    message = str(excinfo.value)
-    assert "MAX_API_RETRIES must be >= 0" in message
-    assert "FEED_REQUEST_READ_TIMEOUT_SECONDS must be > 0" in message
+    for gone in ("max_api_retries", "max_generation_retries", "min_thread_posts",
+                 "max_thread_posts", "feed_request_read_timeout_seconds"):
+        assert not hasattr(settings.platform, gone), f"{gone} is dead plumbing"
+    # The pair that genuinely reaches the runtime (main.py:105-108) stays.
+    assert settings.platform.post_jitter_min_seconds >= 0
+    assert settings.platform.post_jitter_max_seconds >= settings.platform.post_jitter_min_seconds
 
 
 def test_settings_from_env_requires_core_credentials():
