@@ -203,6 +203,17 @@ async def _probe_adversarial(key: str, reviewer: str) -> tuple:
         ("The vendor's migration tooling handled 80% of the tables and silently "
          "skipped the rest. We found out in production.",
          "#Recommended", False, "endorsement the prose contradicts"),
+        # The case above is necessary but not sufficient: "#Recommended" is not
+        # a subject at all, so the prompt's "must name a genuine subject" rule
+        # already refuses it, and the framing rule is never exercised. A
+        # reviewer that rejects non-subject adjectives while still accepting
+        # SUBJECT-SHAPED framing would score a clean sweep (Codex review,
+        # 2026-09-09). So this one names a real topic area whose framing the
+        # prose flatly contradicts: the post is about harm, the tag claims good.
+        ("The same voice-cloning stack that makes audiobooks cheap is now the "
+         "top vector for finance-department fraud. The tooling did not change; "
+         "the target did.",
+         "#AIForGood", False, "subject-shaped tag, framing the prose contradicts"),
         # Positive controls: a reviewer that drops everything must not pass.
         ("Alan Kay coined \"object-oriented\", but later regretted the choice. "
          "He cared about messaging between objects, not classes.",
