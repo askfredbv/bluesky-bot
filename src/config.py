@@ -78,15 +78,26 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 # — a bot tell in the profile view, and useless in a tag timeline where the
 # point is that the tag describes THIS post.
 #
-# ON since 2026-09-09, after the tag probe (run 34343702234) was read against
-# ten real posts on gemini-3.7-flash: 10/10 tagged, all on-topic and specific
-# to the post rather than its category — #MicrosoftEdge/#BrowserExtensions on
-# the Edge add-ons story, #DataMigration/#LegacySystems on the decommissioning
-# one. The model never reached for an excluded mood tag, so
-# MASTODON_TAGS_EXCLUDED is still unexercised in the wild. Re-run the probe
-# after any prompt or model change; set this back to False to stop tagging
-# without reverting anything.
-MASTODON_TAGS_ENABLED: bool = True
+# OFF. Enabled 2026-09-09 on the strength of the tag probe (run 34343702234,
+# 10/10 real posts tagged sensibly), then disabled the same day on Codex
+# review of #112/#113 — which landed ~90s after each merge and was not read
+# in time. Two holes, both because tags are appended AFTER _apply_voice_trim,
+# so no existing validator ever inspects them:
+#
+#  1. Banned voice words pass. '#Revolutionary' and '#Groundbreaking' are
+#     literally in BANNED_HYPE_WORDS and _sanitize_mastodon_tags accepts
+#     both — it checks shape, exclusions and duplicates, nothing else.
+#     Verified, not hypothetical.
+#  2. Entity tags are ungrounded. The prompt invites a company tag, so
+#     '#NVIDIA' can ship on a post that never mentions NVIDIA — a product
+#     affiliation visible on Mastodon only, which is exactly what the
+#     AGENTS.md #7 clause about appended content forbids.
+#
+# The probe's 10/10 is not a defence: samples do not constrain the next call.
+# Before flipping this back to True, the sanitizer needs to reject banned
+# voice words and to ground entity tags in the post text. Re-run the probe
+# after that, and read the Codex review BEFORE merging (it takes ~90s).
+MASTODON_TAGS_ENABLED: bool = False
 
 # Total wall-clock budget for naming tags. Tagging runs concurrently with the
 # Bluesky broadcast (main.broadcasting_stage), so this never delays that post
