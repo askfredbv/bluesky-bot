@@ -74,6 +74,11 @@ class BroadcastPayload:
     # non-top item — the same drift that #51 fixed for the link card but not
     # for the topic memory. Resolve once, pass the answer.
     posted_topic_category: Optional[str] = None
+    # The link of the item the Curator actually wrote about, resolved in the same
+    # place as the category above so the two can never disagree. persistence_stage
+    # marks only this one seen: the other candidates were fetched, not published,
+    # and suppressing them throws away stories that never ran.
+    posted_link: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,7 @@ class AutomationPayload:
     # Pioneer cooldowns for a post that never existed.
     delivered: bool = False
     posted_topic_category: Optional[str] = None
+    posted_link: Optional[str] = None
 
 
 async def get_recent_posts(client, handle: str) -> List[str]:
@@ -307,6 +313,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # card pointing at a different article. generate_content returns the
     # chosen URL; only refetch when it differs from the pre-fetched top item.
     posted_topic_category: Optional[str] = None
+    posted_link: Optional[str] = None
     if mode == Mode.CURATOR and chosen_link:
         top_link = news_items[0]["link"] if news_items else None
         if chosen_link != top_link:
@@ -330,9 +337,15 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             chosen_item = news_items[0]  # hallucinated/edited URL — same fallback as the card
         if chosen_item:
             posted_topic_category = chosen_item.get("detected_topic")
+        # Mark the feed item that was used, not the model's echoed URL: when the
+        # model hallucinates or edits the link, chosen_item falls back to the top
+        # item, and that is the entry that must not resurface. A hallucinated URL
+        # is in no feed, so recording it instead would suppress nothing.
+        posted_link = chosen_item["link"] if chosen_item else chosen_link
     elif mode == Mode.CURATOR and news_items:
         # No chosen link (older/bare-array output): fall back to the top item.
         posted_topic_category = news_items[0].get("detected_topic")
+        posted_link = news_items[0].get("link")
 
     # FORCE_IMAGE=1 (workflow_dispatch input) always attempts an image, for
     # deterministic end-to-end validation of the image path; otherwise the
@@ -509,6 +522,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         mastodon_delivered_texts=mastodon_delivered_texts,
         metrics_context=metrics_context,
         posted_topic_category=posted_topic_category,
+        posted_link=posted_link,
     )
 
 
@@ -743,6 +757,7 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
         chosen_topic=broadcast.chosen_topic,
         delivered=delivered,
         posted_topic_category=broadcast.posted_topic_category,
+        posted_link=broadcast.posted_link,
     )
 
 
@@ -769,7 +784,16 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 
     dirty = False
     if mode == Mode.CURATOR and news_items:
-        seen_data["links"] = (seen_data["links"] + [canonical_url(i['link']) for i in news_items])[-200:]
+        # Only the item that was actually published is marked seen. This used to
+        # record every candidate fetch_news returned, which suppressed the four
+        # stories the run did NOT write about — and because fetch_single_feed only
+        # admits entries from the last two days, a suppressed candidate ages out of
+        # the window before it can be reconsidered. They were lost, not deferred.
+        # (The full-list write arrived incidentally in 7428cf7/v4.5.0, which widened
+        # an earlier news_items[:5] slice; no commit records it as a decision.)
+        posted_link = automation.posted_link or news_items[0].get("link")
+        if posted_link:
+            seen_data["links"] = (seen_data["links"] + [canonical_url(posted_link)])[-200:]
 
         # Record the category of the item actually written about, resolved in
         # broadcasting_stage alongside the link card. Falls back to the top item

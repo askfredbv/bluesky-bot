@@ -740,6 +740,85 @@ async def test_persistence_stage_records_the_posted_item_not_the_top_one(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_persistence_stage_marks_only_the_published_link_seen(monkeypatch):
+    """Only the item that was published is suppressed; the rest stay eligible.
+
+    persistence_stage used to write every link fetch_news returned, so a run that
+    published one of five candidates burned the other four. They could not come
+    back either: fetch_single_feed admits only entries from the last two days, so
+    a suppressed candidate ages out of the window before it is reconsidered."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[
+            {"link": "https://a", "detected_topic": "LLMs"},
+            {"link": "https://b", "detected_topic": "Compute/HW"},  # the one published
+            {"link": "https://c", "detected_topic": "Security"},
+            {"link": "https://d", "detected_topic": "Markets"},
+            {"link": "https://e", "detected_topic": "LLMs"},
+        ],
+        delivered=True,
+        posted_topic_category="Compute/HW",
+        posted_link="https://b",
+    )
+    await main.persistence_stage(payload)
+
+    assert updated["value"]["links"] == ["https://b"]
+    for offered_but_unpublished in ("https://a", "https://c", "https://d", "https://e"):
+        assert offered_but_unpublished not in updated["value"]["links"]
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_seen_link_falls_back_to_the_top_item(monkeypatch):
+    """No resolved posted_link (bare-array model output) still records one link.
+
+    The fallback must record exactly the top item -- the same one the link card
+    ships -- and still leave the remaining candidates eligible."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[
+            {"link": "https://top", "detected_topic": "LLMs"},
+            {"link": "https://other", "detected_topic": "Markets"},
+        ],
+        delivered=True,
+        posted_link=None,
+    )
+    await main.persistence_stage(payload)
+
+    assert updated["value"]["links"] == ["https://top"]
+    assert "https://other" not in updated["value"]["links"]
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_seen_link_is_canonicalised(monkeypatch):
+    """The seen set is compared canonically (fetch_news canonicalises both sides),
+    so the recorded link must be canonical too or the dedupe silently misses."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[{"link": "https://example.com/story", "detected_topic": "LLMs"}],
+        delivered=True,
+        posted_link="https://example.com/story?utm_source=rss&utm_medium=feed",
+    )
+    await main.persistence_stage(payload)
+
+    assert updated["value"]["links"] == [main.canonical_url(
+        "https://example.com/story?utm_source=rss&utm_medium=feed"
+    )]
+    assert "utm_source" not in updated["value"]["links"][0]
+
+
+@pytest.mark.asyncio
 async def test_persistence_stage_writes_nothing_when_nothing_was_delivered(monkeypatch):
     """A run that reached no platform must leave every post-dependent cooldown alone.
 
