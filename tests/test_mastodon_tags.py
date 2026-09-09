@@ -619,7 +619,7 @@ class _DummyMastodon:
     def __init__(self, access_token, api_base_url):
         self.posted = []
 
-    def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+    def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
         self.posted.append(status)
         return {"id": len(self.posted)}
 

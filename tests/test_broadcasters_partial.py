@@ -192,7 +192,7 @@ async def test_mastodon_transient_failure_mid_thread_stops_and_keeps_earlier_pos
         def __init__(self, *a, **kw):
             pass
 
-        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             call_log.append(status)
             if status == "post-2":
                 raise RuntimeError("mastodon blew up")
@@ -265,7 +265,7 @@ async def test_mastodon_successful_thread_emits_no_partial_delivery(monkeypatch)
         def __init__(self, *a, **kw):
             pass
 
-        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             id_counter["n"] += 1
             return {"id": id_counter["n"] * 1000}
 
