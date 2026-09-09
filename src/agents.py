@@ -951,20 +951,51 @@ def _parse_tag_verdicts(raw: Any, count: int) -> Optional[List[bool]]:
     return [decisions[i] for i in range(1, count + 1)]
 
 
-async def review_mastodon_tags_detailed(
+async def review_mastodon_tags(
     api_key: str,
     post: str,
     candidates: List[str],
     model: str,
 ) -> Tuple[Optional[List[bool]], List[str]]:
-    """``review_mastodon_tags``, but also reporting HOW the answer was reached.
+    """Keep only the candidates the post actually supports.
 
-    Returns ``(decisions, kept)`` where ``decisions`` is None when the
-    response was not a valid decision set. Both outcomes drop tags, but they
-    are not the same fact, and the probe must not score a parser failure as a
-    correct semantic rejection: a model returning junk would otherwise post a
-    perfect rejection rate while making no decisions at all (Codex review,
-    2026-09-09). Production only needs the tags, so it calls the wrapper.
+    Returns ``(decisions, kept)``. ``decisions`` is None when the response
+    was not a valid decision set, and that distinction is the whole return
+    type: "the reviewer judged and dropped everything" and "the reviewer
+    returned something unusable" both yield no tags, but they are not the same
+    fact and must not be logged as one.
+
+    There is deliberately no convenience wrapper returning just ``kept``.
+    There was one, and the same conflation was then found in three separate
+    places — the adversarial probe, the per-post probe, and production
+    telemetry — because each caller quietly discarded the None (Codex
+    reviews, 2026-09-09). A caller that cannot see the difference will not
+    report it, so the type no longer lets them look away.
+
+    The lexical sanitizer cannot answer "is this tag about this post". Nor can
+    string matching: measured against real output, requiring the tag to appear
+    in the text rejects #BrowserExtensions on a post about browser add-ons and
+    #OOP on a post about object-oriented programming, which are exactly the
+    abstractions that make a tag worth having. So this asks a model, with a
+    deliberately narrow remit.
+
+    Design constraints, each for a reason:
+
+    - **Every candidate is reviewed**, entity or concept. There is no safe
+      boundary between them: #Leadership can misframe a post as easily as a
+      wrong #NVIDIA names the wrong company, and an entity classifier would
+      just add another fallible gate in front of the one that matters.
+    - **Decisions are read by index and nothing else is read from the
+      response.** The reviewer cannot propose or rewrite a tag, only keep or
+      drop one, so a hallucinated tag has no route into the post.
+    - **It never sees the generator's reasoning**, only the post and the
+      candidates, so it evaluates the claim rather than the rationale.
+    - **Uncertain means reject**, and any malformed response drops everything.
+      Enforced by `_parse_tag_verdicts` validating the whole decision set
+      before a single approval is honoured.
+
+    Honest limitation: this reduces semantic errors, it does not eliminate
+    them. Both passes use the same model, so their mistakes can correlate.
     """
     if not candidates:
         return [], []
@@ -985,54 +1016,20 @@ async def review_mastodon_tags_detailed(
     return decisions, [t for i, t in enumerate(candidates) if decisions[i]]
 
 
-async def review_mastodon_tags(
-    api_key: str,
-    post: str,
-    candidates: List[str],
-    model: str,
-) -> List[str]:
-    """Second pass: keep only candidates the post actually supports.
-
-    The lexical sanitizer cannot answer "is this tag about this post". Nor can
-    string matching — measured against real output, requiring the tag to appear
-    in the text rejects #BrowserExtensions on a post about browser add-ons and
-    #OOP on a post about object-oriented programming, which are exactly the
-    abstractions that make a tag worth having. So this asks a model, with a
-    deliberately narrow remit (Codex design consult, 2026-09-09).
-
-    Design constraints, each for a reason:
-
-    - **Every candidate is reviewed**, entity or concept. There is no safe
-      boundary between them: #Leadership can misframe a post as easily as a
-      wrong #NVIDIA names the wrong company, and an entity classifier would
-      just add another fallible gate in front of the one that matters.
-    - **Decisions are returned by index and nothing else is read from the
-      response.** The reviewer cannot propose or rewrite a tag, only keep or
-      drop one, so a hallucinated tag has no route into the post.
-    - **It never sees the generator's reasoning**, only the post and the
-      candidates, so it evaluates the claim rather than the rationale.
-    - **Uncertain means reject**, and any malformed response drops everything.
-      Enforced by `_parse_tag_verdicts` validating the whole decision set
-      before a single approval is honoured.
-
-    Honest limitation: this reduces semantic errors, it does not eliminate
-    them. Both passes use the same model, so their mistakes can correlate.
-    """
-    _, kept = await review_mastodon_tags_detailed(
-        api_key, post, candidates, model
-    )
-    return kept
-
-
 async def _tag_pipeline(
     api_key: str, post: str, model: str, allowance: int
-) -> Tuple[Any, List[str], List[str]]:
-    """Generate candidates, then review them. Returns (raw, candidates, kept)."""
+) -> Tuple[Any, List[str], Optional[List[bool]], List[str]]:
+    """Generate candidates, then review them.
+
+    Returns ``(raw, candidates, decisions, kept)``. ``decisions`` is None when
+    the reviewer's response was unusable, so the caller can log that as its own
+    outcome rather than as an ordinary all-DROP verdict.
+    """
     raw, candidates = await request_mastodon_tags(api_key, post, model, allowance)
     if not candidates:
-        return raw, [], []
-    kept = await review_mastodon_tags(api_key, post, candidates, model)
-    return raw, candidates, kept
+        return raw, [], [], []
+    decisions, kept = await review_mastodon_tags(api_key, post, candidates, model)
+    return raw, candidates, decisions, kept
 
 
 async def generate_mastodon_tags(
@@ -1067,7 +1064,7 @@ async def generate_mastodon_tags(
         return []
     model = (model_priority or GEMINI_MODEL_PRIORITY)[0]
     try:
-        raw, candidates, tags = await asyncio.wait_for(
+        raw, candidates, decisions, tags = await asyncio.wait_for(
             _tag_pipeline(api_key, root, model, allowance),
             timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
         )
@@ -1081,7 +1078,19 @@ async def generate_mastodon_tags(
             error_msg=str(e)[:200],
         )
         return []
-    if tags:
+    if decisions is None and candidates:
+        # A parser regression and a genuine all-DROP verdict both end with no
+        # tags. Logging them identically is how a broken reviewer hides for
+        # weeks (AGENTS.md #3); WARN because a model that stopped returning
+        # usable verdicts is a fault, not a quiet day.
+        SafeLogger.warn(
+            "mastodon_tags_invalid_verdict",
+            "Reviewer returned an unusable decision set; posting untagged",
+            platform="mastodon",
+            model=model,
+            candidates=" ".join(candidates),
+        )
+    elif tags:
         SafeLogger.info(
             "mastodon_tags_generated",
             "Discovery tags chosen for the Mastodon copy",
@@ -1093,7 +1102,7 @@ async def generate_mastodon_tags(
     else:
         SafeLogger.info(
             "mastodon_tags_empty",
-            "No discovery tag survived; posting untagged",
+            "No discovery tag survived review; posting untagged",
             platform="mastodon",
             model=model,
             candidates=" ".join(candidates) or "none",

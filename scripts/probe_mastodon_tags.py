@@ -37,7 +37,7 @@ import time
 import urllib.request
 from typing import Any, Dict, List
 
-from src.agents import request_mastodon_tags, review_mastodon_tags_detailed
+from src.agents import request_mastodon_tags, review_mastodon_tags
 from src.broadcasters import apply_mastodon_tags
 from src.config import (
     GEMINI_MODEL_PRIORITY, MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
@@ -115,7 +115,7 @@ async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
     print(f"    sanitized : {' '.join(candidates) if candidates else '(none)'}")
 
     try:
-        decisions, tags = await review_mastodon_tags_detailed(
+        decisions, tags = await review_mastodon_tags(
             key, post, candidates, model
         )
     except Exception as exc:
@@ -189,7 +189,7 @@ async def _probe_adversarial(key: str, model: str) -> tuple:
     for post, tag, must_keep, why in cases:
         want = "KEEP" if must_keep else "DROP"
         try:
-            decisions, kept = await review_mastodon_tags_detailed(
+            decisions, kept = await review_mastodon_tags(
                 key, post, [tag], model
             )
         except Exception as exc:

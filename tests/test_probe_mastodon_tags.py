@@ -84,7 +84,7 @@ def _patch_pipeline(monkeypatch, raw, candidates, kept):
         return [c in kept for c in cands], kept
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", review)
+    monkeypatch.setattr(probe, "review_mastodon_tags", review)
     return proposals, reviews
 
 
@@ -135,7 +135,7 @@ async def test_probe_reports_an_invalid_verdict_as_invalid(monkeypatch, capsys):
         return None, []
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", invalid)
+    monkeypatch.setattr(probe, "review_mastodon_tags", invalid)
     assert await probe._probe_one("key", "model", 1, "a note") is False
     out = capsys.readouterr().out
     assert "INVALID" in out
@@ -152,7 +152,7 @@ async def test_probe_reports_a_review_failure_distinctly(monkeypatch, capsys):
         raise RuntimeError("review exploded")
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", boom)
+    monkeypatch.setattr(probe, "review_mastodon_tags", boom)
     assert await probe._probe_one("key", "model", 1, "a note") is False
     assert "FAILED (review)" in capsys.readouterr().out
 
@@ -166,7 +166,7 @@ async def test_a_reviewer_that_drops_everything_does_not_score_perfectly(
     async def drops_everything(key, post, cands, model):
         return [False] * len(cands), []
 
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", drops_everything)
+    monkeypatch.setattr(probe, "review_mastodon_tags", drops_everything)
     correct, invalid, total = await probe._probe_adversarial("key", "model")
     assert invalid == 0
     assert 0 < correct < total, "positives should have been marked wrong"
@@ -178,7 +178,7 @@ async def test_a_reviewer_that_keeps_everything_is_flagged(monkeypatch, capsys):
     async def keeps_everything(key, post, cands, model):
         return [True] * len(cands), list(cands)
 
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", keeps_everything)
+    monkeypatch.setattr(probe, "review_mastodon_tags", keeps_everything)
     correct, invalid, total = await probe._probe_adversarial("key", "model")
     assert 0 < correct < total
     assert "WRONG" in capsys.readouterr().out
@@ -193,7 +193,7 @@ async def test_a_perfect_reviewer_scores_perfectly(monkeypatch):
                 (c == "#NVIDIA" and "CoWoS" in post) for c in cands]
         return keep, [c for c, k in zip(cands, keep) if k]
 
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", oracle)
+    monkeypatch.setattr(probe, "review_mastodon_tags", oracle)
     correct, invalid, total = await probe._probe_adversarial("key", "model")
     assert (correct, invalid) == (total, 0)
 
@@ -207,7 +207,7 @@ async def test_an_unparseable_verdict_is_never_scored_as_a_rejection(
     async def unparseable(key, post, cands, model):
         return None, []
 
-    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", unparseable)
+    monkeypatch.setattr(probe, "review_mastodon_tags", unparseable)
     correct, invalid, total = await probe._probe_adversarial("key", "model")
     assert correct == 0
     assert invalid == total

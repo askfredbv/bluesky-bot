@@ -288,7 +288,7 @@ async def test_review_keeps_only_what_the_model_approves(monkeypatch):
         return json.dumps([{"id": 1, "keep": True}, {"id": 2, "keep": False}])
 
     monkeypatch.setattr(agents.asyncio, "to_thread", verdicts)
-    kept = await agents.review_mastodon_tags(
+    _, kept = await agents.review_mastodon_tags(
         "key", "post", ["#Semiconductors", "#NVIDIA"], "model"
     )
     assert kept == ["#Semiconductors"]
@@ -302,7 +302,7 @@ async def test_review_reads_indices_only_never_text(monkeypatch):
         return json.dumps([{"id": 1, "keep": True, "tag": "#Hallucinated"}])
 
     monkeypatch.setattr(agents.asyncio, "to_thread", sneaky)
-    kept = await agents.review_mastodon_tags("key", "post", ["#Python"], "model")
+    _, kept = await agents.review_mastodon_tags("key", "post", ["#Python"], "model")
     assert kept == ["#Python"]
 
 
@@ -315,7 +315,7 @@ async def test_review_treats_anything_not_true_as_a_drop(monkeypatch):
         ])
 
     monkeypatch.setattr(agents.asyncio, "to_thread", mushy)
-    kept = await agents.review_mastodon_tags("key", "p", ["#A", "#B", "#C"], "model")
+    _, kept = await agents.review_mastodon_tags("key", "p", ["#A", "#B", "#C"], "model")
     assert kept == []
 
 
@@ -325,7 +325,7 @@ async def test_review_of_malformed_output_drops_everything(monkeypatch):
         return json.dumps({"verdict": "looks fine to me"})
 
     monkeypatch.setattr(agents.asyncio, "to_thread", garbage)
-    assert await agents.review_mastodon_tags("key", "p", ["#A"], "model") == []
+    assert await agents.review_mastodon_tags("key", "p", ["#A"], "model") == (None, [])
 
 
 @pytest.mark.parametrize("raw, count, why", [
@@ -365,7 +365,7 @@ async def test_review_skips_the_call_when_there_is_nothing_to_review(monkeypatch
         return "[]"
 
     monkeypatch.setattr(agents.asyncio, "to_thread", tracker)
-    assert await agents.review_mastodon_tags("key", "p", [], "model") == []
+    assert await agents.review_mastodon_tags("key", "p", [], "model") == ([], [])
     assert called == []
 
 
@@ -446,6 +446,55 @@ async def test_review_failure_ships_the_post_untagged(monkeypatch, tags_on):
 
     monkeypatch.setattr(agents.asyncio, "to_thread", propose_then_fail)
     assert await agents.generate_mastodon_tags("key", ["a post"]) == []
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_verdict_logs_its_own_event(monkeypatch, tags_on):
+    """A parser regression and a genuine all-DROP verdict both end with no
+    tags. Logging them identically is how a broken reviewer hides for weeks,
+    which is the failure mode AGENTS.md #3 exists to prevent (Codex review,
+    2026-09-09 - the same conflation was found in three places)."""
+    events = []
+    monkeypatch.setattr(
+        agents.SafeLogger, "warn",
+        lambda event, message="", **f: events.append(event),
+    )
+    monkeypatch.setattr(
+        agents.SafeLogger, "info",
+        lambda event, message="", **f: events.append(event),
+    )
+    _script(
+        monkeypatch,
+        json.dumps(["#Python"]),
+        json.dumps([{"id": 1, "keep": "maybe"}]),   # parseable, not a decision
+    )
+    assert await agents.generate_mastodon_tags("key", ["a post"]) == []
+    assert "mastodon_tags_invalid_verdict" in events
+    assert "mastodon_tags_empty" not in events
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_all_drop_verdict_is_not_reported_as_invalid(
+    monkeypatch, tags_on
+):
+    """The other side of the same distinction."""
+    events = []
+    monkeypatch.setattr(
+        agents.SafeLogger, "warn",
+        lambda event, message="", **f: events.append(event),
+    )
+    monkeypatch.setattr(
+        agents.SafeLogger, "info",
+        lambda event, message="", **f: events.append(event),
+    )
+    _script(
+        monkeypatch,
+        json.dumps(["#Python"]),
+        json.dumps([{"id": 1, "keep": False}]),
+    )
+    assert await agents.generate_mastodon_tags("key", ["a post"]) == []
+    assert "mastodon_tags_empty" in events
+    assert "mastodon_tags_invalid_verdict" not in events
 
 
 # ── append: the shared ceiling ─────────────────────────────────────────────
