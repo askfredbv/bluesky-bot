@@ -43,6 +43,12 @@ class BroadcastResult:
     client: Any = None
     sent_uris: List[str] = field(default_factory=list)
     error: Optional[Exception] = None
+    # The text actually put on the wire, index-aligned with ``sent_uris``.
+    # Mastodon may append discovery tags to the root post (v4.26), so the
+    # generated ``content_list`` is no longer a faithful record of what
+    # shipped — the metrics row must read this, not the pre-broadcast text,
+    # or ``hashtag_count`` reports 0 for every tagged Mastodon post.
+    delivered_texts: List[str] = field(default_factory=list)
 
 
 @dataclass

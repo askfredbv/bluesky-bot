@@ -23,6 +23,7 @@ from src.config import (
     BANNED_OPENERS,
     PROACTIVE_REPLY_MAX_CHARS,
     PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS, PROACTIVE_REPLY_FEW_SHOT_EXAMPLES,
+    MASTODON_TAGS_ENABLED, MASTODON_MAX_TAGS, MASTODON_TAGS_BANNED,
 )
 from src.utils import prune_pioneer_recent, update_replied_to
 from src.logger import SafeLogger
@@ -726,6 +727,109 @@ def _sync_generate(api_key: str, system_instr: str, task: str, model: str) -> st
     # .text is Optional on the SDK response (None on a content-filter refusal);
     # callers treat "" as the no-content sentinel, so normalise here.
     return response.text or ""
+
+_MASTODON_TAG_SHAPE = re.compile(r"^#?([A-Za-z][A-Za-z0-9]{1,30})$")
+
+_MASTODON_TAG_PROMPT = (
+    "You label posts with Mastodon hashtags so people browsing a tag timeline find them.\n\n"
+    "POST:\n{post}\n\n"
+    "Give 1 or 2 hashtags that describe what THIS post is specifically about.\n"
+    "- Specific beats broad. If the post is about a chip packaging change, "
+    "#Semiconductors beats #AI. If it is about a court ruling on model weights, "
+    "#TechPolicy beats #AI.\n"
+    "- A tag must be one somebody would actually follow or browse: a technology, "
+    "a field, a language, a company, a community. Never a mood or filler tag.\n"
+    "- CamelCase multi-word tags (#MachineLearning, #ComputerHistory) so screen "
+    "readers can read them.\n"
+    "- 1 good tag beats 2 where the second is filler. Return an empty array if "
+    "nothing specific fits.\n"
+    "- Do not repeat a hashtag that already appears in the post.\n\n"
+    "Output ONLY a JSON array of strings, e.g. [\"#Semiconductors\", \"#NVIDIA\"]"
+)
+
+
+def _sanitize_mastodon_tags(raw: Any, post_text: str = "") -> List[str]:
+    """Coerce a model's tag output into at most MASTODON_MAX_TAGS safe tags.
+
+    Drops anything that is not a plain alphanumeric hashtag, anything in
+    MASTODON_TAGS_BANNED (too broad to earn a boost), and anything already
+    present in the post. Never raises: bad input yields fewer tags, or none.
+    """
+    if not isinstance(raw, list):
+        return []
+    banned = {t.lower() for t in MASTODON_TAGS_BANNED}
+    already = {m.lower() for m in re.findall(r"(?<!\w)#(\w+)", post_text or "")}
+    out: List[str] = []
+    seen = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        match = _MASTODON_TAG_SHAPE.match(item.strip())
+        if not match:
+            continue
+        body = match.group(1)
+        key = body.lower()
+        if key in banned or key in already or key in seen:
+            continue
+        seen.add(key)
+        out.append("#" + body)
+        if len(out) >= MASTODON_MAX_TAGS:
+            break
+    return out
+
+
+async def generate_mastodon_tags(
+    api_key: str,
+    posts: List[str],
+    model_priority: Optional[List[str]] = None,
+) -> List[str]:
+    """Name 1-2 Mastodon hashtags for a finished post. Best-effort.
+
+    A separate call rather than a field on the generation contract, so it
+    cannot fail a run: the post is already written and validated by the time
+    this is asked, and every failure path here returns [] and ships the post
+    untagged. Tags are decoration; the post is the point.
+
+    Reads the final text so the tags describe THIS post — the reason a fixed
+    per-category map was rejected: it would stamp the same two tags on every
+    Mentor post, which is a bot tell in the profile view and noise in the tag
+    timeline.
+    """
+    if not MASTODON_TAGS_ENABLED or not posts:
+        return []
+    root = posts[0]
+    models_to_try = (model_priority or GEMINI_MODEL_PRIORITY)[:2]
+    for model in models_to_try:
+        try:
+            response = await asyncio.to_thread(
+                _sync_generate,
+                api_key,
+                "You return only JSON. No prose, no explanation.",
+                _MASTODON_TAG_PROMPT.format(post=root),
+                model,
+            )
+            clean = response.replace("```json", "").replace("```", "").strip()
+            tags = _sanitize_mastodon_tags(json.loads(clean), root)
+            if tags:
+                SafeLogger.info(
+                    "mastodon_tags_generated",
+                    "Discovery tags chosen for the Mastodon copy",
+                    platform="mastodon",
+                    model=model,
+                    tags=" ".join(tags),
+                )
+            return tags
+        except Exception as e:
+            SafeLogger.warn(
+                "mastodon_tags_failed",
+                "Could not generate Mastodon discovery tags; posting untagged",
+                platform="mastodon",
+                model=model,
+                error_type=type(e).__name__,
+                error_msg=str(e)[:200],
+            )
+    return []
+
 
 def _sync_generate_image(api_key: str, prompt: str) -> Optional[bytes]:
     """Synchronous image generation via gemini-3.1-flash-image.

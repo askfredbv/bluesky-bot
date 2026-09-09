@@ -55,10 +55,13 @@ for the hard-won context before proposing structural changes.
    reply or accept an unverifiable specific.
 
 7. **Two-platform symmetry, no per-platform divergence of intent.** Same content to
-   Bluesky and Mastodon (a length cap may force a trim, never different intent). Partial
-   delivery must be handled cleanly (`*_partial_delivery`), never re-send already-posted
-   thread parts.
-
+   Bluesky and Mastodon. A platform's *mechanics* may differ — a length trim, embed
+   shape, or Mastodon-only discovery hashtags (`apply_mastodon_tags`, added because
+   Mastodon has no algorithmic feed and a followed tag is its discovery mechanism).
+   Its *intent* may not: no different take, link, framing, or one-platform voice rule,
+   and generation stays platform-neutral — divergence lives in the broadcaster, never
+   in the prompt. Partial delivery must be handled cleanly (`*_partial_delivery`),
+   never re-send already-posted thread parts.
 8. **Tests and lint are the floor.** `ruff` clean and `pytest` green are required. New
    behaviour — especially defensive and failure paths — needs tests. The strongest
    reviews here have caught missing-edge-case handling (e.g. a required field that wasn't

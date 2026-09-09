@@ -58,6 +58,30 @@ MAX_THREAD_POSTS: int = 5
 # to live in every other post at the cost of halved reach.
 LANGUAGE_OPTIONS: List[str] = ["English"]
 MENTION_SANITIZE_MAX_CHARS: int = 500
+
+# ─ Mastodon discovery tags (v4.26, 2026-09-09) ─────────────────────────
+# Appended to the Mastodon copy at broadcast time; the Bluesky copy gets
+# none. Mastodon has no algorithmic feed, so a followed hashtag is how
+# people find posts there; Bluesky's Discover feed does that job instead.
+# Not a voice change: the post is generated once, platform-neutral, and the
+# STYLE_GUIDELINES zero-hashtag rule is unchanged. See AGENTS.md #7.
+#
+# The tags are named per-post by a small follow-up model call that reads the
+# finished text (agents.generate_mastodon_tags), NOT drawn from a fixed
+# per-category list. A fixed list would put the same two tags on every
+# Mentor post forever — a bot tell in the profile view, and useless in a tag
+# timeline where the point is that the tag describes THIS post.
+MASTODON_TAGS_ENABLED: bool = True
+MASTODON_MAX_TAGS: int = 2
+
+# Tags too broad to earn a boost. #AI on mastodon.social moves fast enough
+# that a post scrolls out of the tag timeline in minutes, and STYLE_GUIDELINES
+# already bans this shape inline ("never a generic mood tag"). Matched
+# case-insensitively, without the leading '#'.
+MASTODON_TAGS_BANNED: List[str] = [
+    "ai", "tech", "technology", "technews", "news", "innovation",
+    "thoughts", "future", "digital", "software", "computing", "internet",
+]
 FEED_SUMMARY_MAX_CHARS: int = 500
 
 # State Files
