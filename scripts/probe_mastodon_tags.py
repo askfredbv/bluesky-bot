@@ -115,9 +115,20 @@ async def _probe_one(key: str, model: str, idx: int, post: str) -> bool:
     print(f"    sanitized : {' '.join(candidates) if candidates else '(none)'}")
 
     try:
-        _, tags = await review_mastodon_tags_detailed(key, post, candidates, model)
+        decisions, tags = await review_mastodon_tags_detailed(
+            key, post, candidates, model
+        )
     except Exception as exc:
         print(f"    FAILED (review) {type(exc).__name__}: {str(exc)[:140]}\n")
+        return False
+
+    if decisions is None:
+        # Parseable JSON, invalid decision set. Fails closed like a rejection,
+        # but it is NOT reviewer judgment — reporting it as "dropped" would
+        # credit the reviewer for an answer it never gave (Codex review,
+        # 2026-09-09; the same distinction _probe_adversarial already makes).
+        print("    reviewed  : INVALID (unparseable verdict — not a judgement)")
+        print("    ends      : (unchanged)\n")
         return False
 
     dropped = [t for t in candidates if t not in tags]

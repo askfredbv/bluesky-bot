@@ -122,6 +122,27 @@ async def test_probe_shows_the_suffix_a_reader_would_see(monkeypatch, capsys):
 
 
 @pytest.mark.asyncio
+async def test_probe_reports_an_invalid_verdict_as_invalid(monkeypatch, capsys):
+    """A parser failure on a real post must not be printed as "dropped".
+
+    _probe_adversarial already made this distinction; _probe_one discarded
+    the decision status and credited the reviewer with a judgement it never
+    made (Codex review, 2026-09-09)."""
+    async def propose(key, post, model, allowance):
+        return ["#Python"], ["#Python"]
+
+    async def invalid(key, post, cands, model):
+        return None, []
+
+    monkeypatch.setattr(probe, "request_mastodon_tags", propose)
+    monkeypatch.setattr(probe, "review_mastodon_tags_detailed", invalid)
+    assert await probe._probe_one("key", "model", 1, "a note") is False
+    out = capsys.readouterr().out
+    assert "INVALID" in out
+    assert "dropped" not in out
+
+
+@pytest.mark.asyncio
 async def test_probe_reports_a_review_failure_distinctly(monkeypatch, capsys):
     """A failure in review must not read as 'the model proposed nothing'."""
     async def propose(key, post, model, allowance):
