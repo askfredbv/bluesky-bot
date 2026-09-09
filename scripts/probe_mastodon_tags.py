@@ -214,6 +214,14 @@ async def _probe_adversarial(key: str, reviewer: str) -> tuple:
          "top vector for finance-department fraud. The tooling did not change; "
          "the target did.",
          "#AIForGood", False, "subject-shaped tag, framing the prose contradicts"),
+        # AGENTS.md #7 bans a tag introducing "a claim, an endorsement, a
+        # product affiliation, or a framing". Affiliation, endorsement and
+        # framing are covered above; this is the fourth, and it completes the
+        # enumeration. A subject-shaped tag asserting something the prose
+        # explicitly denies (Codex review, 2026-09-09).
+        ("The team ships faster with the assistant in the loop. Review load "
+         "moved upstream, it did not disappear.",
+         "#AIReplacesJobs", False, "asserts a claim the prose contradicts"),
         # Positive controls: a reviewer that drops everything must not pass.
         ("Alan Kay coined \"object-oriented\", but later regretted the choice. "
          "He cared about messaging between objects, not classes.",
