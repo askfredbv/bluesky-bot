@@ -209,3 +209,110 @@ def test_update_seen_articles_hands_the_mutator_the_fresh_read(monkeypatch, tmp_
     state_store.update_seen_articles(lambda current: {**current, "links": current["links"] + ["https://new"]})
 
     assert saved == [{"links": ["https://already-seen", "https://new"], "recent_topics": [], "pioneer_recent": []}]
+
+
+class _FakeWriteResp:
+    """Response stub for the STATE_STORE_URL write path.
+
+    Unlike _FakeResp this carries a status_code, because the write path decides
+    on the status rather than on whether raise_for_status() threw — which is the
+    whole point of the fix below.
+    """
+
+    def __init__(self, status_code=200):
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        # Mirrors httpx: 4xx/5xx raise, everything else (3xx included) does not.
+        if 400 <= self.status_code < 600:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def _patch_state_store_env(monkeypatch):
+    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
+    monkeypatch.delenv("STATE_STORE_TOKEN", raising=False)
+    monkeypatch.delenv("GIST_ID", raising=False)  # skip the Gist tier entirely
+
+
+def _record_calls(monkeypatch, put_status, post_status):
+    calls = []
+
+    def fake_put(*_a, **_k):
+        calls.append("put")
+        return _FakeWriteResp(put_status)
+
+    def fake_post(*_a, **_k):
+        calls.append("post")
+        return _FakeWriteResp(post_status)
+
+    monkeypatch.setattr(state_store.httpx, "put", fake_put)
+    monkeypatch.setattr(state_store.httpx, "post", fake_post)
+    return calls
+
+
+def test_save_state_to_store_reports_a_stored_write(monkeypatch):
+    _patch_state_store_env(monkeypatch)
+    _record_calls(monkeypatch, put_status=200, post_status=500)
+    assert state_store._save_state_to_store("seen_articles", {"links": []}) is True
+
+
+def test_save_state_to_store_does_not_claim_success_on_a_redirect(monkeypatch):
+    """A 3xx is not a stored write.
+
+    httpx does not follow redirects by default and raise_for_status() only raises
+    for 4xx/5xx, so the old `raise_for_status(); return True` branch reported
+    success for a 302 -- a STATE_STORE_URL missing its trailing slash, or an
+    http->https upgrade -- and the value was never written."""
+    _patch_state_store_env(monkeypatch)
+    calls = _record_calls(monkeypatch, put_status=302, post_status=302)
+
+    assert state_store._save_state_to_store("seen_articles", {"links": []}) is False
+    assert calls == ["put", "post"]  # the redirect fell through to the POST attempt
+
+
+def test_save_state_to_store_does_not_claim_success_on_accepted(monkeypatch):
+    """202 Accepted means queued, not stored. Strict on purpose: this return
+    value gates the local-file fallback, so an optimistic True loses the state."""
+    _patch_state_store_env(monkeypatch)
+    _record_calls(monkeypatch, put_status=202, post_status=202)
+    assert state_store._save_state_to_store("seen_articles", {"links": []}) is False
+
+
+def test_save_state_to_store_falls_back_to_post_when_put_is_rejected(monkeypatch):
+    """405 is the expected 'this endpoint wants POST' signal, not a failure."""
+    _patch_state_store_env(monkeypatch)
+    calls = _record_calls(monkeypatch, put_status=405, post_status=201)
+
+    assert state_store._save_state_to_store("seen_articles", {"links": []}) is True
+    assert calls == ["put", "post"]
+
+
+def test_save_state_to_store_logs_write_failures_at_error(monkeypatch):
+    """AGENTS.md principle 4: state-persistence failures log at ERROR, not WARN.
+    Matches the v4.19 promotion already applied to _save_gist_state."""
+    _patch_state_store_env(monkeypatch)
+    _record_calls(monkeypatch, put_status=500, post_status=500)
+    levels = []
+    monkeypatch.setattr(state_store.SafeLogger, "error", lambda *a, **k: levels.append("error"))
+    monkeypatch.setattr(state_store.SafeLogger, "warn", lambda *a, **k: levels.append("warn"))
+
+    assert state_store._save_state_to_store("seen_articles", {"links": []}) is False
+    assert "error" in levels
+    assert "warn" not in levels
+
+
+def test_save_seen_articles_still_writes_locally_when_the_remote_lies(monkeypatch, tmp_path):
+    """The damage the phantom True actually did.
+
+    save_seen_articles is a three-tier chain: Gist, then STATE_STORE_URL, then the
+    local file. A wrong True from the remote tier returns early and skips the local
+    write, so a redirect meant the state was persisted NOWHERE."""
+    _patch_state_files(monkeypatch, tmp_path)
+    _patch_state_store_env(monkeypatch)
+    _record_calls(monkeypatch, put_status=302, post_status=302)
+
+    seen = {"links": ["https://example.com/story"], "recent_topics": ["LLMs"], "pioneer_recent": []}
+    state_store.save_seen_articles(seen)
+
+    assert state_store.SEEN_FILE.exists(), "remote reported success it could not deliver"
+    assert json.loads(state_store.SEEN_FILE.read_text()) == seen

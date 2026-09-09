@@ -52,6 +52,18 @@ def _load_state_from_store(key: str) -> Optional[Any]:
     except Exception as e:
         SafeLogger.warn("state_store_read_failed", "Remote state read failed", error_type=type(e).__name__, state_key=key)
         return None
+# Statuses that mean the value is durably stored. Deliberately strict, because
+# this return value GATES the local-file fallback in save_seen_articles /
+# save_replied_to: a wrong True there means the state is written nowhere at all.
+# 202 Accepted is excluded on purpose — queued is not stored. A false negative
+# costs one redundant local write; a false positive costs the state.
+_STATE_STORE_WRITE_OK = frozenset({200, 201, 204})
+
+# PUT rejected as a method: the expected prelude to the POST attempt, not a
+# failure worth logging.
+_STATE_STORE_PUT_METHOD_REJECTED = 405
+
+
 def _save_state_to_store(key: str, data: Any) -> bool:
     endpoint = _state_store_url_for_key(key)
     if not endpoint:
@@ -64,13 +76,34 @@ def _save_state_to_store(key: str, data: Any) -> bool:
             json=payload,
             timeout=STATE_STORE_TIMEOUT_SECONDS
         )
-        if response.status_code not in (200, 201, 204, 405):
-            response.raise_for_status()
+        if response.status_code in _STATE_STORE_WRITE_OK:
             return True
-        if response.status_code in (200, 201, 204):
-            return True
+        # Anything else is not a write we can vouch for. This used to be
+        # `if status not in (200, 201, 204, 405): raise_for_status(); return True`,
+        # which reported success for every status raise_for_status does not raise
+        # on — and it only raises for 4xx/5xx. httpx does not follow redirects by
+        # default, so a 301/302/307/308 (a STATE_STORE_URL missing its trailing
+        # slash, an http->https upgrade) returned True for a write that never
+        # happened, and short-circuited the local-file fallback in
+        # save_seen_articles. State was then persisted nowhere.
+        if response.status_code != _STATE_STORE_PUT_METHOD_REJECTED:
+            SafeLogger.error(
+                "state_store_put_failed",
+                "Remote state PUT did not store the value",
+                status_code=response.status_code,
+                state_key=key,
+            )
     except Exception as e:
-        SafeLogger.warn("state_store_put_failed", "Remote state PUT failed", error_type=type(e).__name__, state_key=key)
+        # ERROR, not WARN: state-persistence failures are the case AGENTS.md
+        # principle 4 names explicitly. Matches the v4.19 WARN->ERROR promotion
+        # already applied to _save_gist_state.
+        SafeLogger.error(
+            "state_store_put_failed",
+            "Remote state PUT failed",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+            state_key=key,
+        )
 
     try:
         response = httpx.post(
@@ -79,10 +112,23 @@ def _save_state_to_store(key: str, data: Any) -> bool:
             json=payload,
             timeout=STATE_STORE_TIMEOUT_SECONDS
         )
-        response.raise_for_status()
-        return response.status_code in (200, 201, 204)
+        if response.status_code in _STATE_STORE_WRITE_OK:
+            return True
+        SafeLogger.error(
+            "state_store_post_failed",
+            "Remote state POST did not store the value",
+            status_code=response.status_code,
+            state_key=key,
+        )
+        return False
     except Exception as e:
-        SafeLogger.warn("state_store_post_failed", "Remote state POST failed", error_type=type(e).__name__, state_key=key)
+        SafeLogger.error(
+            "state_store_post_failed",
+            "Remote state POST failed",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+            state_key=key,
+        )
         return False
 def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
     """Load a JSON state file from a private Gist, distinguishing a
