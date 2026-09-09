@@ -736,14 +736,13 @@ async def capture_follower_snapshot_stage(broadcast: BroadcastPayload, creds: An
         )
 
 
-async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
-    automation_tasks = []
-    if broadcast.bsky_broadcast_client is not None:
-        automation_tasks.append(
-            handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
-        )
-    await asyncio.gather(*automation_tasks, return_exceptions=True)
+def build_automation_payload(broadcast: BroadcastPayload) -> AutomationPayload:
+    """Derive what persistence needs from the broadcast result. Pure, no I/O.
 
+    Split out from post_run_automation_stage so main() can persist immediately
+    after the post lands, rather than behind mention handling and two metrics
+    stages that each make network calls once the post is already public.
+    """
     # Either platform landing counts as delivered: the post is publicly live, so
     # its topic should suppress repeats and its Pioneer entry should consume its
     # cooldown. Only a run that reached nobody leaves state untouched.
@@ -759,6 +758,23 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
         posted_topic_category=broadcast.posted_topic_category,
         posted_link=broadcast.posted_link,
     )
+
+
+async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
+    """Best-effort work that follows a delivered post: mention handling.
+
+    Runs AFTER persistence. Nothing here feeds the state write, and everything
+    here can hang on a network call, so it must not sit between a published post
+    and the record of having published it.
+    """
+    automation_tasks = []
+    if broadcast.bsky_broadcast_client is not None:
+        automation_tasks.append(
+            handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
+        )
+    await asyncio.gather(*automation_tasks, return_exceptions=True)
+
+    return build_automation_payload(broadcast)
 
 
 async def persistence_stage(automation: AutomationPayload) -> None:
@@ -860,10 +876,21 @@ async def main():
     mode_payload = await mode_selection_stage()
     content_prep = await content_prep_stage(mode_payload, creds)
     broadcast = await broadcasting_stage(content_prep, settings, creds, active_models=active_models)
+
+    # Persist FIRST. Once a post is public, the record of having published it is
+    # the only thing standing between this run and the next one posting the same
+    # story again. Everything below makes network calls after delivery — mention
+    # handling sleeps between replies and generates a reply per mention, and both
+    # metrics stages hit two platforms' read APIs — so a hang or a cancelled
+    # workflow anywhere in there used to leave the post live and unrecorded.
+    #
+    # Nothing below feeds the state write: build_automation_payload is pure, and
+    # both metrics stages return None and write their own files.
+    await persistence_stage(build_automation_payload(broadcast))
+
     await capture_post_metrics_stage(broadcast, creds)
     await capture_follower_snapshot_stage(broadcast, creds)
     automation = await post_run_automation_stage(broadcast, creds)
-    await persistence_stage(automation)
 
     SafeLogger.info("run_completed", "Intelligence cycle complete", mode=automation.mode, platform="system")
 

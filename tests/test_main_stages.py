@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -332,6 +333,12 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     async def fake_persistence(automation_payload):
         calls.append(("persistence", automation_payload.mode))
 
+    async def fake_metrics(broadcast_payload, creds):
+        calls.append("metrics")
+
+    async def fake_followers(broadcast_payload, creds):
+        calls.append("followers")
+
     async def fake_filter_models(api_key, priority):
         return priority
 
@@ -340,17 +347,27 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     monkeypatch.setattr(main, "mode_selection_stage", fake_mode)
     monkeypatch.setattr(main, "content_prep_stage", fake_content)
     monkeypatch.setattr(main, "broadcasting_stage", fake_broadcast)
+    monkeypatch.setattr(main, "capture_post_metrics_stage", fake_metrics)
+    monkeypatch.setattr(main, "capture_follower_snapshot_stage", fake_followers)
     monkeypatch.setattr(main, "post_run_automation_stage", fake_automation)
     monkeypatch.setattr(main, "persistence_stage", fake_persistence)
 
     await main.main()
 
+    # ORDER IS THE ASSERTION. persistence must come directly after broadcast and
+    # before every best-effort stage. This list previously ended
+    # ... automation, persistence -- which is the defect: mention handling and
+    # both metrics stages make network calls after the post is already public,
+    # so a hang or a cancelled workflow left the post live and unrecorded, and
+    # the next run published the same story again.
     assert calls == [
         "mode",
         ("content", "mentor", True),
         ("broadcast", "mentor", True, True),
-        ("automation", "mentor", True),
         ("persistence", "mentor"),
+        "metrics",
+        "followers",
+        ("automation", "mentor", True),
     ]
 
 
@@ -976,3 +993,81 @@ async def test_broadcasting_stage_skips_tagging_without_a_mastodon_token(monkeyp
     creds_with_token = SimpleNamespace(**{**vars(creds), "mastodon_access_token": "t"})
     await main.broadcasting_stage(prep, settings, creds_with_token)
     assert tag_calls == [1], "tagging must still run when Mastodon is configured"
+
+
+@pytest.mark.asyncio
+async def test_state_is_persisted_even_if_a_later_stage_hangs(monkeypatch):
+    """The failure this ordering exists to prevent.
+
+    A metrics stage stalls after delivery and the workflow is cancelled. The post
+    is public; the record of it must already be on disk, or the next run picks the
+    same story and posts it twice."""
+    persisted = []
+    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="k"), platform=SimpleNamespace())
+
+    async def fake_mode():
+        return main.ModeSelectionPayload(mode="curator", current_hour_utc=8)
+
+    async def fake_content(mode_payload, creds):
+        return main.ContentPrepPayload(
+            mode="curator", seen_data={"links": [], "recent_topics": []}, news_items=[],
+            link_meta=None, bsky_client="client", recent_posts=[],
+        )
+
+    async def fake_broadcast(content_prep, incoming_settings, creds, active_models=None):
+        return main.BroadcastPayload(
+            mode="curator", seen_data={"links": [], "recent_topics": []}, news_items=[],
+            content_list=["post"], chosen_topic="t", thread_pause_profile="default",
+            bsky_broadcast_client="client", bsky_sent_uris=["at://posted/1"],
+        )
+
+    async def fake_persistence(automation_payload):
+        persisted.append(automation_payload.delivered)
+
+    async def hangs_forever(broadcast_payload, creds):
+        await asyncio.Event().wait()
+
+    async def fake_filter_models(api_key, priority):
+        return priority
+
+    monkeypatch.setattr(main, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(main, "filter_available_models", fake_filter_models)
+    monkeypatch.setattr(main, "mode_selection_stage", fake_mode)
+    monkeypatch.setattr(main, "content_prep_stage", fake_content)
+    monkeypatch.setattr(main, "broadcasting_stage", fake_broadcast)
+    monkeypatch.setattr(main, "persistence_stage", fake_persistence)
+    monkeypatch.setattr(main, "capture_post_metrics_stage", hangs_forever)
+
+    task = asyncio.create_task(main.main())
+    await asyncio.sleep(0)  # let the pipeline run up to the hang
+    for _ in range(20):
+        if persisted:
+            break
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert persisted == [True], "the delivered post was not recorded before the hang"
+
+
+def test_build_automation_payload_is_pure(monkeypatch):
+    """Nothing in the payload derivation touches the network, which is what lets
+    it run before the best-effort stages."""
+    broadcast = main.BroadcastPayload(
+        mode="curator",
+        seen_data={"links": ["a"], "recent_topics": []},
+        news_items=[{"link": "https://x"}],
+        content_list=["post"],
+        chosen_topic="topic",
+        thread_pause_profile="default",
+        bsky_broadcast_client="client",
+        mastodon_sent_ids=["9"],
+        posted_topic_category="LLMs",
+    )
+
+    payload = main.build_automation_payload(broadcast)
+
+    assert payload.delivered is True  # Mastodon alone counts
+    assert payload.mode == "curator"
+    assert payload.posted_topic_category == "LLMs"
