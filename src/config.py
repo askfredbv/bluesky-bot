@@ -78,26 +78,35 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 # — a bot tell in the profile view, and useless in a tag timeline where the
 # point is that the tag describes THIS post.
 #
-# OFF. Enabled 2026-09-09 on the strength of the tag probe (run 34343702234,
-# 10/10 real posts tagged sensibly), then disabled the same day on Codex
-# review of #112/#113 — which landed ~90s after each merge and was not read
-# in time. Two holes, both because tags are appended AFTER _apply_voice_trim,
-# so no existing validator ever inspects them:
+# ON since 2026-09-09, second attempt. The first (#113) was reverted hours
+# later: it rested on a probe that only showed the model agreeing with
+# itself on ten posts, and Codex review of #112/#113 found two holes that
+# ten agreeable samples could never have surfaced — banned voice words
+# passing the sanitizer, and ungrounded entity tags. Both are now closed by
+# an explicit voice gate and a semantic review pass (#115).
 #
-#  1. Banned voice words pass. '#Revolutionary' and '#Groundbreaking' are
-#     literally in BANNED_HYPE_WORDS and _sanitize_mastodon_tags accepts
-#     both — it checks shape, exclusions and duplicates, nothing else.
-#     Verified, not hypothetical.
-#  2. Entity tags are ungrounded. The prompt invites a company tag, so
-#     '#NVIDIA' can ship on a post that never mentions NVIDIA — a product
-#     affiliation visible on Mastodon only, which is exactly what the
-#     AGENTS.md #7 clause about appended content forbids.
+# What justifies the flag this time is REJECTION evidence, not agreement.
+# Probe run 34350446731 measured both directions against known answers:
 #
-# The probe's 10/10 is not a defence: samples do not constrain the next call.
-# Before flipping this back to True, the sanitizer needs to reject banned
-# voice words and to ground entity tags in the post text. Re-run the probe
-# after that, and read the Codex review BEFORE merging (it takes ~90s).
-MASTODON_TAGS_ENABLED: bool = False
+#   retention : 10/10 real posts tagged, 0 exceeded the 20s budget
+#   decisions : 7/7 correct, 0 unparseable
+#
+# The case that matters is #NVIDIA, tested twice — DROPPED on a migration
+# post that never mentions it, KEPT on a post about its chip packaging.
+# Same tag, opposite verdicts, decided by whether the post actually
+# discusses it. No string-matching approach can do that: requiring the tag
+# to appear in the text rejects 6 of 7 known-good tags.
+#
+# Still unproven in production: the voice gate has never fired on real
+# output — raw and sanitized were identical on all ten posts, so
+# '#Revolutionary' has only ever been rejected in a unit test. And one post
+# took 11.0s of the 20s budget where the others took ~2s, so the headroom
+# is real rather than generous.
+#
+# Re-run the probe after any prompt or model change, and read BOTH numbers:
+# retention alone cannot validate a reviewer. Setting this back to False
+# stops tagging without reverting anything.
+MASTODON_TAGS_ENABLED: bool = True
 
 # Total wall-clock budget for naming tags. Tagging runs concurrently with the
 # Bluesky broadcast (main.broadcasting_stage), so this never delays that post
