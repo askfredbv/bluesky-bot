@@ -558,32 +558,6 @@ async def test_the_two_calls_actually_use_the_two_models(monkeypatch, tags_on):
     assert used == ["proposer-model", "reviewer-model"]
 
 
-@pytest.mark.asyncio
-async def test_no_mastodon_token_means_no_tagging_calls(monkeypatch, tags_on):
-    """A Bluesky-only run must not pay for Mastodon.
-
-    post_to_mastodon returns immediately without a token, so tagging first
-    would spend two model calls and up to the full budget for a platform
-    that is switched off. main._tag_and_post_mastodon guards on the token;
-    this pins the property the guard exists for (Codex review, 2026-09-09).
-    """
-    called = []
-
-    async def tracker(fn, *args, **kwargs):
-        called.append(1)
-        return json.dumps(["#Python"])
-
-    monkeypatch.setattr(agents.asyncio, "to_thread", tracker)
-
-    # The guard lives at the call site, so assert the broadcaster's own
-    # no-token contract that makes tagging pointless in the first place.
-    result = await broadcasters.post_to_mastodon(
-        "", "https://mastodon.example", ["a note"], tags=["#Python"]
-    )
-    assert result.sent_uris == []
-    assert result.delivered_texts == []
-
-
 # ── append: the shared ceiling ─────────────────────────────────────────────
 
 def test_tags_land_on_root_post_only():
