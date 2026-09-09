@@ -1,12 +1,14 @@
 import asyncio
 import io
 import random
+import re
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
 from src.config import (
     MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON,
-    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE
+    THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
+    MAX_HASHTAGS_PER_POST,
 )
 from src.utils import classify_retry, sleep_for_rate_limit, sleep_for_transient
 from src.logger import SafeLogger
@@ -16,6 +18,59 @@ from src.metrics import BroadcastResult
 MASTODON_POST_TIMEOUT_SECONDS = 20.0
 _MASTODON_IMAGE_MAX_BYTES = 8 * 1024 * 1024  # Mastodon default cap — 8 MB
 _BLUESKY_IMAGE_MAX_BYTES = 976 * 1024        # 976 KB — safe margin under Bluesky's 1 MB blob limit
+
+
+# Mastodon discovery tags (v4.26) — trailing anchor tags on the ROOT post only.
+# Separator is a blank line: the fediverse convention is a tag line set off from
+# the prose, and it keeps the tags out of the sentence the reader is reading.
+_MASTODON_TAG_SEPARATOR = "\n\n"
+_TAG_RE = re.compile(r"(?<!\w)#(\w+)")
+
+
+def apply_mastodon_tags(
+    content_list: List[str],
+    tags: List[str],
+    max_length: int = MAX_POST_LENGTH_MASTODON,
+) -> List[str]:
+    """Return ``content_list`` with discovery tags appended to the root post.
+
+    Root post only: it is the one that gets boosted and the one that represents
+    the thread in a tag timeline, and tagging every post in a thread spams that
+    timeline with the same item.
+
+    Three ways this declines to act, all silent and all correct:
+
+    - **The shared ceiling.** MAX_HASHTAGS_PER_POST is a per-post total, not a
+      per-source one. The generator is allowed its own inline hashtags, and
+      this only ever spends the remainder — a root that already carries two
+      gets none from here. Without that the two limits stacked and a post could
+      ship four hashtags, breaking the STYLE_GUIDELINES ceiling on one platform
+      only, which is exactly the divergence AGENTS.md #7 forbids (Codex review,
+      2026-09-09).
+    - **Duplicates.** A tag already in the root is dropped; repeating one reads
+      as a bot tell.
+    - **Length.** If the suffix would breach ``max_length`` the tags are shed
+      one at a time until it fits, down to appending nothing. Content is never
+      trimmed to make room: the post is the point, the tag is not.
+    """
+    if not content_list or not tags:
+        return list(content_list)
+
+    root = content_list[0]
+    present = {t.lower() for t in _TAG_RE.findall(root)}
+    allowance = MAX_HASHTAGS_PER_POST - len(present)
+    if allowance <= 0:
+        return list(content_list)
+
+    candidates = [t for t in tags if t.lstrip("#").lower() not in present][:allowance]
+
+    while candidates:
+        suffix = _MASTODON_TAG_SEPARATOR + " ".join(candidates)
+        if len(root) + len(suffix) <= max_length:
+            return [root + suffix] + list(content_list[1:])
+        candidates.pop()
+
+    return list(content_list)
 
 
 def _detect_image_mime(data: bytes) -> str:
@@ -155,6 +210,7 @@ async def post_to_bluesky(
     parent_ref = None
     root_ref = None
     sent_uris: List[str] = []
+    delivered: List[str] = []
     total_posts = len(content_list)
 
     # Per-thread retry budgets — shared across every post in the thread.
@@ -259,6 +315,7 @@ async def post_to_bluesky(
                 root_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
             parent_ref = models.ComAtprotoRepoStrongRef.Main(cid=post.cid, uri=post.uri)
             sent_uris.append(post.uri)
+            delivered.append(post_text)
 
             # Intra-thread jitter
             if total_posts > 1 and i < total_posts - 1:
@@ -284,16 +341,21 @@ async def post_to_bluesky(
             reason="error",
             error_type=type(e).__name__,
         )
-        return BroadcastResult(client=client, sent_uris=sent_uris, error=e)
+        return BroadcastResult(
+            client=client, sent_uris=sent_uris, error=e, delivered_texts=delivered
+        )
 
-    return BroadcastResult(client=client, sent_uris=sent_uris, error=None)
+    return BroadcastResult(
+        client=client, sent_uris=sent_uris, error=None, delivered_texts=delivered
+    )
 
 async def post_to_mastodon(
     access_token: str,
     api_base_url: str,
     content_list: List[str],
     image_bytes: Optional[bytes] = None,
-    thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE
+    thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE,
+    tags: Optional[List[str]] = None,
 ):
     """Async-wrapped broadcaster for Mastodon.
 
@@ -306,9 +368,20 @@ async def post_to_mastodon(
     now honours ``X-RateLimit-Reset`` instead of hammering on 429.
     On budget exhaustion the thread stops cleanly with earlier posts
     intact and ``mastodon_partial_delivery`` logged.
+
+    v4.26: ``tags`` are Mastodon-only discovery tags appended to the root
+    post before the length invariant runs, so the check sees the text that
+    actually ships. The generated content itself is untouched and identical
+    to Bluesky's — see ``apply_mastodon_tags`` and AGENTS.md principle 7.
     """
     if not access_token:
         return BroadcastResult(client=None, sent_uris=[], error=None)
+
+    # Tags first: the invariant must measure the text we are about to send,
+    # not the pre-append copy. apply_mastodon_tags already sheds tags rather
+    # than overflow, so this should never be what trips the check.
+    if tags:
+        content_list = apply_mastodon_tags(content_list, tags)
 
     if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"):
         # Invariant violated; skip broadcast.
@@ -319,6 +392,7 @@ async def post_to_mastodon(
     posted_count = 0
     last_id = None
     sent_ids: List[str] = []
+    delivered: List[str] = []
 
     # Upload image for first-post attachment (if provided and within size cap)
     media_ids = None
@@ -392,6 +466,7 @@ async def post_to_mastodon(
             last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
             if last_id is not None:
                 sent_ids.append(str(last_id))
+                delivered.append(post_text)
             posted_count += 1
 
             if total_posts > 1 and i < total_posts - 1:
@@ -417,8 +492,12 @@ async def post_to_mastodon(
             reason="error",
             error_type=type(e).__name__,
         )
-        return BroadcastResult(client=None, sent_uris=sent_ids, error=e)
+        return BroadcastResult(
+            client=None, sent_uris=sent_ids, error=e, delivered_texts=delivered
+        )
 
-    return BroadcastResult(client=None, sent_uris=sent_ids, error=None)
+    return BroadcastResult(
+        client=None, sent_uris=sent_ids, error=None, delivered_texts=delivered
+    )
 
 

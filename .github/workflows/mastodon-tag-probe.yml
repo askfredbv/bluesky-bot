@@ -1,0 +1,47 @@
+name: Mastodon Tag Probe (diagnostic)
+
+# Manual, read-only diagnostic. Runs scripts/probe_mastodon_tags.py against the
+# bot's own recent live posts and prints the discovery tags the tagger picks for
+# each one. Posts nothing, changes nothing.
+#
+# Why it exists: the tagger's value is whether it names a tag someone browsing
+# that tag would want to find — a judgement about model output that unit tests
+# (which mock the model) cannot answer. Same rationale as model-discovery.yml
+# and image-probe.yml: the GEMINI_API_KEY is IP-restricted to the runners, so
+# this is the only place the answer is truthful. Run this and read the output
+# before enabling MASTODON_TAGS_ENABLED on the live feed.
+#
+# Trigger from the Actions UI → "Run workflow".
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_limit:
+        description: 'How many recent posts to tag'
+        required: false
+        default: '10'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Probe Mastodon discovery tags
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PROBE_POST_LIMIT: ${{ inputs.post_limit }}
+        run: python -m scripts.probe_mastodon_tags

@@ -21,7 +21,7 @@ from src.utils import (
 )
 from src.agents import (
     generate_content, handle_interactions, generate_post_image,
-    filter_available_models, select_pioneer_topic,
+    filter_available_models, select_pioneer_topic, generate_mastodon_tags,
 )
 from src.broadcasters import post_to_bluesky, post_to_mastodon
 from src.logger import SafeLogger
@@ -61,6 +61,12 @@ class BroadcastPayload:
     pioneer_entry: Optional[Dict[str, Any]] = None
     bsky_sent_uris: List[str] = field(default_factory=list)
     mastodon_sent_ids: List[str] = field(default_factory=list)
+    # What each platform actually put on the wire, index-aligned with the
+    # sent-id lists above. Mastodon appends discovery tags to the root post
+    # (v4.26), so content_list is no longer a faithful record of the Mastodon
+    # copy — the metrics rows read these instead.
+    bsky_delivered_texts: List[str] = field(default_factory=list)
+    mastodon_delivered_texts: List[str] = field(default_factory=list)
     metrics_context: Dict[str, Any] = field(default_factory=dict)
     # The topic category of the item the Curator actually wrote about, resolved
     # here rather than re-derived downstream. persistence_stage used to read
@@ -398,13 +404,32 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             "Bluesky broadcast skipped — no authenticated client available",
             platform="bluesky",
         )
-    broadcast_tasks.append(post_to_mastodon(
-        creds.mastodon_access_token, creds.mastodon_api_base_url, content_list,
-        # Curator has no post image, but if we generated a fallback for the
-        # (Bluesky) card, attach it to Mastodon too so both platforms show it.
-        image_bytes=image_bytes or curator_fallback_image,
-        thread_pause_profile=thread_pause_profile
-    ))
+    # Mastodon-only discovery tags (v4.26): named per-post by a small model
+    # call that reads the finished text, so they describe THIS post rather
+    # than its category. Best-effort — [] on any failure, and the post
+    # ships untagged. The Bluesky copy never gets tags.
+    #
+    # Tagging is awaited INSIDE the Mastodon coroutine, not before the
+    # gather below. Awaiting it here delayed both platforms — Bluesky sat
+    # waiting on a decoration it never receives, for up to the tag budget
+    # (Codex review, 2026-09-09). Now the two broadcasts start together and
+    # only the Mastodon side pays for its own tags.
+    async def _tag_and_post_mastodon():
+        tags = await generate_mastodon_tags(
+            creds.gemini_api_key, content_list, model_priority=active_models
+        )
+        return await post_to_mastodon(
+            creds.mastodon_access_token, creds.mastodon_api_base_url,
+            content_list,
+            # Curator has no post image, but if we generated a fallback for
+            # the (Bluesky) card, attach it to Mastodon too so both
+            # platforms show it.
+            image_bytes=image_bytes or curator_fallback_image,
+            thread_pause_profile=thread_pause_profile,
+            tags=tags,
+        )
+
+    broadcast_tasks.append(_tag_and_post_mastodon())
 
     results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
     for r in results:
@@ -435,6 +460,12 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     )
     bsky_sent_uris = list(bsky_result.sent_uris) if bsky_result is not None else []
     mastodon_sent_ids = list(mastodon_result.sent_uris) if mastodon_result is not None else []
+    bsky_delivered_texts = (
+        list(bsky_result.delivered_texts) if bsky_result is not None else []
+    )
+    mastodon_delivered_texts = (
+        list(mastodon_result.delivered_texts) if mastodon_result is not None else []
+    )
 
     # Step 4: assemble the per-post metadata that capture_post_metrics_stage
     # writes alongside each sent URI. Built once here because the values are
@@ -465,6 +496,8 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         pioneer_entry=content_prep.pioneer_entry,
         bsky_sent_uris=bsky_sent_uris,
         mastodon_sent_ids=mastodon_sent_ids,
+        bsky_delivered_texts=bsky_delivered_texts,
+        mastodon_delivered_texts=mastodon_delivered_texts,
         metrics_context=metrics_context,
         posted_topic_category=posted_topic_category,
     )
@@ -520,13 +553,25 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
         # Mastodon thread of 3 are independent threads even if the content
         # is identical, and each row's thread_length describes its own
         # platform thread.
+        def _delivered(texts: List[str], idx: int) -> str:
+            # Prefer what the broadcaster actually sent; fall back to the
+            # generated text so a broadcaster that returned no delivered_texts
+            # still records a preview rather than an empty row.
+            if idx < len(texts):
+                return texts[idx]
+            return (
+                broadcast.content_list[idx]
+                if idx < len(broadcast.content_list)
+                else ""
+            )
+
         bsky_total = len(bsky_uris)
         for idx, uri in enumerate(bsky_uris):
-            content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
+            content = _delivered(broadcast.bsky_delivered_texts, idx)
             _record(uri, "bluesky", content, idx, bsky_total)
         mastodon_total = len(mastodon_ids)
         for idx, status_id in enumerate(mastodon_ids):
-            content = broadcast.content_list[idx] if idx < len(broadcast.content_list) else ""
+            content = _delivered(broadcast.mastodon_delivered_texts, idx)
             _record(status_id, "mastodon", content, idx, mastodon_total)
 
         # ---- Refresh: pull live counts for rows due an update ----
