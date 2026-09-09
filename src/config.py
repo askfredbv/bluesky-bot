@@ -48,7 +48,6 @@ THREAD_PAUSE_PROFILES = {
     "reflective": (60.0, 180.0),
 }
 DEFAULT_THREAD_PAUSE_PROFILE: str = "normal"
-HASHTAG_OPTIONAL_MIN_CHARS: int = 110
 # The hashtag ceiling for a single post, shared by the generated-content
 # voice trim (agents._strip_excess_hashtags) and the Mastodon tag appender
 # (broadcasters.apply_mastodon_tags). One number: the appender allocates
