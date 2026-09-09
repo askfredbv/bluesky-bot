@@ -78,27 +78,40 @@ T = TypeVar("T")
 
 
 def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
-    """Compresses an image to stay under AtProto's 1MB blob limit."""
+    """Compresses an image to stay under AtProto's 1MB blob limit.
+
+    Never raises: returns the ORIGINAL bytes on any failure, which is the
+    contract ``is_usable_image`` documents and every caller relies on. The guard
+    used to cover only ``Image.open``, which reads the header — Pillow decodes
+    lazily, so a truncated or corrupt file raised at ``convert``/``save`` instead
+    and the exception escaped. In ``get_link_metadata`` that took the whole
+    OpenGraph dict down with it, so an article with a good headline and a bad
+    thumbnail shipped a card titled "Source Link"."""
     try:
         img_io = io.BytesIO(image_bytes)
         img: Image.Image = Image.open(img_io)
-    except Exception as e:
-        SafeLogger.warn("image_open_for_compression_failed", "Failed to open image for compression", error_type=type(e).__name__)
-        return image_bytes
 
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
 
-    quality = 90
-    out_io = io.BytesIO()
-    img.save(out_io, format="JPEG", quality=quality)
-    
-    while out_io.tell() > max_size_kb * 1024 and quality > 10:
-        quality -= 10
+        quality = 90
         out_io = io.BytesIO()
         img.save(out_io, format="JPEG", quality=quality)
 
-    return out_io.getvalue()
+        while out_io.tell() > max_size_kb * 1024 and quality > 10:
+            quality -= 10
+            out_io = io.BytesIO()
+            img.save(out_io, format="JPEG", quality=quality)
+
+        return out_io.getvalue()
+    except Exception as e:
+        SafeLogger.warn(
+            "image_compression_failed",
+            "Could not compress image; returning the original bytes",
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        return image_bytes
 
 
 def is_usable_image(image_bytes: bytes, max_bytes: int = 976 * 1024) -> bool:
@@ -150,12 +163,29 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
                     elif any(p in img_url.lower() for p in GENERIC_IMAGE_PATTERNS):
                         SafeLogger.info("generic_logo_skipped", "Skipping generic logo thumbnail", url=img_url)
                     else:
-                        img_res = await get_with_safe_redirects(client, img_url, timeout=5.0)
-                        if img_res and img_res.status_code == 200:
-                            img_data = img_res.content
-                            if len(img_data) > 900 * 1024:
-                                SafeLogger.info("og_image_compression_started", "Compressing large OpenGraph image", size_kb=len(img_data)//1024)
-                                img_data = compress_image(img_data)
+                        # The thumbnail is an enrichment; the headline and the
+                        # description are the payload. Isolate the image work so a
+                        # slow host, a dropped connection or an undecodable file
+                        # costs the card its picture and not its title — the
+                        # function-wide handler below returns the "Source Link"
+                        # fallback, which is the wrong answer for an article whose
+                        # OpenGraph tags parsed perfectly well.
+                        try:
+                            img_res = await get_with_safe_redirects(client, img_url, timeout=5.0)
+                            if img_res and img_res.status_code == 200:
+                                img_data = img_res.content
+                                if len(img_data) > 900 * 1024:
+                                    SafeLogger.info("og_image_compression_started", "Compressing large OpenGraph image", size_kb=len(img_data)//1024)
+                                    img_data = compress_image(img_data)
+                        except Exception as e:
+                            SafeLogger.warn(
+                                "og_image_fetch_failed",
+                                "OpenGraph thumbnail could not be fetched; keeping the article metadata",
+                                error_type=type(e).__name__,
+                                error_msg=str(e)[:200],
+                                url=img_url,
+                            )
+                            img_data = None
 
             return {
                 "title": og_title['content'] if og_title else soup.title.string if soup.title else "Technical Insight",
