@@ -2,6 +2,7 @@ import asyncio
 import io
 import random
 import re
+import uuid
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
@@ -423,7 +424,29 @@ async def post_to_mastodon(
                     error_type=type(e).__name__,
                 )
 
-    async def _status_post_with_timeout(post_text: str, reply_to_id: Optional[str], media: Optional[List[str]] = None):
+    async def _status_post_with_timeout(
+        post_text: str,
+        reply_to_id: Optional[str],
+        media: Optional[List[str]] = None,
+        idempotency_key: Optional[str] = None,
+    ):
+        """Post one status, bounded by a timeout, safe to call again on failure.
+
+        The timeout does NOT cancel the request. ``asyncio.to_thread`` runs
+        ``status_post`` on a worker thread and Python threads are not cancellable:
+        when ``wait_for`` gives up it abandons the *await*, while the HTTP request
+        carries on and may well be accepted. ``wait_for`` then raises
+        ``TimeoutError``, ``classify_retry`` calls that transient (anything without
+        a 429), and ``_send_with_thread_retry`` sends the same status again — a
+        real duplicate on the timeline, with the retry's id becoming the tracked
+        ``last_id`` while the first post is orphaned outside the reply chain.
+
+        ``idempotency_key`` is Mastodon's own answer to exactly this: repeat calls
+        carrying the same key return the original status instead of creating a
+        second one. The caller generates one key per thread part and reuses it for
+        every retry of that part, so a retry converges on the post that already
+        landed rather than adding to it.
+        """
         kwargs: Dict[str, Any] = {
             "status": post_text,
             "in_reply_to_id": reply_to_id,
@@ -431,6 +454,8 @@ async def post_to_mastodon(
         }
         if media:
             kwargs["media_ids"] = media
+        if idempotency_key:
+            kwargs["idempotency_key"] = idempotency_key
         return await asyncio.wait_for(
             asyncio.to_thread(mastodon.status_post, **kwargs),
             timeout=MASTODON_POST_TIMEOUT_SECONDS
@@ -458,9 +483,14 @@ async def post_to_mastodon(
     try:
         for i, post_text in enumerate(content_list):
             attach = media_ids if i == 0 else None
+            # One key per thread part, bound as a default so every retry of THIS
+            # part reuses it while the next part gets its own. A key derived from
+            # the text instead would wrongly collapse two legitimately identical
+            # posts made at different times.
+            post_key = uuid.uuid4().hex
 
-            async def _do_send(pt=post_text, rid=last_id, m=attach):
-                return await _status_post_with_timeout(pt, rid, media=m)
+            async def _do_send(pt=post_text, rid=last_id, m=attach, key=post_key):
+                return await _status_post_with_timeout(pt, rid, media=m, idempotency_key=key)
 
             status = await _send_with_thread_retry(_do_send)
             last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)

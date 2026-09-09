@@ -52,7 +52,7 @@ async def test_post_to_mastodon_skips_broadcast_on_overlong_content(monkeypatch)
         def __init__(self, access_token, api_base_url):
             self.access_token = access_token
 
-        def status_post(self, status, in_reply_to_id, visibility):
+        def status_post(self, status, in_reply_to_id, visibility, idempotency_key=None):
             posted_statuses.append({"status": status})
             return {"id": len(posted_statuses)}
 
@@ -83,7 +83,7 @@ async def test_post_to_mastodon_cancellation_stops_after_current_post(monkeypatc
             self.access_token = access_token
             self.api_base_url = api_base_url
 
-        def status_post(self, status, in_reply_to_id, visibility):
+        def status_post(self, status, in_reply_to_id, visibility, idempotency_key=None):
             posted_statuses.append(
                 {
                     "status": status,
@@ -300,7 +300,7 @@ async def test_post_to_mastodon_attaches_image_to_first_post_only(monkeypatch):
             media_posted.append({"data": data, "mime_type": mime_type, "description": description})
             return {"id": "media-42"}
 
-        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             posted.append({"status": status, "reply": in_reply_to_id, "media_ids": media_ids})
             return {"id": len(posted)}
 
@@ -334,7 +334,7 @@ async def test_post_to_mastodon_continues_without_image_on_upload_failure(monkey
         def media_post(self, data, mime_type=None, description=None):
             raise RuntimeError("mastodon rejected upload")
 
-        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             posted.append({"status": status, "media_ids": media_ids})
             return {"id": len(posted)}
 
@@ -367,7 +367,7 @@ async def test_post_to_mastodon_no_image_bytes_skips_media_upload(monkeypatch):
             media_calls.append(True)
             return {"id": "nope"}
 
-        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             return {"id": 1}
 
     async def no_sleep(_):
@@ -431,7 +431,7 @@ async def test_post_to_mastodon_returns_broadcast_result_with_sent_ids(monkeypat
         def __init__(self, *a, **kw):
             pass
 
-        def status_post(self, status, in_reply_to_id, visibility, media_ids=None):
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             id_counter["n"] += 1
             return {"id": id_counter["n"] * 1000}
 
@@ -481,3 +481,104 @@ async def test_post_to_mastodon_no_token_returns_empty_broadcast_result():
     assert result.sent_uris == []
     assert result.client is None
 
+
+
+# ---------------------------------------------------------------------------
+# Mastodon timeout + retry (freeze audit X4, found by Codex).
+#
+# asyncio.to_thread runs status_post on a worker thread, and Python threads are
+# not cancellable: when wait_for times out it abandons the await while the HTTP
+# request carries on and may still be accepted. classify_retry calls TimeoutError
+# transient, so _send_with_thread_retry sends the same status again. Without
+# Mastodon's idempotency_key that is a real duplicate on the timeline.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mastodon_retry_after_timeout_reuses_the_idempotency_key(monkeypatch):
+    """A retried post must carry the SAME key, so Mastodon returns the original
+    status instead of creating a second one."""
+    calls = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, idempotency_key=None, **_kw):
+            calls.append({"status": status, "idempotency_key": idempotency_key})
+            if len(calls) == 1:
+                raise TimeoutError("mastodon did not answer in time")
+            return {"id": 101}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    result = await broadcasters.post_to_mastodon("token", "https://mastodon.example", ["One post"])
+
+    assert len(calls) == 2, "the timeout should have been retried"
+    assert calls[0]["idempotency_key"], "the first attempt must carry a key"
+    assert calls[0]["idempotency_key"] == calls[1]["idempotency_key"]
+    assert result.sent_uris == ["101"]
+
+
+@pytest.mark.asyncio
+async def test_mastodon_thread_parts_get_distinct_idempotency_keys(monkeypatch):
+    """Each part needs its own key -- one shared key would make Mastodon collapse
+    the whole thread into a single status."""
+    keys = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, idempotency_key=None, **_kw):
+            keys.append(idempotency_key)
+            return {"id": len(keys)}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example", ["Part one", "Part two", "Part three"]
+    )
+
+    assert len(keys) == 3
+    assert all(keys), "every part must carry a key"
+    assert len(set(keys)) == 3, "keys must be distinct per part"
+
+
+@pytest.mark.asyncio
+async def test_mastodon_idempotent_retry_does_not_double_count_delivery(monkeypatch):
+    """When the retry returns the status the first attempt actually created, the
+    thread records one delivery -- not two -- and tracks the real id."""
+    attempts = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, idempotency_key=None, **_kw):
+            attempts.append(idempotency_key)
+            if len(attempts) == 1:
+                # The request was accepted server-side; the client gave up waiting.
+                raise TimeoutError("timed out after the server accepted it")
+            # Mastodon replays the original status for a repeated key.
+            return {"id": 555}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    result = await broadcasters.post_to_mastodon("token", "https://mastodon.example", ["Only post"])
+
+    assert result.sent_uris == ["555"]
+    assert result.delivered_texts == ["Only post"]
+    assert result.error is None
