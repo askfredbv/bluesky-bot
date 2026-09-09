@@ -791,3 +791,71 @@ async def test_persistence_stage_partial_delivery_still_counts(monkeypatch):
     await main.persistence_stage(automation)
     assert updated["value"]["recent_mode_topics"] == ["Career"]
     assert updated["value"]["pioneer_recent"][0]["id"] == "lynn-conway"
+
+
+@pytest.mark.asyncio
+async def test_broadcasting_stage_skips_tagging_without_a_mastodon_token(monkeypatch):
+    """A Bluesky-only run must not pay for Mastodon.
+
+    post_to_mastodon returns immediately when the token is empty, so tagging
+    first would spend two Gemini calls and up to the full 20s budget for a
+    platform that is switched off. The guard lives in broadcasting_stage, so
+    the test has to run broadcasting_stage: an earlier version asserted
+    post_to_mastodon's own no-token behaviour instead and would have stayed
+    green with the guard deleted (Codex review, 2026-09-09).
+    """
+    tag_calls = []
+
+    async def fake_generate_content(*args, **kwargs):
+        return ["hello"], "topic", None
+
+    async def tracking_tagger(*args, **kwargs):
+        tag_calls.append(1)
+        return ["#Python"]
+
+    async def ok_bluesky(*args, **kwargs):
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client="c", sent_uris=["at://1"],
+                               delivered_texts=["hello"])
+
+    async def ok_mastodon(*args, **kwargs):
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=[])
+
+    async def no_delay(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate_content)
+    monkeypatch.setattr(main, "generate_mastodon_tags", tracking_tagger)
+    monkeypatch.setattr(main, "post_to_bluesky", ok_bluesky)
+    monkeypatch.setattr(main, "post_to_mastodon", ok_mastodon)
+    monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
+    monkeypatch.setattr(main.random, "choice", lambda seq: "default")
+
+    settings = SimpleNamespace(
+        platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0)
+    )
+    prep = main.ContentPrepPayload(
+        mode="mentor",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        link_meta=None,
+        bsky_client="client",
+        recent_posts=[],
+    )
+
+    creds = SimpleNamespace(
+        gemini_api_key="g",
+        bluesky_username="u",
+        bluesky_password="p",
+        mastodon_access_token="",          # not configured
+        mastodon_api_base_url="https://masto",
+    )
+    await main.broadcasting_stage(prep, settings, creds)
+    assert tag_calls == [], "no model call may be made without a Mastodon token"
+
+    # ...and the guard must not suppress tagging when the token IS present,
+    # or the test above would pass with tagging removed entirely.
+    creds_with_token = SimpleNamespace(**{**vars(creds), "mastodon_access_token": "t"})
+    await main.broadcasting_stage(prep, settings, creds_with_token)
+    assert tag_calls == [1], "tagging must still run when Mastodon is configured"

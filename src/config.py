@@ -78,26 +78,51 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 # — a bot tell in the profile view, and useless in a tag timeline where the
 # point is that the tag describes THIS post.
 #
-# OFF. Enabled 2026-09-09 on the strength of the tag probe (run 34343702234,
-# 10/10 real posts tagged sensibly), then disabled the same day on Codex
-# review of #112/#113 — which landed ~90s after each merge and was not read
-# in time. Two holes, both because tags are appended AFTER _apply_voice_trim,
-# so no existing validator ever inspects them:
+# ON since 2026-09-09. Enabled once earlier the same day and reverted
+# within fifteen minutes: that attempt rested on a probe showing only the
+# model agreeing with itself on ten posts, and review then found two holes
+# ten agreeable samples could never surface — banned voice words passing
+# the sanitizer, and ungrounded entity tags approved by the model that
+# proposed them.
 #
-#  1. Banned voice words pass. '#Revolutionary' and '#Groundbreaking' are
-#     literally in BANNED_HYPE_WORDS and _sanitize_mastodon_tags accepts
-#     both — it checks shape, exclusions and duplicates, nothing else.
-#     Verified, not hypothetical.
-#  2. Entity tags are ungrounded. The prompt invites a company tag, so
-#     '#NVIDIA' can ship on a post that never mentions NVIDIA — a product
-#     affiliation visible on Mastodon only, which is exactly what the
-#     AGENTS.md #7 clause about appended content forbids.
+# What now stands between a model's suggestion and the feed:
+#   1. a lexical gate rejecting BANNED_HYPE_WORDS / BANNED_TEASER_PATTERNS
+#      and the mood tags in MASTODON_TAGS_EXCLUDED;
+#   2. a semantic review by a DIFFERENT model — gemini-3.7-flash proposes,
+#      gemini-3.5-flash reviews, and no distinct reviewer means no tags, so
+#      a correlated mistake cannot approve itself;
+#   3. a strict verdict parser: real ints, in range, no duplicates, full
+#      coverage, or the whole response is discarded;
+#   4. the shared MAX_HASHTAGS_PER_POST ceiling, applied to the post total
+#      rather than per source.
 #
-# The probe's 10/10 is not a defence: samples do not constrain the next call.
-# Before flipping this back to True, the sanitizer needs to reject banned
-# voice words and to ground entity tags in the post text. Re-run the probe
-# after that, and read the Codex review BEFORE merging (it takes ~90s).
-MASTODON_TAGS_ENABLED: bool = False
+# The evidence is REJECTION, not agreement (probe run 34356091470). Every
+# category AGENTS.md #7 bans has a control and every control passed:
+#
+#   affiliation  #NVIDIA, #Datadog, #GoogleCloud   all dropped
+#   endorsement  #Recommended                      dropped
+#   framing      #AIForGood (subject-shaped)       dropped
+#   claim        #AIReplacesJobs (subject-shaped)  dropped
+#   specificity  #QuantumComputing                 dropped
+#   positives    #OOP, #BrowserExtensions, #NVIDIA all kept
+#
+#   10/10 correct, 0 unparseable, retention 10/10, 0 over the 20s budget.
+#
+# #NVIDIA appears twice on purpose — dropped on a post that never mentions
+# it, kept on one about its chip packaging. No string-matching approach can
+# make that distinction: requiring the tag to appear in the text rejects 6
+# of 7 known-good tags, including #OOP on a post about object-oriented
+# programming.
+#
+# Residual risk, stated rather than papered over: two model passes can
+# still both be wrong. Cross-model review reduces that; nothing available
+# eliminates it. The voice gate has also never fired on real output, so it
+# is proven by test rather than by traffic.
+#
+# Re-run `Mastodon Tag Probe (diagnostic)` after any prompt or model
+# change and read BOTH numbers: retention alone cannot validate a reviewer.
+# Setting this back to False stops tagging without reverting anything.
+MASTODON_TAGS_ENABLED: bool = True
 
 # Total wall-clock budget for naming tags. Tagging runs concurrently with the
 # Bluesky broadcast (main.broadcasting_stage), so this never delays that post
