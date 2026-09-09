@@ -18,7 +18,6 @@ class Mode(StrEnum):
 # Platform Constants
 MAX_POST_LENGTH_BSKY: int = 300
 MAX_POST_LENGTH_MASTODON: int = 500
-MAX_GENERATION_RETRIES: int = 3
 # Hard cap on Gemini output tokens — sized so the model physically cannot
 # emit more than a 5-post × 300-char thread plus JSON overhead. Primary
 # enforcement of post-length invariants (v4.15.3). 1 token ≈ 3.5 chars in
