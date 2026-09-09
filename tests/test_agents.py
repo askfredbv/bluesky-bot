@@ -1212,3 +1212,47 @@ async def test_a_concurrently_recorded_mention_is_not_clobbered(monkeypatch):
 
     assert "at://mention/from-elsewhere" in replied_state, "a concurrent record was clobbered"
     assert "at://mention/ours" in replied_state
+
+
+@pytest.mark.asyncio
+async def test_mentions_are_skipped_entirely_when_the_replied_state_is_untrusted(monkeypatch):
+    """The guard in update_replied_to stops the WRITE. It does not stop the harm.
+
+    If handle_interactions carried on with an empty set it would reply a second
+    time to everyone already answered -- on their timeline -- which is precisely
+    what the trust guard exists to prevent. So the whole pass is skipped."""
+    sent_posts = []
+    monkeypatch.setattr("src.agents.load_replied_to_strict", lambda: ([], False))
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "should never be generated")
+
+    mentions = [_mention("at://mention/a"), _mention("at://mention/b")]
+    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+
+    assert sent_posts == [], "replied to someone without knowing whether they were already answered"
+
+
+@pytest.mark.asyncio
+async def test_mentions_proceed_normally_when_the_replied_state_is_trusted(monkeypatch):
+    """The guard must not block the ordinary path -- including a genuine first run
+    with a legitimately empty history."""
+    sent_posts = []
+    replied_state: list = []
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.load_replied_to_strict", lambda: ([], True))
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)
+    monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "A reply.")
+
+    await handle_interactions(_client_for([_mention("at://mention/x")], sent_posts), "bot.example", "fake-key")
+
+    assert len(sent_posts) == 1
+    assert "at://mention/x" in replied_state

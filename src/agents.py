@@ -27,6 +27,9 @@ from src.config import (
     MASTODON_TAGS_TIMEOUT_SECONDS, MAX_HASHTAGS_PER_POST,
 )
 from src.utils import prune_pioneer_recent, update_replied_to
+# Imported from its real home rather than through the src.utils re-export shim:
+# that shim is an unfinished migration (ledger C2) and adding to it deepens it.
+from src.state_store import load_replied_to_strict
 from src.logger import SafeLogger
 
 # v4.14 voice rules
@@ -1648,7 +1651,20 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
     SafeLogger.info("interactions_check_started", "Checking for interactions", platform="bluesky")
     try:
-        replied_to = set(update_replied_to(lambda current: current))
+        # Who has already been answered. If that read cannot be trusted, the guard
+        # in update_replied_to stops the WRITE — but proceeding here with an empty
+        # set would still reply a second time to everyone already answered, which
+        # is the harm the guard exists to prevent. So the whole pass is skipped.
+        # Missing one run of mention replies beats replying twice to real people.
+        known_replied, trusted = load_replied_to_strict()
+        if not trusted:
+            SafeLogger.error(
+                "interactions_skipped_untrusted_state",
+                "Cannot tell who has already been replied to; skipping this run's mentions",
+                platform="bluesky",
+            )
+            return
+        replied_to = set(known_replied)
         notifications = await client.app.bsky.notification.list_notifications()
         mentions = [n for n in notifications.notifications if n.reason == 'mention' and not n.is_read]
         
