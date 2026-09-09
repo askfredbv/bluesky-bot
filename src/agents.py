@@ -1018,26 +1018,32 @@ async def review_mastodon_tags(
 
 def _select_tag_models(
     model_priority: Optional[List[str]] = None,
-) -> Tuple[str, str]:
-    """Pick (proposer, reviewer). Different models where the chain allows.
+) -> Tuple[str, Optional[str]]:
+    """Pick (proposer, reviewer). ``reviewer`` is None when none is available.
 
-    Codex raised this as a P1 against enabling the feature: when the proposer
-    and reviewer are the same model, a candidate can be approved solely because
-    the same model returned ``keep: true``, so a correlated semantic mistake
-    reviews itself. Using the next model in the chain breaks that specific
-    path — it does not make errors impossible, and a different model is not
-    automatically a better judge, which is why the probe measures the pairing
-    against known answers rather than assuming it.
+    Codex raised the pairing as a P1 against enabling the feature: when the
+    proposer and reviewer are the same model, a candidate can be approved
+    solely because that model returned ``keep: true``, so a correlated semantic
+    mistake reviews itself. Taking the next distinct model in the chain breaks
+    that specific path. It does not make errors impossible, and a different
+    model is not automatically a better judge, which is why the probe measures
+    the pairing against known answers rather than assuming it.
 
-    Falls back to the same model when the chain has only one entry (a
-    single-model chain still gets a second, independently-prompted pass, which
-    is weaker but better than no review).
+    **No distinct reviewer means no tags.** The first version of this fell back
+    to reviewing with the proposer, reasoning that a second independently
+    prompted pass beat no review {D} which quietly recreated the exact
+    self-approval path the change exists to close (Codex review, 2026-09-09).
+    That state is reachable in production: ``filter_available_models`` prunes
+    the chain at startup to what the key can actually reach, so a one-model
+    chain is a supported degraded mode, not a hypothetical. Tags are
+    decoration, so refusing to tag costs a discovery opportunity and nothing
+    else; publishing an unreviewed affiliation costs more.
     """
     chain = list(model_priority or GEMINI_MODEL_PRIORITY)
     if not chain:
         chain = list(GEMINI_MODEL_PRIORITY)
     proposer = chain[0]
-    reviewer = next((m for m in chain[1:] if m != proposer), proposer)
+    reviewer = next((m for m in chain[1:] if m != proposer), None)
     return proposer, reviewer
 
 
@@ -1092,6 +1098,16 @@ async def generate_mastodon_tags(
     if allowance <= 0:
         return []
     model, reviewer = _select_tag_models(model_priority)
+    if reviewer is None:
+        # Fail closed. A same-model review is not a review (see
+        # _select_tag_models); shipping untagged is the safe outcome.
+        SafeLogger.warn(
+            "mastodon_tags_no_reviewer",
+            "No distinct reviewer model available; posting untagged",
+            platform="mastodon",
+            model=model,
+        )
+        return []
     try:
         raw, candidates, decisions, tags = await asyncio.wait_for(
             _tag_pipeline(api_key, root, model, reviewer, allowance),
@@ -1102,7 +1118,10 @@ async def generate_mastodon_tags(
             "mastodon_tags_failed",
             "Could not generate Mastodon discovery tags; posting untagged",
             platform="mastodon",
+            # Either call can raise, so naming only the proposer would
+            # misattribute a reviewer outage to it (Codex review, 2026-09-09).
             model=model,
+            reviewer=reviewer,
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
         )

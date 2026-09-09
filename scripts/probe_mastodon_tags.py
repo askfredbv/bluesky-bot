@@ -225,9 +225,12 @@ async def _run(posts: List[str]) -> int:
         return 1
 
     proposer, reviewer = _select_tag_models()
+    if reviewer is None:
+        print("No distinct reviewer model is available, so production would "
+              "post untagged.\nNothing to probe.", file=sys.stderr)
+        return 1
     print(f"proposer: {proposer}")
-    pairing = "SAME MODEL" if reviewer == proposer else "cross-model"
-    print(f"reviewer: {reviewer} ({pairing})")
+    print(f"reviewer: {reviewer} (cross-model)")
     print(f"excluded: {', '.join(MASTODON_TAGS_EXCLUDED)}")
     print(f"ceiling:  {MAX_HASHTAGS_PER_POST} per post, shared with the "
           f"generated text\n")

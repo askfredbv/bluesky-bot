@@ -510,10 +510,30 @@ def test_selection_walks_past_a_duplicated_first_entry():
     assert agents._select_tag_models(["a", "a", "b"]) == ("a", "b")
 
 
-def test_a_single_model_chain_falls_back_to_the_same_model():
-    """Weaker than cross-model, but a second independently-prompted pass
-    still beats no review at all."""
-    assert agents._select_tag_models(["only"]) == ("only", "only")
+def test_a_single_model_chain_yields_no_reviewer():
+    """The first version fell back to the proposer, recreating the exact
+    self-approval hole this exists to close. filter_available_models can
+    prune the chain to one entry at startup, so this is a reachable
+    production state (Codex review, 2026-09-09)."""
+    assert agents._select_tag_models(["only"]) == ("only", None)
+
+
+@pytest.mark.asyncio
+async def test_no_reviewer_means_no_tags_and_no_model_call(monkeypatch, tags_on):
+    """Fail closed: tags are decoration, so refusing to tag costs a
+    discovery opportunity; publishing an unreviewed affiliation costs more."""
+    called = []
+
+    async def tracker(fn, *args, **kwargs):
+        called.append(1)
+        return json.dumps(["#Python"])
+
+    monkeypatch.setattr(agents.asyncio, "to_thread", tracker)
+    tags = await agents.generate_mastodon_tags(
+        "key", ["a post"], model_priority=["only-one"]
+    )
+    assert tags == []
+    assert called == [], "must not even propose without a reviewer"
 
 
 @pytest.mark.asyncio
