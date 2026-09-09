@@ -415,9 +415,18 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # (Codex review, 2026-09-09). Now the two broadcasts start together and
     # only the Mastodon side pays for its own tags.
     async def _tag_and_post_mastodon():
-        tags = await generate_mastodon_tags(
-            creds.gemini_api_key, content_list, model_priority=active_models
-        )
+        # No Mastodon token means post_to_mastodon returns immediately
+        # without posting, so tagging first would spend two Gemini calls
+        # and up to the full budget for a platform that is switched off.
+        # The guard was lost when tagging moved inside this coroutine
+        # (Codex review, 2026-09-09); production sets the token, but a
+        # Bluesky-only run should not pay for Mastodon.
+        tags: List[str] = []
+        if creds.mastodon_access_token:
+            tags = await generate_mastodon_tags(
+                creds.gemini_api_key, content_list,
+                model_priority=active_models,
+            )
         return await post_to_mastodon(
             creds.mastodon_access_token, creds.mastodon_api_base_url,
             content_list,
