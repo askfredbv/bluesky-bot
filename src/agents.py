@@ -1629,6 +1629,21 @@ async def generate_content(
     )
     return [], topic, None
 
+def _record_handled_mention(uri: str) -> None:
+    """Persist one handled mention immediately, merged into the current state.
+
+    Batching this to the end of the loop is how already-answered mentions got
+    replied to twice: a failure — or a cancellation — on a later mention skipped
+    the write entirely, so the next run saw no record of the replies that had
+    already gone out and sent them again. To a real person, on their timeline.
+
+    Merged rather than replaced: the mutator receives the state read under the
+    lock, so it appends to whatever is there instead of overwriting it with a
+    snapshot taken at the top of the run.
+    """
+    update_replied_to(lambda current: current if uri in current else [*current, uri])
+
+
 async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
     SafeLogger.info("interactions_check_started", "Checking for interactions", platform="bluesky")
@@ -1650,6 +1665,7 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
                     mention_uri=mention.uri
                 )
                 replied_to.add(mention.uri)
+                _record_handled_mention(mention.uri)
                 continue
             
             sanitized_text = _sanitize_mention(mention.record.text)
@@ -1675,7 +1691,9 @@ async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> 
                 reply_to={'parent': {'cid': mention.cid, 'uri': mention.uri}, 'root': {'cid': mention.cid, 'uri': mention.uri}}
             )
             replied_to.add(mention.uri)
-
-        update_replied_to(lambda _: list(replied_to))
+            # Recorded here, immediately after the reply lands, and never at the
+            # end of the loop: everything below this line can still fail, and a
+            # reply that has already reached someone must not be forgotten.
+            _record_handled_mention(mention.uri)
     except Exception as e:
         SafeLogger.error("interaction_handling_failed", "Interaction error", exception=e, platform="bluesky")
