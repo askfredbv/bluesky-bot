@@ -174,14 +174,37 @@ class SafeLogger:
         }
         cls._logger.log(level, message, extra=safe_payload)
 
+    # `exception=` is declared on all three rather than only on error(). It has
+    # always worked on info/warn — it lands in **fields and binds to _emit's
+    # keyword-only parameter — but working by accident is not the same as being
+    # discoverable. AGENTS.md principle 3 requires every logging except to carry
+    # the message, not just the type, and the usual way that got violated was a
+    # caller reading `warn(event, message, **fields)`, seeing no way to pass an
+    # exception, and hand-rolling `error_type=type(e).__name__` instead. Passing
+    # `exception=e` sets error_type AND appends str(e) to the message.
+
+    # `exception=` is declared on warn() as well as error(). It has always worked
+    # there — it lands in **fields and binds to _emit's keyword-only parameter —
+    # but working by accident is not the same as being discoverable, and an
+    # invisible idiom is why AGENTS.md principle 3 kept getting violated: a
+    # caller reading `warn(event, message, **fields)` sees no way to pass an
+    # exception and hand-rolls `error_type=type(e).__name__`, losing str(e).
+    #
+    # NOT declared on info(). Two call sites splat computed counter dicts into it
+    # (`**{f"rejected_{k}": v ...}` at proactive.py:368, `**refresh_counts` at
+    # main.py:610) and mypy correctly rejects a `dict[str, int]` splat against a
+    # BaseException-typed keyword — keyword-only does not help, since a splat can
+    # target keyword-only parameters too. info() is the wrong level for an
+    # exception anyway; warn() and error() are where they belong.
+
     @classmethod
     def info(cls, event: str, message: str = "", **fields: Any) -> None:
         cls._emit(logging.INFO, event, message, **fields)
 
     @classmethod
-    def warn(cls, event: str, message: str = "", **fields: Any) -> None:
-        cls._emit(logging.WARNING, event, message, **fields)
+    def warn(cls, event: str, message: str = "", *, exception: Optional[BaseException] = None, **fields: Any) -> None:
+        cls._emit(logging.WARNING, event, message, exception=exception, **fields)
 
     @classmethod
-    def error(cls, event: str, message: str = "", exception: Optional[BaseException] = None, **fields: Any) -> None:
+    def error(cls, event: str, message: str = "", *, exception: Optional[BaseException] = None, **fields: Any) -> None:
         cls._emit(logging.ERROR, event, message, exception=exception, **fields)

@@ -31,11 +31,14 @@ jobs:
         run: |
           ruff check src/ main.py scripts/ tests/
 
-      # Type-check the whole codebase. Every module is mypy-clean, so any new
-      # type error fails the build.
+      # Type-check. Scope and flags live in [tool.mypy] in pyproject.toml so a
+      # bare `mypy` locally checks exactly what the gate checks — they used to
+      # disagree, because the flags existed only on this line. src/ and main.py
+      # are mypy-clean; scripts/ is not in the gate yet (see the note in
+      # pyproject.toml).
       - name: Type-check (mypy)
         run: |
-          mypy src/ main.py --ignore-missing-imports
+          mypy
 
       - name: Run tests with global coverage gate
         run: |

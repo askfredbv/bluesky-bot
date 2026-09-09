@@ -152,3 +152,29 @@ def test_reserved_logrecord_keys_are_renamed_not_crashed():
     # And the original reserved keys are NOT in the record at the user
     # field level (they are LogRecord internals).
     assert record.get("filename") != "feed_health.json"
+
+
+def test_warn_accepts_exception_and_keeps_the_message():
+    """AGENTS.md principle 3: a logging except must carry the message, not just
+    the type. `exception=` is the supported way to do that, and it is declared on
+    warn() so callers can see it rather than hand-rolling error_type=."""
+    _reset_logger_state()
+    SafeLogger.configure()
+    stream = _capture_stream()
+
+    SafeLogger.warn("thing_failed", "Thing failed", exception=ValueError("disk on fire"))
+
+    record = _read_records(stream)[0]
+    assert record["error_type"] == "ValueError"
+    assert "disk on fire" in record["message"], "the message was dropped -- the exact §3 failure"
+
+
+def test_info_does_not_take_exception_so_counter_splats_stay_type_safe():
+    """info() deliberately has no `exception` parameter: call sites splat computed
+    counter dicts into it, and a BaseException-typed keyword would make mypy
+    reject `**dict[str, int]`. Exceptions belong at warn/error."""
+    import inspect
+
+    assert "exception" not in inspect.signature(SafeLogger.info).parameters
+    assert "exception" in inspect.signature(SafeLogger.warn).parameters
+    assert "exception" in inspect.signature(SafeLogger.error).parameters
