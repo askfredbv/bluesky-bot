@@ -764,7 +764,6 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
 async def persistence_stage(automation: AutomationPayload) -> None:
     mode = automation.mode
     news_items = automation.news_items
-    seen_data = automation.seen_data
     pioneer_entry = automation.pioneer_entry
     chosen_topic = automation.chosen_topic
     delivered = automation.delivered
@@ -782,48 +781,68 @@ async def persistence_stage(automation: AutomationPayload) -> None:
         )
         return
 
-    dirty = False
-    if mode == Mode.CURATOR and news_items:
-        # Only the item that was actually published is marked seen. This used to
-        # record every candidate fetch_news returned, which suppressed the four
-        # stories the run did NOT write about — and because fetch_single_feed only
-        # admits entries from the last two days, a suppressed candidate ages out of
-        # the window before it can be reconsidered. They were lost, not deferred.
-        # (The full-list write arrived incidentally in 7428cf7/v4.5.0, which widened
-        # an earlier news_items[:5] slice; no commit records it as a decision.)
-        posted_link = automation.posted_link or news_items[0].get("link")
-        if posted_link:
-            seen_data["links"] = (seen_data["links"] + [canonical_url(posted_link)])[-200:]
+    dirty = bool(
+        (mode == Mode.CURATOR and news_items)
+        or (mode in (Mode.MENTOR, Mode.STRATEGIST) and chosen_topic)
+        or pioneer_entry
+    )
+    if not dirty:
+        return
 
-        # Record the category of the item actually written about, resolved in
-        # broadcasting_stage alongside the link card. Falls back to the top item
-        # only if that resolution produced nothing.
-        topic_cat = automation.posted_topic_category or news_items[0].get('detected_topic', 'General')
-        if topic_cat != 'General':
-            seen_data["recent_topics"] = (seen_data["recent_topics"] + [topic_cat])[-5:]
-        dirty = True
+    # Every change below is applied to `current` — the state update_seen_articles
+    # just re-read while holding the lock — and NOT to automation.seen_data, the
+    # copy this run loaded back in content_prep.
+    #
+    # Writing that stale copy back is how a transient read failure erased
+    # everything: seen_articles.json is gitignored, so a fresh Actions runner has
+    # no local copy and STATE_STORE_URL is usually unset. One failed Gist GET
+    # walked the whole fallback chain to the empty default, and persistence then
+    # saved that empty default over the real Gist. It also defeated the lock —
+    # taking it, re-reading, and then discarding the read is the same as not
+    # locking at all.
+    def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
+        current.setdefault("links", [])
+        current.setdefault("recent_topics", [])
 
-    # v4.16: track the LLM-chosen topic for Mentor/Strategist runs so the
-    # next run's topic picker can avoid repeating it. Curator already has
-    # its own categorical recent_topics; this is a separate field for the
-    # free-form Mentor/Strategist topic strings.
-    if mode in (Mode.MENTOR, Mode.STRATEGIST) and chosen_topic:
-        existing = seen_data.get("recent_mode_topics", []) or []
-        seen_data["recent_mode_topics"] = (existing + [chosen_topic])[-5:]
-        dirty = True
+        if mode == Mode.CURATOR and news_items:
+            # Only the item that was actually published is marked seen. This used to
+            # record every candidate fetch_news returned, which suppressed the four
+            # stories the run did NOT write about — and because fetch_single_feed only
+            # admits entries from the last two days, a suppressed candidate ages out of
+            # the window before it can be reconsidered. They were lost, not deferred.
+            # (The full-list write arrived incidentally in 7428cf7/v4.5.0, which widened
+            # an earlier news_items[:5] slice; no commit records it as a decision.)
+            posted_link = automation.posted_link or news_items[0].get("link")
+            if posted_link:
+                current["links"] = (current["links"] + [canonical_url(posted_link)])[-200:]
 
-    # Pioneer cooldown bookkeeping — only when a pioneer post actually fired
-    if pioneer_entry:
-        existing = prune_pioneer_recent(seen_data.get("pioneer_recent", []) or [])
-        existing.append({
-            "id": pioneer_entry["entry"]["id"],
-            "posted_at": datetime.now(timezone.utc).isoformat(),
-        })
-        seen_data["pioneer_recent"] = existing
-        dirty = True
+            # Record the category of the item actually written about, resolved in
+            # broadcasting_stage alongside the link card. Falls back to the top item
+            # only if that resolution produced nothing.
+            topic_cat = automation.posted_topic_category or news_items[0].get('detected_topic', 'General')
+            if topic_cat != 'General':
+                current["recent_topics"] = (current["recent_topics"] + [topic_cat])[-5:]
 
-    if dirty:
-        update_seen_articles(lambda _: seen_data)
+        # v4.16: track the LLM-chosen topic for Mentor/Strategist runs so the
+        # next run's topic picker can avoid repeating it. Curator already has
+        # its own categorical recent_topics; this is a separate field for the
+        # free-form Mentor/Strategist topic strings.
+        if mode in (Mode.MENTOR, Mode.STRATEGIST) and chosen_topic:
+            existing = current.get("recent_mode_topics", []) or []
+            current["recent_mode_topics"] = (existing + [chosen_topic])[-5:]
+
+        # Pioneer cooldown bookkeeping — only when a pioneer post actually fired
+        if pioneer_entry:
+            pioneers = prune_pioneer_recent(current.get("pioneer_recent", []) or [])
+            pioneers.append({
+                "id": pioneer_entry["entry"]["id"],
+                "posted_at": datetime.now(timezone.utc).isoformat(),
+            })
+            current["pioneer_recent"] = pioneers
+
+        return current
+
+    update_seen_articles(_apply)
 
 
 async def main():
