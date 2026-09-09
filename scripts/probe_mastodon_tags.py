@@ -39,10 +39,11 @@ from typing import Any, Dict, List
 
 from src.agents import (
     request_mastodon_tags, review_mastodon_tags, _select_tag_models,
+    filter_available_models,
 )
 from src.broadcasters import apply_mastodon_tags
 from src.config import (
-    MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
+    GEMINI_MODEL_PRIORITY, MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
     MASTODON_TAGS_TIMEOUT_SECONDS,
 )
 
@@ -224,10 +225,16 @@ async def _run(posts: List[str]) -> int:
         print("GEMINI_API_KEY not set", file=sys.stderr)
         return 1
 
-    proposer, reviewer = _select_tag_models()
+    # Select from the FILTERED chain, exactly as main.py does: production
+    # passes filter_available_models' output into tagging, so probing the
+    # unfiltered list could validate a pairing production never uses
+    # (Codex review, 2026-09-09).
+    active = await filter_available_models(key, GEMINI_MODEL_PRIORITY)
+    proposer, reviewer = _select_tag_models(active)
     if reviewer is None:
-        print("No distinct reviewer model is available, so production would "
-              "post untagged.\nNothing to probe.", file=sys.stderr)
+        print("No distinct reviewer model is reachable with this key, so "
+              "production would post untagged. Nothing to probe.",
+              file=sys.stderr)
         return 1
     print(f"proposer: {proposer}")
     print(f"reviewer: {reviewer} (cross-model)")
