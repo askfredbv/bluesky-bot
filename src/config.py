@@ -78,12 +78,15 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 # — a bot tell in the profile view, and useless in a tag timeline where the
 # point is that the tag describes THIS post.
 #
-# Ships OFF. workflow_dispatch needs the probe workflow on the default branch,
-# so the tags cannot be seen before this merges — and merging with tags ON
-# would put unvetted tags on the live feed, the one thing the probe exists to
-# prevent. Merge dormant, run `Mastodon Tag Probe (diagnostic)`, read the
-# output, then flip this to True.
-MASTODON_TAGS_ENABLED: bool = False
+# ON since 2026-09-09, after the tag probe (run 34343702234) was read against
+# ten real posts on gemini-3.7-flash: 10/10 tagged, all on-topic and specific
+# to the post rather than its category — #MicrosoftEdge/#BrowserExtensions on
+# the Edge add-ons story, #DataMigration/#LegacySystems on the decommissioning
+# one. The model never reached for an excluded mood tag, so
+# MASTODON_TAGS_EXCLUDED is still unexercised in the wild. Re-run the probe
+# after any prompt or model change; set this back to False to stop tagging
+# without reverting anything.
+MASTODON_TAGS_ENABLED: bool = True
 
 # Total wall-clock budget for naming tags. Tagging runs concurrently with the
 # Bluesky broadcast (main.broadcasting_stage), so this never delays that post
