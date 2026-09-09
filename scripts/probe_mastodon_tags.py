@@ -175,9 +175,53 @@ async def _probe_adversarial(key: str, reviewer: str) -> tuple:
         ("A clever workaround feels like borrowing time. Adjacent systems adapt "
          "to its quirks rather than the intended design.",
          "#QuantumComputing", False, "invented specificity"),
+        # Was "#BestPractices" on this post, labelled must-DROP because the
+        # prose observes an ownership failure without advocating practice. The
+        # reviewer kept it in three consecutive runs, and on adjudication that
+        # KEEP is defensible: a reader can reasonably take the post as a lesson
+        # about operational practice. The gold label was too contestable to
+        # carry evidential weight, so the case was measuring my editorial
+        # preference rather than the safeguard (Codex, 2026-09-09).
+        #
+        # Replaced with a HARDER case on the same post, not an easier one:
+        # Kubernetes does not establish that Google Cloud was involved, so this
+        # tests the leap from a related technology to an entity the post never
+        # names -- the actual risk this pass exists to stop.
         ("Kubernetes autoscaling worked exactly as configured. The configuration "
          "was the problem, and nobody owned it.",
-         "#BestPractices", False, "adds framing the prose does not carry"),
+         "#GoogleCloud", False, "entity leap from a related technology"),
+        # ...but ADDED rather than swapped, because dropping the framing case
+        # would have left the set with no framing control at all: a reviewer
+        # that reliably refuses entity leaps while accepting praise or
+        # endorsement would then score a clean sweep and suppress this probe's
+        # do-not-enable warning, even though AGENTS.md #7 forbids a tag that
+        # introduces framing the prose does not carry (Codex review, 2026-09-09).
+        #
+        # Unambiguous where "#BestPractices" was contestable: the prose reports
+        # a tool quietly losing data, so an endorsement tag is not a reading
+        # anyone could defend.
+        ("The vendor's migration tooling handled 80% of the tables and silently "
+         "skipped the rest. We found out in production.",
+         "#Recommended", False, "endorsement the prose contradicts"),
+        # The case above is necessary but not sufficient: "#Recommended" is not
+        # a subject at all, so the prompt's "must name a genuine subject" rule
+        # already refuses it, and the framing rule is never exercised. A
+        # reviewer that rejects non-subject adjectives while still accepting
+        # SUBJECT-SHAPED framing would score a clean sweep (Codex review,
+        # 2026-09-09). So this one names a real topic area whose framing the
+        # prose flatly contradicts: the post is about harm, the tag claims good.
+        ("The same voice-cloning stack that makes audiobooks cheap is now the "
+         "top vector for finance-department fraud. The tooling did not change; "
+         "the target did.",
+         "#AIForGood", False, "subject-shaped tag, framing the prose contradicts"),
+        # AGENTS.md #7 bans a tag introducing "a claim, an endorsement, a
+        # product affiliation, or a framing". Affiliation, endorsement and
+        # framing are covered above; this is the fourth, and it completes the
+        # enumeration. A subject-shaped tag asserting something the prose
+        # explicitly denies (Codex review, 2026-09-09).
+        ("The team ships faster with the assistant in the loop. Review load "
+         "moved upstream, it did not disappear.",
+         "#AIReplacesJobs", False, "asserts a claim the prose contradicts"),
         # Positive controls: a reviewer that drops everything must not pass.
         ("Alan Kay coined \"object-oriented\", but later regretted the choice. "
          "He cared about messaging between objects, not classes.",
