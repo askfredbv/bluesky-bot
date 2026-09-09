@@ -175,9 +175,21 @@ async def _probe_adversarial(key: str, reviewer: str) -> tuple:
         ("A clever workaround feels like borrowing time. Adjacent systems adapt "
          "to its quirks rather than the intended design.",
          "#QuantumComputing", False, "invented specificity"),
+        # Was "#BestPractices" on this post, labelled must-DROP because the
+        # prose observes an ownership failure without advocating practice. The
+        # reviewer kept it in three consecutive runs, and on adjudication that
+        # KEEP is defensible: a reader can reasonably take the post as a lesson
+        # about operational practice. The gold label was too contestable to
+        # carry evidential weight, so the case was measuring my editorial
+        # preference rather than the safeguard (Codex, 2026-09-09).
+        #
+        # Replaced with a HARDER case on the same post, not an easier one:
+        # Kubernetes does not establish that Google Cloud was involved, so this
+        # tests the leap from a related technology to an entity the post never
+        # names -- the actual risk this pass exists to stop.
         ("Kubernetes autoscaling worked exactly as configured. The configuration "
          "was the problem, and nobody owned it.",
-         "#BestPractices", False, "adds framing the prose does not carry"),
+         "#GoogleCloud", False, "entity leap from a related technology"),
         # Positive controls: a reviewer that drops everything must not pass.
         ("Alan Kay coined \"object-oriented\", but later regretted the choice. "
          "He cared about messaging between objects, not classes.",
