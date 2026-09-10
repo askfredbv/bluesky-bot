@@ -50,3 +50,15 @@ def test_feeds_found_dead_on_2026_09_10_are_gone_or_replaced():
         "https://stability.ai/news-updates?format=rss",
     ):
         assert replacement in RSS_FEEDS, replacement
+
+
+def test_feeds_dropped_or_replaced_on_frederiks_call_2026_09_10():
+    # Not broken: dormant (The Gradient) or too quiet for a 48-hour window
+    # (vkrakovna). hnrss.org blocked the Actions runner on 20 of 28 fetches.
+    for dropped in (
+        "https://thegradient.pub/rss/",
+        "https://vkrakovna.wordpress.com/feed/",
+        "https://hnrss.org/best",
+    ):
+        assert dropped not in RSS_FEEDS, dropped
+    assert "https://news.ycombinator.com/rss" in RSS_FEEDS

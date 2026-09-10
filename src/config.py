@@ -393,7 +393,8 @@ RSS_FEEDS = [
     "https://stability.ai/news-updates?format=rss",
     "https://siliconangle.com/category/ai/feed",
     # v4.13.0 feed expansion — validated 2026-04-18
-    "https://thegradient.pub/rss/",
+    # 2026-09-10: thegradient.pub REMOVED on Frederik's call. One post since
+    # June 2025, so a 48-hour freshness window never catches anything from it.
     "https://magazine.sebastianraschka.com/feed",
     # 2026-09-10: two research feeds REMOVED. bair.berkeley.edu resolves but has not
     # accepted a connection for 16+ days, from the Actions runner or from outside.
@@ -401,7 +402,8 @@ RSS_FEEDS = [
     # Both keep their SOURCE_TIERS and HIDDEN_GEM_SOURCES entries, which still
     # score links to them that arrive through other feeds.
     "https://www.microsoft.com/en-us/research/feed/",
-    "https://vkrakovna.wordpress.com/feed/",
+    # 2026-09-10: vkrakovna.wordpress.com REMOVED on Frederik's call. A few
+    # posts a year; not one usable item in 28 recorded runs.
     "https://www.theregister.com/software/headlines.atom",
     "https://www.theregister.com/headlines.atom",
     # v4.20 (2026-05-15) broad-IT diet expansion — the original 25 feeds
@@ -415,7 +417,11 @@ RSS_FEEDS = [
     "https://lwn.net/headlines/rss",
     "https://krebsonsecurity.com/feed/",
     "https://lobste.rs/rss",
-    "https://hnrss.org/best",
+    # 2026-09-10: hnrss.org/best replaced by Hacker News's own feed. The
+    # third-party hnrss.org blocked the Actions runner on 20 of 28 recorded
+    # fetches; news.ycombinator.com/rss serves the front page, with a pubDate
+    # on every item.
+    "https://news.ycombinator.com/rss",
     # v4.25 (2026-09-03) primary-source vendor blogs — verified live (HTTP 200,
     # valid RSS) 2026-09-03. Closes the gap where flagship model/product launches
     # reached us only second-hand (later, lower-tier), which stacked time-decay
