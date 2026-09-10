@@ -373,7 +373,9 @@ RSS_FEEDS = [
     "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
     "https://deepmind.google/blog/feed/",
     "https://simonwillison.net/atom/everything/",
-    "https://engineering.fb.com/category/ml-ai/feed/",
+    # 2026-09-10: category/ml-ai/feed/ returns 404 (alerting as broken since
+    # 2026-09-04); Meta's AI posts now sit under category/ai-research.
+    "https://engineering.fb.com/category/ai-research/feed/",
     "https://arstechnica.com/tag/ai/feed/",
     # v4.25 (2026-09-03): www.anthropic.com/news.rss REMOVED — it 404s since the
     # claude.com rebrand and claude.com publishes no usable RSS (/blog/rss 404,
@@ -382,15 +384,22 @@ RSS_FEEDS = [
     # consensus until Anthropic republishes a feed. The feed-health alert
     # (check_feed_health_alerts) exists so the next silent feed death surfaces.
     "https://the-decoder.com/feed/",
-    "https://www.deeplearning.ai/the-batch/rss/",
+    # 2026-09-10: deeplearning.ai The Batch REMOVED. /the-batch/rss/ returns 403
+    # to the bot and 404 elsewhere, and no feed URL exists (/the-batch/feed/,
+    # /the-batch/feed.xml, /the-batch/rss.xml, /feed/, /rss.xml all 404).
     "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss",
-    "https://stability.ai/blog?format=rss",
+    # 2026-09-10: /blog?format=rss returns 404; Stability's posts moved to
+    # /news-updates, which serves RSS.
+    "https://stability.ai/news-updates?format=rss",
     "https://siliconangle.com/category/ai/feed",
     # v4.13.0 feed expansion — validated 2026-04-18
     "https://thegradient.pub/rss/",
     "https://magazine.sebastianraschka.com/feed",
-    "https://bair.berkeley.edu/blog/feed.xml",
-    "https://ai.stanford.edu/blog/feed.xml",
+    # 2026-09-10: two research feeds REMOVED. bair.berkeley.edu resolves but has not
+    # accepted a connection for 16+ days, from the Actions runner or from outside.
+    # ai.stanford.edu/blog is reachable, but its newest post is from June 2022.
+    # Both keep their SOURCE_TIERS and HIDDEN_GEM_SOURCES entries, which still
+    # score links to them that arrive through other feeds.
     "https://www.microsoft.com/en-us/research/feed/",
     "https://vkrakovna.wordpress.com/feed/",
     "https://www.theregister.com/software/headlines.atom",

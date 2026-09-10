@@ -32,3 +32,21 @@ def test_new_primary_domains_have_source_tiers():
 
 def test_no_duplicate_feeds():
     assert len(RSS_FEEDS) == len(set(RSS_FEEDS))
+
+
+def test_feeds_found_dead_on_2026_09_10_are_gone_or_replaced():
+    # The first four alerted as "broken" (feed_persistently_unhealthy) on the
+    # 2026-09-10 Curator run; Stanford's blog has not published since 2022.
+    for dead in (
+        "https://engineering.fb.com/category/ml-ai/feed/",  # 404
+        "https://www.deeplearning.ai/the-batch/rss/",       # 403/404, no feed exists
+        "https://stability.ai/blog?format=rss",             # 404
+        "https://bair.berkeley.edu/blog/feed.xml",          # host unreachable 16+ days
+        "https://ai.stanford.edu/blog/feed.xml",            # newest post June 2022
+    ):
+        assert dead not in RSS_FEEDS, dead
+    for replacement in (
+        "https://engineering.fb.com/category/ai-research/feed/",
+        "https://stability.ai/news-updates?format=rss",
+    ):
+        assert replacement in RSS_FEEDS, replacement
