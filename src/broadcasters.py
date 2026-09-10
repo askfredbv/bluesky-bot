@@ -87,9 +87,10 @@ def number_mastodon_thread(
     part 2 arrives above part 1 under a "Continued thread" label, and a reader
     meets the continuation cold. Bluesky's client labels self-threads "1/2",
     "2/2" on its own (the labels are not in our post text), so Bluesky readers
-    already had this and Mastodon readers did not. Measured 2026-09-10: 71 of
-    the last 126 posts were threads, and only 6 of those 71 would fit in one
-    500-char Mastodon post, so collapsing threads is not the fix; numbering is.
+    already had this and Mastodon readers did not. Measured on the Bluesky feed
+    2026-09-10: 145 of 313 root posts were threads (18 of the last 60), and only
+    31 of those 145 would fit in one 500-char Mastodon post, so collapsing
+    threads is not the fix; numbering is.
 
     Call this AFTER ensure_mastodon_source_link and BEFORE apply_mastodon_tags.
     The marker ends the part's text, after an inline source link if there is

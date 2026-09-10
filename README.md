@@ -2,7 +2,7 @@
 
 ![Daily Post](https://github.com/askfredbv/bluesky-bot/actions/workflows/daily_post.yml/badge.svg)
 
-An automated bot that posts to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes. Default shape is a single short post; threads are reserved for the rare cases that genuinely need them.
+An automated bot that posts to **Bluesky** (@askfred.be) and **Mastodon** — twice a day, two different modes. Most posts are a single short post; a story that needs more room becomes a short thread, almost always two parts.
 
 The afternoon run also runs a **pioneer dimension** — curated tech-history facts that fire on anniversaries or probabilistically (~2–3 posts/week). The bar: things a working dev would say "huh, didn't know that" to.
 
@@ -22,7 +22,7 @@ The afternoon run also runs a **pioneer dimension** — curated tech-history fac
 
 ```
 cron-job.org → GitHub Actions (workflow_dispatch)
-  → fetch + score RSS feeds     (src/utils.py)
+  → fetch + score RSS feeds     (src/news.py)
   → generate via Gemini         (src/agents.py)
   → post to Bluesky + Mastodon  (src/broadcasters.py)
   → reply to mentions           (src/agents.py)
@@ -104,7 +104,7 @@ The main levers are in `src/config.py`:
 - **`SYSTEM_INSTRUCTIONS_CURATOR` / `SYSTEM_INSTRUCTIONS_MENTOR`** — the voice and instructions sent to the model
 - **`LANGUAGE_OPTIONS`** — languages the model may pick from (default `["English"]`)
 - **`IMAGE_MODEL`** — image model (default `gemini-3.1-flash-image`)
-- **`IMAGE_GENERATION_PROBABILITY`** — chance of a *generated* image (default `0.85`). Applies to the Mentor/Strategist post image and to the Curator fallback card image used when an article has no OG thumbnail; it never strips an article's own thumbnail.
+- **`IMAGE_GENERATION_PROBABILITY`** — chance of a *generated* image (default `0.85`). Applies to the Mentor/Strategist post image and to the Curator fallback card image used when an article has no usable OG thumbnail; it never strips an article's own thumbnail.
 - **`GEMINI_MODEL_PRIORITY`** — ordered model failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
 - **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; edited quarterly
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed covering the same story
@@ -120,13 +120,17 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 ├── main.py                 # Async orchestrator & pipeline stages
 ├── src/
 │   ├── agents.py           # Content generation, image prompts, mention handling
-│   ├── broadcasters.py     # Bluesky + Mastodon posting (with image compression)
+│   ├── broadcasters.py     # Bluesky + Mastodon posting, per-post retry, Mastodon-only mechanics
 │   ├── bluesky_session.py  # Session-string caching via Gist
 │   ├── proactive.py        # Phase 4b proactive replies (dormant; human-gated)
 │   ├── config.py           # Constants, personas, feeds, scoring, prompts
 │   ├── facets.py           # Bluesky rich-text facets (clickable URLs + hashtags)
 │   ├── metrics.py          # Telemetry: post_metrics / feed_health / growth
-│   ├── utils.py            # RSS fetch, scoring, metadata, state I/O, retry
+│   ├── net_safety.py       # SSRF-guarded fetching: public-IP allowlist, DNS pinning, safe redirects, size cap
+│   ├── news.py             # RSS fetch, relevance scoring, cross-publisher consensus clustering
+│   ├── retry.py            # Rate-limit vs transient classification + backoff budgets
+│   ├── state_store.py      # State I/O: Gist / remote store / local atomic writes (seen, replied-to)
+│   ├── utils.py            # OG-metadata scrape, the shared image compressor, Pillow bomb cap
 │   └── ...                 # file_lock, logger, settings
 ├── scripts/                # One-shot tools: watchlist audit, model discovery, voice audit
 ├── tests/                  # pytest suite
