@@ -701,3 +701,123 @@ async def test_the_bluesky_copy_of_a_thread_is_not_numbered(monkeypatch):
     await broadcasters.post_to_bluesky(DummyAsyncClient(), ["Part one.", "Part two."])
 
     assert sent == ["Part one.", "Part two."]
+
+
+# ---------------------------------------------------------------------------
+# Mastodon source link (freeze audit X6, 2026-09-10).
+#
+# Bluesky shows a Curator post's source as a link card; Mastodon only shows a
+# link that is in the text, and the model usually leaves it out. 4 of the last
+# 5 Curator posts reached Mastodon with no source at all.
+# ---------------------------------------------------------------------------
+
+P = chr(10) * 2  # a paragraph break, spelled without an escape sequence
+SRC = "https://www.theregister.com/software/2026/09/09/edge-ai-extensions/5295185"
+
+
+def test_source_link_is_added_when_the_text_does_not_carry_it():
+    out = broadcasters.ensure_mastodon_source_link(["Review capacity is the bottleneck."], SRC)
+    assert out == ["Review capacity is the bottleneck." + P + SRC]
+
+
+@pytest.mark.parametrize("text", [
+    "Read it: " + SRC,
+    "Read it: " + SRC.replace("https://", "http://"),
+    "Read it: " + SRC + "?utm_source=rss&utm_medium=feed",
+    "Read it: " + SRC + "/",
+    "Read it (" + SRC + ").",
+    "Read it: theregister.com/software/2026/09/09/edge-ai-extensions/5295185",
+])
+def test_a_link_already_in_the_text_is_not_duplicated(text):
+    assert broadcasters.ensure_mastodon_source_link([text], SRC) == [text]
+
+
+def test_arxiv_abs_and_pdf_forms_count_as_the_same_link():
+    text = "The paper: https://arxiv.org/pdf/2609.06391v2"
+    assert broadcasters.ensure_mastodon_source_link([text], "https://arxiv.org/abs/2609.06391") == [text]
+
+
+def test_a_link_in_a_later_part_is_enough():
+    parts = ["Part one.", "Part two, source: " + SRC]
+    assert broadcasters.ensure_mastodon_source_link(parts, SRC) == parts
+
+
+@pytest.mark.parametrize("source", [None, "", "   "])
+def test_no_source_means_no_change(source):
+    assert broadcasters.ensure_mastodon_source_link(["A mentor post."], source) == ["A mentor post."]
+
+
+def test_a_link_that_would_overflow_is_skipped_and_logged(monkeypatch):
+    warned = []
+    monkeypatch.setattr(broadcasters.SafeLogger, "warn", lambda event, *a, **k: warned.append(event))
+    root = "x" * 300
+    long_url = "https://example.com/" + "a" * 250
+    assert broadcasters.ensure_mastodon_source_link([root], long_url, max_length=500) == [root]
+    assert warned == ["mastodon_source_link_too_long"]
+
+
+def test_link_then_marker_then_tags_on_a_thread():
+    """The link joins the root as its own paragraph, the marker ends the part's
+    text, and the tags stay a hashtag-only final paragraph."""
+    parts = broadcasters.ensure_mastodon_source_link(["Prose.", "Part two."], SRC)
+    parts = broadcasters.number_mastodon_thread(parts)
+    parts = broadcasters.apply_mastodon_tags(parts, ["#AI", "#Security"])
+    assert parts == ["Prose." + P + SRC + " 1/2" + P + "#AI #Security", "Part two. 2/2"]
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_carries_the_source_link(monkeypatch):
+    sent = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
+            sent.append(status)
+            return {"id": str(len(sent))}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example", ["Prose."], tags=["#AI"], source_url=SRC,
+    )
+
+    assert sent == ["Prose." + P + SRC + P + "#AI"]
+
+
+@pytest.mark.asyncio
+async def test_the_bluesky_text_is_not_given_the_link(monkeypatch):
+    """Bluesky already shows the source as a card; its text stays as generated."""
+    sent = []
+
+    class FakeUpload:
+        blob = None
+
+    class FakePost:
+        cid = "bafyreid"
+        uri = "at://did:plc:test/app.bsky.feed.post/1"
+
+    class DummyAsyncClient:
+        async def upload_blob(self, data):
+            return FakeUpload()
+
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
+            sent.append(text)
+            return FakePost()
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_bluesky(
+        DummyAsyncClient(), ["Prose."],
+        {"title": "T", "description": "", "image_data": None, "url": SRC},
+    )
+
+    assert sent == ["Prose."]

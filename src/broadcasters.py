@@ -3,6 +3,7 @@ import io
 import random
 import re
 import uuid
+from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
@@ -12,6 +13,7 @@ from src.config import (
     MAX_HASHTAGS_PER_POST,
 )
 from src.utils import classify_retry, sleep_for_rate_limit, sleep_for_transient
+from src.net_safety import canonical_url
 from src.logger import SafeLogger
 from src.facets import build_facets
 from src.metrics import BroadcastResult
@@ -88,9 +90,10 @@ def number_mastodon_thread(
     the last 126 posts were threads, and only 6 of those 71 would fit in one
     500-char Mastodon post, so collapsing threads is not the fix; numbering is.
 
-    Call this BEFORE apply_mastodon_tags. The marker belongs to the prose
-    ("... cover. 1/2"), and the tags must stay a paragraph of their own so
-    Mastodon's web client still lifts them into its hashtag bar.
+    Call this AFTER ensure_mastodon_source_link and BEFORE apply_mastodon_tags.
+    The marker ends the part's text, after an inline source link if there is
+    one, and the tags must stay a paragraph of their own so Mastodon's web
+    client still lifts them into its hashtag bar.
 
     Not a teaser (AGENTS.md #1 bans 🧵 and "thread incoming"): those announce
     parts that do not exist yet, while this labels a thread that is complete
@@ -108,6 +111,74 @@ def number_mastodon_thread(
     if any(len(part) > max_length for part in numbered):
         return list(content_list)
     return numbered
+
+
+# The Curator's source link on Mastodon (2026-09-10, freeze audit X6). Same
+# separator the model uses when it does inline a link: a paragraph of its own.
+_MASTODON_LINK_SEPARATOR = _MASTODON_TAG_SEPARATOR
+_URL_TRAILING = '.,;:!?)]}"' + "'"
+
+
+def _text_mentions_url(text: str, source_url: str) -> bool:
+    """True if ``text`` already carries ``source_url`` in any common form.
+
+    Compared canonically, so http/https, tracking parameters, a trailing slash
+    and arXiv abs/pdf/version forms all count as the same link. A bare host/path
+    mention without a scheme counts too.
+    """
+    target = canonical_url(source_url)
+    for token in text.split():
+        candidate = token.lstrip("(<[").rstrip(_URL_TRAILING)
+        if candidate.startswith(("http://", "https://")) and canonical_url(candidate) == target:
+            return True
+    parsed = urlparse(source_url.strip())
+    bare = (parsed.netloc + parsed.path).rstrip("/").lower()
+    if bare.startswith("www."):
+        bare = bare[4:]
+    return bool(bare) and bare in text.lower()
+
+
+def ensure_mastodon_source_link(
+    content_list: List[str],
+    source_url: Optional[str],
+    max_length: int = MAX_POST_LENGTH_MASTODON,
+) -> List[str]:
+    """Make sure a Curator post's source link reaches Mastodon readers.
+
+    Bluesky shows the source as a link card built from ``link_meta``, so the
+    generated text does not need to contain the URL there. Mastodon can only
+    show a link that is in the text. The Curator prompt asks for "THE LINK at
+    the end", but nothing enforced it, and the live feed showed the result:
+    4 of the last 5 Curator posts (2026-09-06 to 09-09) reached Mastodon with no
+    link to the source at all, while Bluesky readers got a card each time.
+    AGENTS.md #7 forbids exactly that divergence (no different link); the card
+    versus a URL in the text is its permitted "embed shape" difference.
+
+    Appends ``source_url`` to the root as its own paragraph when no part of the
+    thread already carries it. Runs before number_mastodon_thread and
+    apply_mastodon_tags. It is the same URL the Bluesky card carries, so it adds
+    no claim the post does not already make.
+
+    Declines rather than overflow: if the root plus the link would breach
+    ``max_length`` the thread ships as generated and the skip is logged. The
+    broadcast is never dropped for the sake of the link.
+    """
+    if not content_list or not source_url or not source_url.strip():
+        return list(content_list)
+    url = source_url.strip()
+    if any(_text_mentions_url(part, url) for part in content_list):
+        return list(content_list)
+    root = content_list[0].rstrip() + _MASTODON_LINK_SEPARATOR + url
+    if len(root) > max_length:
+        SafeLogger.warn(
+            "mastodon_source_link_too_long",
+            "Source link would overflow the Mastodon root; shipping without it",
+            platform="mastodon",
+            root_length=len(content_list[0]),
+            url_length=len(url),
+        )
+        return list(content_list)
+    return [root] + list(content_list[1:])
 
 
 def _detect_image_mime(data: bytes) -> str:
@@ -393,6 +464,7 @@ async def post_to_mastodon(
     image_bytes: Optional[bytes] = None,
     thread_pause_profile: str = DEFAULT_THREAD_PAUSE_PROFILE,
     tags: Optional[List[str]] = None,
+    source_url: Optional[str] = None,
 ):
     """Async-wrapped broadcaster for Mastodon.
 
@@ -410,15 +482,22 @@ async def post_to_mastodon(
     post before the length invariant runs, so the check sees the text that
     actually ships. The generated content itself is untouched and identical
     to Bluesky's — see ``apply_mastodon_tags`` and AGENTS.md principle 7.
+
+    2026-09-10: ``source_url`` is the link the Bluesky card carries. Mastodon
+    has no card for it, so ``ensure_mastodon_source_link`` puts it in the root
+    text when the generated text does not already include it.
     """
     if not access_token:
         return BroadcastResult(client=None, sent_uris=[], error=None)
 
-    # Tags first: the invariant must measure the text we are about to send,
-    # not the pre-append copy. apply_mastodon_tags already sheds tags rather
-    # than overflow, so this should never be what trips the check.
-    # Number first, so the "1/2" marker stays with the prose and the discovery
-    # tags remain a hashtag-only paragraph of their own (see both docstrings).
+    # Mastodon-only mechanics, in this order, all BEFORE the length invariant so
+    # it measures the text that actually ships:
+    #   1. the Curator's source link, when the text does not already carry it;
+    #   2. "1/2" thread-position markers;
+    #   3. discovery tags last, so they stay a hashtag-only final paragraph that
+    #      Mastodon lifts into its tag bar.
+    # Each step declines rather than overflow, so none should trip the check.
+    content_list = ensure_mastodon_source_link(content_list, source_url)
     content_list = number_mastodon_thread(content_list)
     if tags:
         content_list = apply_mastodon_tags(content_list, tags)

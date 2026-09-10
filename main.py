@@ -449,6 +449,10 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             image_bytes=image_bytes or curator_fallback_image,
             thread_pause_profile=thread_pause_profile,
             tags=tags,
+            # The same link the Bluesky card carries. Bluesky shows it as a card;
+            # Mastodon only gets it if it is in the text, and the model usually
+            # leaves it out (4 of the last 5 Curator posts, measured 2026-09-10).
+            source_url=link_meta.get("url") if link_meta else None,
         )
 
     broadcast_tasks.append(_tag_and_post_mastodon())
