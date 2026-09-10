@@ -86,6 +86,7 @@ def _ask_gemini(api_key: str, headlines: list[str]) -> list[str]:
     next model. Returns [] if the whole chain fails.
     """
     from google import genai
+    from google.genai import types as genai_types
 
     client = genai.Client(api_key=api_key)
     task = _PROMPT.format(headlines="\n".join(headlines))
@@ -94,7 +95,7 @@ def _ask_gemini(api_key: str, headlines: list[str]) -> list[str]:
             # Pin thinking budget (canonical rule from agents.py): the 3.x/2.5
             # chain runs thinking by default, which would eat the 512-token cap
             # and can return empty output. None => send no thinking_config.
-            config: dict = {"max_output_tokens": 512}
+            config: genai_types.GenerateContentConfigDict = {"max_output_tokens": 512}
             budget = _thinking_budget_for(model)
             if budget is not None:
                 config["thinking_config"] = {"thinking_budget": budget}

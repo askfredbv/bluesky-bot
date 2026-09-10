@@ -537,10 +537,13 @@ async def _run() -> int:
         # the API base) or an under-scoped token fails opaquely once per
         # candidate with the instance's HTML landing page in the exception
         # body. One clear preflight failure beats five obscure ones.
+        # False only when the preflight fails; the candidates are then already
+        # recorded as skipped, so nothing below touches the client.
+        preflight_ok = True
         try:
             account = await asyncio.to_thread(masto.account_verify_credentials)
-            handle = account.get("acct") if isinstance(account, dict) else getattr(account, "acct", None)
-            print(f"[mastodon] preflight ok — token belongs to @{handle}")
+            preflight_acct = account.get("acct") if isinstance(account, dict) else getattr(account, "acct", None)
+            print(f"[mastodon] preflight ok — token belongs to @{preflight_acct}")
         except Exception as exc:
             print(f"[error] Mastodon preflight failed: {_format_error(exc)}")
             print(
@@ -557,9 +560,9 @@ async def _run() -> int:
                     platform="mastodon", handle=handle,
                     error=f"preflight failed: {_format_error(exc)}",
                 ))
-            masto = None
+            preflight_ok = False
 
-        if masto is None:
+        if not preflight_ok:
             pass  # candidates already populated as skipped above
         else:
             for handle in MASTODON_CANDIDATES:

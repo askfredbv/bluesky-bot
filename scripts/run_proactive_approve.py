@@ -125,7 +125,9 @@ async def _run() -> int:
         # data and an explicit do-not-rerun instruction. A reject (or a
         # failed approve that never posted) carries no double-post risk, so
         # it gets the generic save-failure log.
-        posted_uri = result.get("posted_uri") if isinstance(result, dict) else None
+        # Narrowed once, visibly: result is None when no draft matched.
+        posted_entry = result if isinstance(result, dict) else {}
+        posted_uri = posted_entry.get("posted_uri")
         if action == "approve" and posted_uri:
             # Log the RESOLVED draft UUID from the posted entry, not the input
             # selector — which is "first" by default (the workflow default) and
@@ -137,9 +139,9 @@ async def _run() -> int:
                 "Reply WAS POSTED but state did not persist — DO NOT re-run "
                 "approval until pending_replies.json is repaired, or the reply "
                 "will double-post",
-                draft_id=result.get("id", draft_id),
+                draft_id=posted_entry.get("id", draft_id),
                 posted_uri=posted_uri,
-                parent_author=result.get("parent_author", ""),
+                parent_author=posted_entry.get("parent_author", ""),
             )
         else:
             SafeLogger.error(
