@@ -14,11 +14,10 @@ from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
 )
-from src.utils import (
-    load_seen_articles, update_seen_articles, fetch_news,
-    get_link_metadata, prune_pioneer_recent, canonical_url, compress_image,
-    is_usable_image,
-)
+from src.utils import get_link_metadata, compress_image, is_usable_image
+from src.state_store import load_seen_articles, update_seen_articles, prune_pioneer_recent
+from src.news import fetch_news
+from src.net_safety import canonical_url
 from src.agents import (
     generate_content, handle_interactions, generate_post_image,
     filter_available_models, select_pioneer_topic, generate_mastodon_tags,

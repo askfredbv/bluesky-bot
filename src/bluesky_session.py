@@ -20,7 +20,7 @@ from src.logger import SafeLogger
 # Import the private Gist helpers directly — the session file is a plain
 # string value wrapped in a single-key dict to stay consistent with the
 # JSON structure the other state files use.
-from src.utils import _load_gist_state, _save_gist_state
+from src.state_store import _load_gist_state, _save_gist_state
 
 _SESSION_FILENAME = "bluesky_session.json"
 

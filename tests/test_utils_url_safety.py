@@ -5,8 +5,8 @@ import httpx
 import pytest
 
 from src import net_safety
-from src.utils import get_with_safe_redirects
-from src.utils import is_safe_public_url
+from src.net_safety import get_with_safe_redirects
+from src.net_safety import is_safe_public_url
 
 
 def test_is_safe_public_url_rejects_non_http_scheme():

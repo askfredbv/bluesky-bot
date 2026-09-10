@@ -7,61 +7,15 @@ from src.config import (
     GENERIC_IMAGE_PATTERNS,
 )
 from src.logger import SafeLogger
-# Backward-compat re-export: news domain logic moved to src.news.
-from src.news import (  # noqa: F401
-    _publisher_domain,
-    _title_tokens,
-    _titles_cluster,
-    annotate_cross_publisher_consensus,
-    calculate_relevance_score,
-    fetch_single_feed,
-    fetch_news,
-)
-# Backward-compat re-export: retry/backoff moved to src.retry.
-from src.retry import (  # noqa: F401
-    classify_retry,
-    _parse_retry_after_header,
-    _parse_ratelimit_reset_header,
-    _extract_rate_limit_wait,
-    sleep_for_rate_limit,
-    sleep_for_transient,
-    retry_with_backoff,
-)
-# Backward-compat re-export: SSRF/URL-safety moved to src.net_safety.
-from src.net_safety import (  # noqa: F401
-    canonical_url,
-    normalise_url,
-    is_safe_public_url,
-    _is_public_ip,
-    _resolve_public_ip_candidates,
-    _hostname_matches_policy,
-    is_allowed_metadata_fetch_url,
-    _resolver_pinned_to_ips,
+# get_link_metadata uses these four. After the #81-#84 split this module also
+# re-exported ~40 names from news, retry, net_safety and state_store so old
+# callers kept working; every caller now imports from the real home and the
+# shim is gone (freeze audit C2, 2026-09-10). Import from those modules directly.
+from src.net_safety import (
     get_with_safe_redirects,
-    _resolver_pin_lock,
-)
-# Backward-compat re-export: state IO moved to src.state_store; these names
-# stay importable from src.utils for existing callers.
-from src.state_store import (  # noqa: F401
-    _state_store_url_for_key,
-    _state_store_headers,
-    _load_state_from_store,
-    _save_state_to_store,
-    _load_gist_state_strict,
-    _load_gist_state,
-    _save_gist_state,
-    _atomic_write_json,
-    _load_json_with_repair,
-    _file_lock,
-    _ensure_pioneer_field,
-    prune_pioneer_recent,
-    load_seen_articles,
-    save_seen_articles,
-    load_replied_to,
-    save_replied_to,
-    update_seen_articles,
-    update_replied_to,
-    STATE_STORE_TIMEOUT_SECONDS,
+    is_allowed_metadata_fetch_url,
+    is_safe_public_url,
+    normalise_url,
 )
 
 # Decompression-bomb guard (process-wide Pillow setting). The bot opens remote,

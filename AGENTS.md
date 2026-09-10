@@ -46,7 +46,8 @@ for the hard-won context before proposing structural changes.
    `pending_replies.json`) must stay isolated from the daily Curator/Mentor path: **no
    imports from `main.py` into `src/proactive.py`**, no shared state file, no code path
    where disabling Phase 4b breaks the daily post. Flag any wiring that tangles them — the
-   fix is to refactor the shared piece into `src/utils.py`, not to cross the boundary.
+   fix is to move the shared piece into a shared module under `src/` (state I/O lives in
+   `src/state_store.py`), not to cross the boundary.
 
 6. **Outward actions stay human-gated.** Proactive replies never post unattended — the
    scan only *stages* drafts; a human approves via manual `workflow_dispatch`. The reply

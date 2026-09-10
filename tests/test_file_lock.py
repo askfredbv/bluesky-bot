@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from src import file_lock, utils
+from src import file_lock, state_store
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX-only lock backend test")
@@ -50,7 +50,7 @@ def test_windows_backend_uses_msvcrt_locking_for_acquire_and_release(monkeypatch
     ]
 
 
-def test_utils_file_lock_acquires_and_releases_with_active_backend(monkeypatch, tmp_path: Path):
+def test_state_store_file_lock_acquires_and_releases_with_active_backend(monkeypatch, tmp_path: Path):
     class _FakeBackend:
         def __init__(self):
             self.acquire_calls = 0
@@ -69,7 +69,7 @@ def test_utils_file_lock_acquires_and_releases_with_active_backend(monkeypatch, 
     monkeypatch.setattr(file_lock, "_BACKEND", fake_backend)
 
     lock_path = tmp_path / "nested" / "runtime_state.lock"
-    with utils._file_lock(lock_path):
+    with state_store._file_lock(lock_path):
         assert lock_path.parent.exists()
 
     assert fake_backend.acquire_calls == 1
