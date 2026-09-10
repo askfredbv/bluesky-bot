@@ -33,8 +33,16 @@ on:
         default: 'manual'
         type: string
 
+# ONE concurrency group, shared with proactive_scan.yml (ledger X7). Both read
+# pending_replies.json from the state Gist and write the whole file back with
+# no compare-and-swap; overlapping, a scan could write back state it loaded
+# before this approval finished and resurrect the approved draft. Not scoped
+# per ref, because the Gist file is global. cancel-in-progress stays false so
+# an approval is never cut off after posting but before recording it. GitHub
+# keeps at most one PENDING run per group: a third trigger while one runs and
+# one waits cancels the waiting one (shown as "cancelled"; re-run it).
 concurrency:
-  group: proactive-approve-${{ github.ref }}
+  group: pending-replies-state
   cancel-in-progress: false
 
 jobs:

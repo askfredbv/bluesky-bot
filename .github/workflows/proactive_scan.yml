@@ -16,8 +16,16 @@ name: Proactive Reply Scan
 on:
   workflow_dispatch:
 
+# ONE concurrency group, shared with approve_pending_reply.yml (ledger X7).
+# Both read pending_replies.json from the state Gist and write the whole file
+# back with no compare-and-swap, so they must never overlap: a scan that loaded
+# state before an approval finished would write it back and resurrect the
+# approved draft. Not scoped per ref, because the Gist file is global.
+# cancel-in-progress stays false so a running write is never cut off. GitHub
+# keeps at most one PENDING run per group: a third trigger while one runs and
+# one waits cancels the waiting one (shown as "cancelled"; state is untouched).
 concurrency:
-  group: proactive-scan-${{ github.ref }}
+  group: pending-replies-state
   cancel-in-progress: false
 
 jobs:
