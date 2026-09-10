@@ -53,6 +53,10 @@ py-modules = []
 # errors locally against 0 in CI. Config belongs where both read it.
 files = ["src", "main.py", "scripts"]
 ignore_missing_imports = true
+# Without this, mypy skips the BODY of any function that has no annotations,
+# so the gate was blind inside them. Turning it on found zero errors
+# (2026-09-10); it is here to keep it that way.
+check_untyped_defs = true
 
 # scripts/ joined the gate on 2026-09-10 (ledger F2b) once its five errors were
 # fixed. None was a runtime bug: two were an isinstance narrowing mypy could not
