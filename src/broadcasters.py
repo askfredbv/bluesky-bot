@@ -74,6 +74,42 @@ def apply_mastodon_tags(
     return list(content_list)
 
 
+def number_mastodon_thread(
+    content_list: List[str],
+    max_length: int = MAX_POST_LENGTH_MASTODON,
+) -> List[str]:
+    """Return a multi-part thread with "1/2", "2/2" ... appended to each part.
+
+    Mastodon lists a self-thread newest-first, so in a profile or home timeline
+    part 2 arrives above part 1 under a "Continued thread" label, and a reader
+    meets the continuation cold. Bluesky's client labels self-threads "1/2",
+    "2/2" on its own (the labels are not in our post text), so Bluesky readers
+    already had this and Mastodon readers did not. Measured 2026-09-10: 71 of
+    the last 126 posts were threads, and only 6 of those 71 would fit in one
+    500-char Mastodon post, so collapsing threads is not the fix; numbering is.
+
+    Call this BEFORE apply_mastodon_tags. The marker belongs to the prose
+    ("... cover. 1/2"), and the tags must stay a paragraph of their own so
+    Mastodon's web client still lifts them into its hashtag bar.
+
+    Not a teaser (AGENTS.md #1 bans 🧵 and "thread incoming"): those announce
+    parts that do not exist yet, while this labels a thread that is complete
+    when its first part goes out. It carries no content of its own, which is
+    what lets it clear the appended-after-validation bar in AGENTS.md #7.
+
+    Single posts come back unchanged. All-or-nothing: if numbering any part
+    would breach ``max_length`` the thread ships unnumbered, because one part
+    missing its label reads worse than none having one.
+    """
+    total = len(content_list)
+    if total < 2:
+        return list(content_list)
+    numbered = [f"{part.rstrip()} {i}/{total}" for i, part in enumerate(content_list, start=1)]
+    if any(len(part) > max_length for part in numbered):
+        return list(content_list)
+    return numbered
+
+
 def _detect_image_mime(data: bytes) -> str:
     """Detect MIME type from image bytes via Pillow; default to PNG."""
     try:
@@ -381,6 +417,9 @@ async def post_to_mastodon(
     # Tags first: the invariant must measure the text we are about to send,
     # not the pre-append copy. apply_mastodon_tags already sheds tags rather
     # than overflow, so this should never be what trips the check.
+    # Number first, so the "1/2" marker stays with the prose and the discovery
+    # tags remain a hashtag-only paragraph of their own (see both docstrings).
+    content_list = number_mastodon_thread(content_list)
     if tags:
         content_list = apply_mastodon_tags(content_list, tags)
 

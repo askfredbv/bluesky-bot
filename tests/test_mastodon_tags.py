@@ -646,8 +646,12 @@ async def test_post_to_mastodon_sends_tagged_root_and_reports_it(monkeypatch):
         tags=["#LLM", "#Python"],
     )
 
-    assert instances[0].posted == ["a note\n\n#LLM #Python", "second"]
-    assert result.delivered_texts == ["a note\n\n#LLM #Python", "second"]
+    # Thread parts now carry a Mastodon-only position marker, placed before the
+    # tags (number_mastodon_thread). The point is unchanged: delivered_texts
+    # records the text actually sent, marker and tags included.
+    sent = ["a note 1/2\n\n#LLM #Python", "second 2/2"]
+    assert instances[0].posted == sent
+    assert result.delivered_texts == sent
 
 
 @pytest.mark.asyncio
