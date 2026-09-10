@@ -1,6 +1,6 @@
 import pytest
 
-from src.agents import generate_content, handle_interactions, _truncate_for_platform, _sync_generate, generate_post_image, _build_generate_kwargs, _validate_thread_shape
+from src.agents import generate_content, handle_interactions, _fit_reply, _sync_generate, generate_post_image, _build_generate_kwargs, _validate_thread_shape
 from src import agents
 from src.config import REPLY_MAX_CHARS
 
@@ -217,13 +217,33 @@ async def test_curator_recovers_when_retry_supplies_url(monkeypatch):
     assert chosen_link == "https://example.com/chosen"
 
 
-def test_truncate_for_platform_enforces_limit():
-    text = "x" * (REPLY_MAX_CHARS + 40)
-    assert len(_truncate_for_platform(text, REPLY_MAX_CHARS)) == REPLY_MAX_CHARS
+def test_fit_reply_leaves_a_reply_that_fits_alone():
+    assert _fit_reply("  Short and complete.  ", REPLY_MAX_CHARS) == "Short and complete."
+
+
+def test_fit_reply_cuts_after_the_last_complete_sentence_that_fits():
+    reply = "First point stands. Second point stands too. " + "More words " * 40
+    assert _fit_reply(reply, 60) == "First point stands. Second point stands too."
+
+
+def test_fit_reply_never_ends_mid_word():
+    """The old truncator returned the first `limit` chars, so a reply like this
+    went out ending in the middle of a word, on someone else's thread."""
+    reply = "The first answer is short. " + "And the second one is about something long " * 10
+    assert _fit_reply(reply, REPLY_MAX_CHARS) == "The first answer is short."
+
+
+def test_fit_reply_does_not_treat_decimals_or_domains_as_sentence_ends():
+    reply = "Gemini 3.5 on example.com is the one " + "x" * REPLY_MAX_CHARS
+    assert _fit_reply(reply, REPLY_MAX_CHARS) == ""
+
+
+def test_fit_reply_returns_empty_when_no_complete_sentence_fits():
+    assert _fit_reply("z" * (REPLY_MAX_CHARS + 30), REPLY_MAX_CHARS) == ""
 
 
 @pytest.mark.asyncio
-async def test_handle_interactions_truncates_reply_and_applies_delay(monkeypatch):
+async def test_handle_interactions_fits_reply_at_a_sentence_and_applies_delay(monkeypatch):
     sent_posts = []
     sleep_calls = []
     replied_state = []
@@ -271,13 +291,72 @@ async def test_handle_interactions_truncates_reply_and_applies_delay(monkeypatch
     monkeypatch.setattr("src.agents.random.random", lambda: 0.95)
     monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
     monkeypatch.setattr("src.agents.asyncio.sleep", no_sleep)
-    monkeypatch.setattr("src.agents._sync_generate", lambda *_args, **_kwargs: "z" * (REPLY_MAX_CHARS + 30))
+    overlong = "A complete first sentence. " * 20
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_args, **_kwargs: overlong)
 
     await handle_interactions(DummyClient(), "fake-key")
 
+    # This used to assert the reply was exactly REPLY_MAX_CHARS long, which is
+    # what a mid-word slice produces. It now asserts the opposite: the reply is
+    # within the limit AND ends on a complete sentence.
     assert sent_posts
-    assert len(sent_posts[0]["text"]) == REPLY_MAX_CHARS
+    sent = sent_posts[0]["text"]
+    assert len(sent) <= REPLY_MAX_CHARS
+    assert sent.endswith(".")
+    assert overlong.startswith(sent)
     assert sleep_calls == [0.0]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_with_no_complete_sentence_in_the_limit_is_not_posted(monkeypatch):
+    """Rather than post a fragment on someone else's thread, skip the reply. The
+    mention is still recorded as handled, like the cadence skip, so a model that
+    keeps overshooting cannot make every run retry it."""
+    sent_posts = []
+    replied_state = []
+    events = []
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.SafeLogger.warn", lambda event, *_a, **_k: events.append(event))
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)  # never skip
+    monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "z" * (REPLY_MAX_CHARS + 30))
+
+    await handle_interactions(_client_for([_mention("at://mention/1")], sent_posts), "fake-key")
+
+    assert sent_posts == []
+    assert replied_state == ["at://mention/1"]
+    assert "mention_reply_skipped_unfit" in events
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_is_not_posted(monkeypatch):
+    """_sync_generate returns "" on a content-filter refusal. The old code sent
+    that straight to send_post as an empty reply."""
+    sent_posts = []
+    replied_state = []
+
+    def fake_update_replied_to(mutator):
+        nonlocal replied_state
+        replied_state = mutator(replied_state)
+        return replied_state
+
+    monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
+    monkeypatch.setattr("src.agents.random.random", lambda: 0.95)  # never skip
+    monkeypatch.setattr("src.agents.random.uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
+    monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "")
+
+    await handle_interactions(_client_for([_mention("at://mention/1")], sent_posts), "fake-key")
+
+    assert sent_posts == []
+    assert replied_state == ["at://mention/1"]
 
 
 @pytest.mark.asyncio
