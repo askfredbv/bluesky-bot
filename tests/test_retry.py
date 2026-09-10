@@ -283,3 +283,57 @@ async def test_retry_429_uses_x_ratelimit_reset_header(monkeypatch):
     await retry.sleep_for_rate_limit(1, Fake429Error())
 
     assert sleep_calls[0] == pytest.approx(75.0, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Header forms the 2026-09-10 mutation run found untested
+# ---------------------------------------------------------------------------
+
+def _pin_now(monkeypatch):
+    pinned_now = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
+
+    class FakeDatetime:
+        @classmethod
+        def now(cls, tz=None):
+            return pinned_now
+
+        @classmethod
+        def fromisoformat(cls, s):
+            return datetime.fromisoformat(s)
+
+    monkeypatch.setattr(retry, "datetime", FakeDatetime)
+    return pinned_now
+
+
+def test_ratelimit_reset_small_number_is_seconds_until_reset():
+    # Below 1e9 the value is read as seconds-until-reset, not as an epoch.
+    assert retry._parse_ratelimit_reset_header("30") == 30.0
+
+
+def test_ratelimit_reset_negative_seconds_clamp_to_zero():
+    assert retry._parse_ratelimit_reset_header("-5") == 0.0
+
+
+def test_ratelimit_reset_epoch_in_the_past_clamps_to_zero(monkeypatch):
+    pinned_now = _pin_now(monkeypatch)
+    assert retry._parse_ratelimit_reset_header(str(pinned_now.timestamp() - 60)) == 0.0
+
+
+def test_ratelimit_reset_iso_without_timezone_is_read_as_utc(monkeypatch):
+    _pin_now(monkeypatch)
+    assert retry._parse_ratelimit_reset_header("2026-04-22T12:02:00") == pytest.approx(120.0, abs=1.0)
+
+
+def test_retry_after_http_date_with_unknown_zone_is_read_as_utc(monkeypatch):
+    # RFC 5322 "-0000" means "zone unknown": parsedate_to_datetime returns a
+    # naive datetime for it, which must not crash the subtraction.
+    _pin_now(monkeypatch)
+    assert retry._parse_retry_after_header("Wed, 22 Apr 2026 12:01:00 -0000") == pytest.approx(60.0, abs=1.0)
+
+
+def test_retry_after_is_found_under_a_title_case_header_name():
+    # A plain dict keyed "Retry-After", not a case-insensitive mapping.
+    class FakeResponse:
+        headers = {"Retry-After": "45"}
+
+    assert retry._extract_rate_limit_wait(FakeResponse()) == 45.0

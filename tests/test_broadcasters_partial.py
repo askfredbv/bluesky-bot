@@ -290,3 +290,61 @@ async def test_mastodon_successful_thread_emits_no_partial_delivery(monkeypatch)
     assert result.error is None
     assert result.sent_uris == ["1000", "2000"]
     assert not any(e["event"] == "mastodon_partial_delivery" for e in events)
+
+
+# ---------------------------------------------------------------------------
+# Mastodon: 429 mid-thread uses the rate-limit path and shared budget.
+# The Bluesky twin is above. The 2026-09-10 mutation run found this path had
+# no test: negating the rate-limit branch, or deleting its sleep, survived.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_mastodon_rate_limit_exhausts_shared_budget(monkeypatch):
+    events = _capture_logger(monkeypatch)
+    sleep_seconds: List[float] = []
+
+    async def fake_sleep(seconds):
+        sleep_seconds.append(seconds)
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(broadcasters, "_sample_thread_pause", lambda _profile: 0.0)
+
+    call_log: List[str] = []
+    id_counter = {"n": 0}
+
+    class DummyMastodon:
+        def __init__(self, *a, **kw):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
+            call_log.append(status)
+            # Fail fast rather than hang if a regression stops the rate-limit
+            # budget from ending the loop: this error takes the transient path,
+            # whose own budget does end it, and the count assertions then fail.
+            if len(call_log) > 20:
+                raise AssertionError("the retry loop never gave up")
+            if status.startswith("post-2"):
+                raise _FakeRateLimitError(retry_after="65")
+            id_counter["n"] += 1
+            return {"id": id_counter["n"] * 1000}
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+
+    result = await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example", ["post-1", "post-2", "post-3"]
+    )
+
+    def sent(part: str) -> int:
+        return sum(1 for s in call_log if s.startswith(part))
+
+    assert sent("post-1") == 1
+    assert sent("post-2") == RATE_LIMIT_MAX_RETRIES + 1
+    assert sent("post-3") == 0
+    # The rate-limit path honours Retry-After (65s); the transient path would
+    # sleep a few seconds instead.
+    assert [s for s in sleep_seconds if s > 0] == [65.0] * RATE_LIMIT_MAX_RETRIES
+
+    assert isinstance(result.error, _FakeRateLimitError)
+    partials = [e for e in events if e["event"] == "mastodon_partial_delivery"]
+    assert len(partials) == 1
+    assert partials[0]["posted"] == 1
