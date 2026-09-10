@@ -51,14 +51,12 @@ py-modules = []
 # command line, so a contributor running `mypy` locally checked a different set
 # of files with different flags and got a different answer than the gate — 24
 # errors locally against 0 in CI. Config belongs where both read it.
-files = ["src", "main.py"]
+files = ["src", "main.py", "scripts"]
 ignore_missing_imports = true
 
-# NOT yet in the gate: scripts/. Running the same flags over it reports 5 real
-# errors, including two `Item "None" ... has no attribute "get"` in
-# scripts/run_proactive_approve.py, which is on the human-approval path for
-# proactive replies. Widening the gate means fixing those first — a code change,
-# not a config change, so it is tracked separately rather than bundled here.
+# scripts/ joined the gate on 2026-09-10 (ledger F2b) once its five errors were
+# fixed. None was a runtime bug: two were an isinstance narrowing mypy could not
+# carry through a second variable, three were loose or reused annotations.
 
 # Lockfiles (pinned, generated — do not hand-edit):
 #   requirements.txt      = runtime only  -> pip-compile pyproject.toml
