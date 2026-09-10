@@ -80,9 +80,33 @@ def _sanitize_mention(text: str) -> str:
     # Keep an explicit hard cap to avoid oversized prompt payloads.
     return clean[:MENTION_SANITIZE_MAX_CHARS]
 
-def _truncate_for_platform(text: str, limit: int) -> str:
-    """Trim outgoing text to platform-safe limit."""
-    return text.strip()[:limit]
+# A sentence ends at . ! or ? (optionally closed by a quote or bracket) that is
+# followed by whitespace or the end of the text, so "3.5" and "example.com" are
+# not sentence ends.
+_SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*(?=\s|$)")
+
+
+def _fit_reply(text: str, limit: int) -> str:
+    """Fit a mention reply into ``limit`` chars without cutting it mid-sentence.
+
+    Returns the reply unchanged if it fits, otherwise the longest run of
+    complete sentences that does, or "" if not even the first sentence fits.
+    The caller skips a "" reply rather than posting a fragment.
+
+    This replaced ``_truncate_for_platform``, a plain ``[:limit]`` slice that
+    cut an overlong reply mid-word and posted it on someone else's thread: a
+    bot tell. Posts get the same guarantee a different way: an overlong post is
+    rejected and regenerated (``_validate_thread_shape``), never cut.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = 0
+    for match in _SENTENCE_END.finditer(text):
+        if match.end() > limit:
+            break
+        cut = match.end()
+    return text[:cut].rstrip()
 
 def _sample_reply_delay_seconds() -> float:
     """Sample a realistic mention-reply delay."""
@@ -1700,8 +1724,25 @@ async def handle_interactions(client: Any, api_key: str) -> None:
                 _sync_generate, api_key, reply_system, reply_task, GEMINI_MODEL_PRIORITY[0]
             )
             
+            reply_text = _fit_reply(ai_reply, REPLY_MAX_CHARS)
+            if not reply_text:
+                # Empty (a content-filter refusal comes back as "") or no complete
+                # sentence within the limit. Recorded as handled, like the cadence
+                # skip above, so a model that keeps overshooting on one mention
+                # cannot make every run retry it.
+                SafeLogger.warn(
+                    "mention_reply_skipped_unfit",
+                    "Reply was empty or had no complete sentence within the limit; not posted",
+                    platform="bluesky",
+                    mention_uri=mention.uri,
+                    reply_length=len(ai_reply),
+                )
+                replied_to.add(mention.uri)
+                _record_handled_mention(mention.uri)
+                continue
+
             await client.send_post(
-                text=_truncate_for_platform(ai_reply, REPLY_MAX_CHARS),
+                text=reply_text,
                 reply_to={'parent': {'cid': mention.cid, 'uri': mention.uri}, 'root': {'cid': mention.cid, 'uri': mention.uri}}
             )
             replied_to.add(mention.uri)
