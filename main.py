@@ -774,7 +774,7 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
     automation_tasks = []
     if broadcast.bsky_broadcast_client is not None:
         automation_tasks.append(
-            handle_interactions(broadcast.bsky_broadcast_client, creds.bluesky_username, creds.gemini_api_key)
+            handle_interactions(broadcast.bsky_broadcast_client, creds.gemini_api_key)
         )
     await asyncio.gather(*automation_tasks, return_exceptions=True)
 

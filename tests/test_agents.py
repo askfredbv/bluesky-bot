@@ -273,7 +273,7 @@ async def test_handle_interactions_truncates_reply_and_applies_delay(monkeypatch
     monkeypatch.setattr("src.agents.asyncio.sleep", no_sleep)
     monkeypatch.setattr("src.agents._sync_generate", lambda *_args, **_kwargs: "z" * (REPLY_MAX_CHARS + 30))
 
-    await handle_interactions(DummyClient(), "bot.example", "fake-key")
+    await handle_interactions(DummyClient(), "fake-key")
 
     assert sent_posts
     assert len(sent_posts[0]["text"]) == REPLY_MAX_CHARS
@@ -324,7 +324,7 @@ async def test_handle_interactions_can_skip_reply_for_human_cadence(monkeypatch)
     monkeypatch.setattr("src.agents.update_replied_to", fake_update_replied_to)
     monkeypatch.setattr("src.agents.random.random", lambda: 0.0)
 
-    await handle_interactions(DummyClient(), "bot.example", "fake-key")
+    await handle_interactions(DummyClient(), "fake-key")
 
     assert sent_posts == []
     assert "at://mention/skip" in replied_state
@@ -1120,7 +1120,7 @@ async def test_a_reply_is_recorded_before_a_later_mention_can_fail(monkeypatch):
     monkeypatch.setattr("src.agents._sync_generate", exploding_generate)
 
     mentions = [_mention("at://mention/1"), _mention("at://mention/2")]
-    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+    await handle_interactions(_client_for(mentions, sent_posts), "fake-key")
 
     assert len(sent_posts) == 1, "only the first mention should have been answered"
     assert "at://mention/1" in replied_state, "the answered mention must be recorded"
@@ -1144,7 +1144,7 @@ async def test_a_deliberate_skip_is_recorded_immediately(monkeypatch):
     monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
 
     mentions = [_mention("at://mention/9")]
-    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+    await handle_interactions(_client_for(mentions, sent_posts), "fake-key")
 
     assert sent_posts == []
     assert "at://mention/9" in replied_state
@@ -1169,7 +1169,7 @@ async def test_recording_a_mention_merges_into_existing_state(monkeypatch):
     monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "Reply text.")
 
     mentions = [_mention("at://mention/new")]
-    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+    await handle_interactions(_client_for(mentions, sent_posts), "fake-key")
 
     assert replied_state == ["at://mention/old", "at://mention/new"]
 
@@ -1208,7 +1208,7 @@ async def test_a_concurrently_recorded_mention_is_not_clobbered(monkeypatch):
     monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "Reply text.")
 
     mentions = [_mention("at://mention/ours")]
-    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+    await handle_interactions(_client_for(mentions, sent_posts), "fake-key")
 
     assert "at://mention/from-elsewhere" in replied_state, "a concurrent record was clobbered"
     assert "at://mention/ours" in replied_state
@@ -1228,7 +1228,7 @@ async def test_mentions_are_skipped_entirely_when_the_replied_state_is_untrusted
     monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "should never be generated")
 
     mentions = [_mention("at://mention/a"), _mention("at://mention/b")]
-    await handle_interactions(_client_for(mentions, sent_posts), "bot.example", "fake-key")
+    await handle_interactions(_client_for(mentions, sent_posts), "fake-key")
 
     assert sent_posts == [], "replied to someone without knowing whether they were already answered"
 
@@ -1252,7 +1252,7 @@ async def test_mentions_proceed_normally_when_the_replied_state_is_trusted(monke
     monkeypatch.setattr("src.agents.asyncio.sleep", lambda _s: _noop())
     monkeypatch.setattr("src.agents._sync_generate", lambda *_a, **_k: "A reply.")
 
-    await handle_interactions(_client_for([_mention("at://mention/x")], sent_posts), "bot.example", "fake-key")
+    await handle_interactions(_client_for([_mention("at://mention/x")], sent_posts), "fake-key")
 
     assert len(sent_posts) == 1
     assert "at://mention/x" in replied_state

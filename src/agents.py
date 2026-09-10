@@ -1647,7 +1647,7 @@ def _record_handled_mention(uri: str) -> None:
     update_replied_to(lambda current: current if uri in current else [*current, uri])
 
 
-async def handle_interactions(client: Any, bsky_username: str, api_key: str) -> None:
+async def handle_interactions(client: Any, api_key: str) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
     SafeLogger.info("interactions_check_started", "Checking for interactions", platform="bluesky")
     try:
