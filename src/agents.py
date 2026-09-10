@@ -1545,7 +1545,8 @@ async def generate_content(
                                 f"pioneer post missing required URL: {required_url}"
                             )
                     # v4.14: defensive voice trim — strip reader-bait questions,
-                    # excess hashtags, and word-boundary-back-up on overflow.
+                    # teasers and excess hashtags. No truncation since v4.15.3:
+                    # length is a hard invariant in _validate_thread_shape.
                     content_list = _apply_voice_trim(content_list)
 
                     # v4.21: resolve the chosen item so both metrics
