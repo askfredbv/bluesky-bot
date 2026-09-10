@@ -7,7 +7,22 @@ return a link card with no thumb rather than attaching a cluttered logo.
 
 import pytest
 
+import io
+
+from PIL import Image
+
 from src import utils
+
+
+def _tiny_png() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 30, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# A real, decodable image. This used to be a placeholder byte string, which only
+# passed because nothing validated the thumbnail before upload (ledger C6).
+_REAL_PNG = _tiny_png()
 
 
 class _Resp:
@@ -69,7 +84,7 @@ async def test_non_generic_image_is_fetched_normally(monkeypatch):
         if "article" in url:
             return _Resp(text=_html_with_og_image("https://cdn.example.com/hero/story-123.jpg"))
         image_fetched["called"] = True
-        return _Resp(content=b"real-image-bytes", status_code=200)
+        return _Resp(content=_REAL_PNG, status_code=200)
 
     monkeypatch.setattr(utils, "is_safe_public_url", lambda _: True)
     monkeypatch.setattr(utils, "is_allowed_metadata_fetch_url", lambda _: True)
@@ -78,7 +93,7 @@ async def test_non_generic_image_is_fetched_normally(monkeypatch):
 
     meta = await utils.get_link_metadata("https://example.com/article")
 
-    assert meta["image_data"] == b"real-image-bytes"
+    assert meta["image_data"] == _REAL_PNG
     assert image_fetched["called"] is True
 
 
