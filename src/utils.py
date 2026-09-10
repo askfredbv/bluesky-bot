@@ -1,5 +1,5 @@
 import httpx
-from typing import Dict, Any, TypeVar
+from typing import Dict, Any
 from bs4 import BeautifulSoup
 import io
 from PIL import Image
@@ -27,8 +27,6 @@ from src.net_safety import (
 # DecompressionBombError at open() from the header dimensions, which the guarded
 # Image.open call sites already catch.
 Image.MAX_IMAGE_PIXELS = 10_000_000
-
-T = TypeVar("T")
 
 
 def compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, bool]:

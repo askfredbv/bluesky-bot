@@ -36,97 +36,74 @@ def _make_429_error(retry_after: str = None):
 # 429-specific path
 # ---------------------------------------------------------------------------
 
+# These used to reach sleep_for_rate_limit / sleep_for_transient only through
+# the retry_with_backoff decorator, which production stopped using in 185aad4 and
+# which was removed on 2026-09-10. They were also the only tests of the
+# no-header base-wait branch, so they now call the live functions directly.
+
 @pytest.mark.asyncio
-async def test_retry_waits_at_least_base_seconds_on_429(monkeypatch):
-    """A 429 response triggers the rate-limit path with waits >= RATE_LIMIT_BASE_WAIT_SECONDS."""
+async def test_rate_limit_wait_is_at_least_base_seconds_without_a_header(monkeypatch):
+    """No Retry-After / X-RateLimit-Reset header: every rate-limit retry waits at
+    least RATE_LIMIT_BASE_WAIT_SECONDS (scaled by the attempt number)."""
     sleep_calls = _make_sleep_capture(monkeypatch)
     Fake429Error = _make_429_error()
 
-    @retry.retry_with_backoff
-    async def always_429():
-        raise Fake429Error()
-
-    with pytest.raises(Fake429Error):
-        await always_429()
+    for attempt in range(1, RATE_LIMIT_MAX_RETRIES + 1):
+        await retry.sleep_for_rate_limit(attempt, Fake429Error())
 
     assert len(sleep_calls) == RATE_LIMIT_MAX_RETRIES
     assert all(s >= RATE_LIMIT_BASE_WAIT_SECONDS for s in sleep_calls)
 
 
 @pytest.mark.asyncio
-async def test_retry_429_uses_retry_after_header_value(monkeypatch):
+async def test_rate_limit_wait_uses_the_retry_after_header(monkeypatch):
     """When a Retry-After header is present its value is used as the wait time."""
     sleep_calls = _make_sleep_capture(monkeypatch)
     Fake429Error = _make_429_error(retry_after="90")
 
-    @retry.retry_with_backoff
-    async def always_429_with_header():
-        raise Fake429Error()
+    await retry.sleep_for_rate_limit(1, Fake429Error())
 
-    with pytest.raises(Fake429Error):
-        await always_429_with_header()
-
-    assert sleep_calls[0] == 90.0
+    assert sleep_calls == [90.0]
 
 
 @pytest.mark.asyncio
-async def test_retry_429_exhausts_separate_budget(monkeypatch):
-    """The 429 path uses its own retry counter — RATE_LIMIT_MAX_RETRIES attempts."""
+async def test_rate_limit_budget_raises_once_exhausted(monkeypatch):
+    """The rate-limit path has its own budget, RATE_LIMIT_MAX_RETRIES: the retry
+    after that re-raises the original error instead of sleeping again."""
     sleep_calls = _make_sleep_capture(monkeypatch)
-    call_count = [0]
     Fake429Error = _make_429_error()
 
-    @retry.retry_with_backoff
-    async def always_429():
-        call_count[0] += 1
-        raise Fake429Error()
-
     with pytest.raises(Fake429Error):
-        await always_429()
+        await retry.sleep_for_rate_limit(RATE_LIMIT_MAX_RETRIES + 1, Fake429Error())
 
-    # Initial attempt + RATE_LIMIT_MAX_RETRIES retries
-    assert call_count[0] == RATE_LIMIT_MAX_RETRIES + 1
-    assert len(sleep_calls) == RATE_LIMIT_MAX_RETRIES
+    assert sleep_calls == []
 
 
 # ---------------------------------------------------------------------------
-# Non-429 path (unchanged behaviour)
+# Transient (non-429) path
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_retry_non_429_uses_short_exponential_backoff(monkeypatch):
-    """Non-429 errors use the short exponential backoff — well under 60 seconds."""
+async def test_transient_wait_is_short_exponential_backoff(monkeypatch):
+    """Non-429 errors use the short exponential backoff, well under the rate-limit wait."""
     sleep_calls = _make_sleep_capture(monkeypatch)
 
-    @retry.retry_with_backoff
-    async def always_network_error():
-        raise ConnectionError("timeout")
+    for attempt in range(1, MAX_API_RETRIES + 1):
+        await retry.sleep_for_transient(attempt, ConnectionError("timeout"))
 
-    with pytest.raises(ConnectionError):
-        await always_network_error()
-
-    # 1 initial attempt + MAX_API_RETRIES retries = MAX_API_RETRIES + 1 calls,
-    # with a sleep before each retry → MAX_API_RETRIES sleeps total.
     assert len(sleep_calls) == MAX_API_RETRIES
     assert all(s < RATE_LIMIT_BASE_WAIT_SECONDS for s in sleep_calls)
 
 
 @pytest.mark.asyncio
-async def test_retry_non_429_exhausts_after_max_api_retries(monkeypatch):
-    """Non-429 errors exhaust MAX_API_RETRIES and then raise."""
-    _make_sleep_capture(monkeypatch)
-    call_count = [0]
-
-    @retry.retry_with_backoff
-    async def always_fails():
-        call_count[0] += 1
-        raise RuntimeError("generic failure")
+async def test_transient_budget_raises_once_exhausted(monkeypatch):
+    """Non-429 errors exhaust MAX_API_RETRIES and then re-raise the original error."""
+    sleep_calls = _make_sleep_capture(monkeypatch)
 
     with pytest.raises(RuntimeError):
-        await always_fails()
+        await retry.sleep_for_transient(MAX_API_RETRIES + 1, RuntimeError("generic failure"))
 
-    # 1 initial attempt + MAX_API_RETRIES retries before exhaustion raises.
-    assert call_count[0] == MAX_API_RETRIES + 1
+    assert sleep_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -276,12 +253,12 @@ def test_extract_rate_limit_wait_returns_none_when_no_headers():
 
 
 # ---------------------------------------------------------------------------
-# Mastodon X-RateLimit-Reset integration via retry_with_backoff
+# Mastodon X-RateLimit-Reset honoured by sleep_for_rate_limit
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_retry_429_uses_x_ratelimit_reset_header(monkeypatch):
-    """Mastodon sends X-RateLimit-Reset; decorator should honour it."""
+    """Mastodon sends X-RateLimit-Reset; sleep_for_rate_limit honours it."""
     sleep_calls = _make_sleep_capture(monkeypatch)
 
     pinned_now = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
@@ -303,11 +280,6 @@ async def test_retry_429_uses_x_ratelimit_reset_header(monkeypatch):
     class Fake429Error(Exception):
         response = FakeResponse()
 
-    @retry.retry_with_backoff
-    async def always_429():
-        raise Fake429Error()
-
-    with pytest.raises(Fake429Error):
-        await always_429()
+    await retry.sleep_for_rate_limit(1, Fake429Error())
 
     assert sleep_calls[0] == pytest.approx(75.0, abs=1.0)

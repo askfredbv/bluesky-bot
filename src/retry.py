@@ -6,7 +6,6 @@ cannot starve the transient-error allowance. Extracted from src/utils.py;
 imports nothing from utils.
 """
 import asyncio
-import functools
 import random
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -171,26 +170,3 @@ async def sleep_for_transient(attempt: int, exception: Exception, function: str 
         wait_seconds=round(wait_time, 2),
     )
     await asyncio.sleep(wait_time)
-def retry_with_backoff(func):
-    """Decorator to retry an async function, branching by error class.
-
-    Thin wrapper over `classify_retry` + `sleep_for_rate_limit` /
-    `sleep_for_transient`. Rate-limit and transient errors get independent
-    retry budgets so a rate-limited run doesn't burn its transient budget.
-    Total attempts: 1 initial + up-to-MAX_..._RETRIES retries.
-    """
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        rate_limit_attempts = 0
-        transient_attempts = 0
-        while True:
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                if classify_retry(e) == "rate_limit":
-                    rate_limit_attempts += 1
-                    await sleep_for_rate_limit(rate_limit_attempts, e, function=func.__name__)
-                else:
-                    transient_attempts += 1
-                    await sleep_for_transient(transient_attempts, e, function=func.__name__)
-    return wrapper

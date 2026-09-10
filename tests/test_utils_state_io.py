@@ -57,7 +57,7 @@ def test_replied_to_recovers_from_interrupted_write(monkeypatch, tmp_path):
     backup.write_text(json.dumps(["at://did:plc:1/post/1", "at://did:plc:2/post/2"]))
     primary.write_text('["at://did:plc:1/post/1",')
 
-    loaded = state_store.load_replied_to()
+    loaded = state_store.load_replied_to_strict()[0]
 
     assert loaded == ["at://did:plc:1/post/1", "at://did:plc:2/post/2"]
     assert json.loads(primary.read_text()) == loaded
