@@ -56,8 +56,12 @@ for the hard-won context before proposing structural changes.
 
 7. **Two-platform symmetry, no per-platform divergence of intent.** Same content to
    Bluesky and Mastodon. A platform's *mechanics* may differ — a length trim, embed
-   shape, or Mastodon-only discovery hashtags (`apply_mastodon_tags`, added because
-   Mastodon has no algorithmic feed and a followed tag is its discovery mechanism).
+   shape, Mastodon-only discovery hashtags (`apply_mastodon_tags`, added because
+   Mastodon has no algorithmic feed and a followed tag is its discovery mechanism),
+   or Mastodon-only thread-position markers (`number_mastodon_thread`, "1/2",
+   "2/2", added because Mastodon lists a self-thread newest-first, so part 2 reaches
+   a timeline reader before part 1; Bluesky's client already labels self-threads
+   this way, so the marker gives Mastodon readers what Bluesky readers see).
    Its *intent* may not: no different take, link, framing, or one-platform voice rule,
    and generation stays platform-neutral — divergence lives in the broadcaster, never
    in the prompt. Partial delivery must be handled cleanly (`*_partial_delivery`),
@@ -70,7 +74,10 @@ for the hard-won context before proposing structural changes.
    affiliation, or a framing the prose does not carry, and it spends the shared
    `MAX_HASHTAGS_PER_POST` ceiling rather than adding a second allowance on top of
    it — a Mastodon post must never carry more hashtags than the same post on
-   Bluesky is allowed to. Flag any appended-after-validation content that cannot
+   Bluesky is allowed to. A thread-position marker carries no content at all: it
+   states a part's place in a thread that is already complete when it is posted,
+   which is why it is not the teaser §1 bans (🧵 and "thread incoming" promise
+   parts that do not exist yet). Flag any appended-after-validation content that cannot
    meet that bar, and any new per-platform mechanic that widens what the reader
    sees rather than adapting how they find it.
 8. **Tests and lint are the floor.** `ruff` clean and `pytest` green are required. New

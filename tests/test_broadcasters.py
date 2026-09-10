@@ -582,3 +582,122 @@ async def test_mastodon_idempotent_retry_does_not_double_count_delivery(monkeypa
     assert result.sent_uris == ["555"]
     assert result.delivered_texts == ["Only post"]
     assert result.error is None
+
+
+# ---------------------------------------------------------------------------
+# Mastodon thread numbering (2026-09-10).
+#
+# Mastodon lists a self-thread newest-first, so a timeline reader met part 2
+# ("Continued thread") before part 1. Bluesky's client already labels
+# self-threads "1/2", "2/2"; Mastodon readers got nothing. The broadcaster now
+# numbers Mastodon parts, before the discovery tags are appended.
+# ---------------------------------------------------------------------------
+
+
+def test_each_part_of_a_thread_is_labelled():
+    assert broadcasters.number_mastodon_thread(["First.", "Second."]) == ["First. 1/2", "Second. 2/2"]
+    assert broadcasters.number_mastodon_thread(["a", "b", "c"]) == ["a 1/3", "b 2/3", "c 3/3"]
+
+
+def test_a_single_post_is_not_labelled():
+    """A '1/1' label would be noise; most posts are single."""
+    assert broadcasters.number_mastodon_thread(["Only post."]) == ["Only post."]
+    assert broadcasters.number_mastodon_thread([]) == []
+
+
+def test_numbering_is_all_or_nothing_when_a_part_would_overflow():
+    """One part missing its label reads worse than none having one."""
+    parts = ["short", "x" * 498]
+    assert broadcasters.number_mastodon_thread(parts, max_length=500) == parts
+
+
+def test_the_marker_sits_with_the_prose_and_the_tags_stay_their_own_paragraph():
+    """Numbering runs first. The tags must remain a hashtag-only final paragraph,
+    or Mastodon's web client stops lifting them into its hashtag bar."""
+    numbered = broadcasters.number_mastodon_thread(["They are looking for cover.", "Part two."])
+    tagged = broadcasters.apply_mastodon_tags(numbered, ["#Management", "#CorporateCulture"])
+
+    assert tagged[0] == "They are looking for cover. 1/2\n\n#Management #CorporateCulture"
+    assert tagged[1] == "Part two. 2/2"
+
+
+@pytest.mark.asyncio
+async def test_post_to_mastodon_sends_numbered_parts_with_tags_after_the_marker(monkeypatch):
+    sent = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
+            sent.append({"status": status, "in_reply_to_id": in_reply_to_id})
+            return {"id": str(len(sent))}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    result = await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example",
+        ["When a stakeholder asks for an options paper, they want cover.",
+         "The document exists to provide the audit trail."],
+        tags=["#Management", "#CorporateCulture"],
+    )
+
+    assert [s["status"] for s in sent] == [
+        "When a stakeholder asks for an options paper, they want cover. 1/2\n\n#Management #CorporateCulture",
+        "The document exists to provide the audit trail. 2/2",
+    ]
+    assert sent[1]["in_reply_to_id"] == "1", "part 2 must still thread under part 1"
+    # The metrics rows read delivered_texts, so they must record what was actually sent.
+    assert result.delivered_texts == [s["status"] for s in sent]
+
+
+@pytest.mark.asyncio
+async def test_a_single_mastodon_post_ships_without_a_label(monkeypatch):
+    sent = []
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
+            sent.append(status)
+            return {"id": "1"}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_mastodon("token", "https://mastodon.example", ["Only post."], tags=["#AI"])
+
+    assert sent == ["Only post.\n\n#AI"]
+
+
+@pytest.mark.asyncio
+async def test_the_bluesky_copy_of_a_thread_is_not_numbered(monkeypatch):
+    """Bluesky's client already labels self-threads. Adding our own would read
+    '1/2 1/2' there; the mechanic is Mastodon-only by design (AGENTS.md #7)."""
+    sent = []
+
+    class FakePost:
+        cid = "bafyreid"
+        uri = "at://did:plc:test/app.bsky.feed.post/1"
+
+    class DummyAsyncClient:
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
+            sent.append(text)
+            return FakePost()
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(broadcasters.asyncio, "sleep", no_sleep)
+
+    await broadcasters.post_to_bluesky(DummyAsyncClient(), ["Part one.", "Part two."])
+
+    assert sent == ["Part one.", "Part two."]
