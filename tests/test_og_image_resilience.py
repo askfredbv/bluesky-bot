@@ -8,6 +8,7 @@ parsed perfectly well shipped a link card titled "Source Link".
 """
 
 import io
+import random
 
 import pytest
 from PIL import Image
@@ -62,27 +63,50 @@ def _patch_url_guards(monkeypatch):
     monkeypatch.setattr(utils.httpx, "AsyncClient", lambda *a, **kw: _FakeClient())
 
 
-def test_compress_image_returns_original_bytes_on_a_truncated_file():
+def test_compress_image_returns_original_bytes_on_a_truncated_file(monkeypatch):
     """compress_image must never raise -- is_usable_image's docstring, and every
     caller, rely on 'returns the ORIGINAL bytes when Pillow cannot open or shrink
     them'. The guard used to cover only Image.open, so a lazy-decode failure at
     convert()/save() escaped instead."""
     broken = _truncated_png()
 
-    result = utils.compress_image(broken)
+    events = []
+    monkeypatch.setattr(utils.SafeLogger, "warn", lambda event, *a, **k: events.append(event))
+
+    # max_size_kb=0: this input is tiny, and an image already under budget now
+    # passes straight through undecoded, which would let the test pass without
+    # ever reaching the lazy-decode failure it exists to guard.
+    result = utils.compress_image(broken, max_size_kb=0)
 
     assert result == broken  # original bytes back, no exception
+    assert "image_compress_failed" in events, "the decode path was never exercised"
 
 
-def test_compress_image_still_shrinks_a_valid_image():
-    """The happy path is unchanged: a real image is re-encoded, not passed through."""
+def test_a_small_image_passes_through_untouched():
+    """Deliberate change (freeze audit C3): an image already under budget comes
+    back as-is. The old compress_image re-encoded it anyway, losing quality for
+    nothing; this replaced a test that pinned that behaviour."""
     buf = io.BytesIO()
     Image.new("RGB", (400, 400), (10, 120, 200)).save(buf, format="PNG")
     original = buf.getvalue()
 
-    result = utils.compress_image(original)
+    assert utils.compress_image(original) is original
 
-    assert result != original
+
+def test_an_la_image_is_converted_and_shrunk():
+    """The old compress_image converted only RGBA and P, so an LA (greyscale plus
+    alpha) image could not be encoded as JPEG at all and came back as the
+    original, over-budget bytes."""
+    side = 300
+    img = Image.frombytes("LA", (side, side), random.Random(7).randbytes(side * side * 2))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    original = buf.getvalue()
+    assert len(original) > 60 * 1024
+
+    result = utils.compress_image(original, max_size_kb=60)
+
+    assert len(result) <= 60 * 1024
     assert utils.is_usable_image(result)
 
 

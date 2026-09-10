@@ -77,41 +77,72 @@ Image.MAX_IMAGE_PIXELS = 10_000_000
 T = TypeVar("T")
 
 
-def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
-    """Compresses an image to stay under AtProto's 1MB blob limit.
+def compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, bool]:
+    """Re-encode (and if needed downscale) an image to fit under ``max_bytes``.
 
-    Never raises: returns the ORIGINAL bytes on any failure, which is the
-    contract ``is_usable_image`` documents and every caller relies on. The guard
-    used to cover only ``Image.open``, which reads the header — Pillow decodes
-    lazily, so a truncated or corrupt file raised at ``convert``/``save`` instead
-    and the exception escaped. In ``get_link_metadata`` that took the whole
-    OpenGraph dict down with it, so an article with a good headline and a bad
-    thumbnail shipped a card titled "Source Link"."""
+    The ONE image compressor. Returns ``(bytes, fits)``. Already-small images
+    pass through unchanged. For the rest: re-encode to JPEG at descending
+    quality, then progressively downscale, until the result is under budget,
+    returning the first that fits. If nothing fits, or the bytes cannot be
+    decoded at all, returns the original bytes with ``fits=False`` so the caller
+    can skip the attach. Never raises.
+
+    History: written 2026-06-14 in broadcasters.py for the Bluesky image embed,
+    because the image model returns 1:1 PNGs around or above the 976 KB blob
+    gate and the broadcaster used to measure-and-drop them. A second, weaker
+    compressor lived here as ``compress_image`` and served the Curator fallback
+    image and publisher og:images. It never downscaled, so it met budgets by
+    crushing JPEG quality toward 10; it re-encoded images that were already
+    small; and it converted only RGBA/P, so an LA image could not be encoded at
+    all. Moved here 2026-09-10 (freeze audit C3) so both paths share this one.
+    """
+    if len(image_bytes) <= max_bytes:
+        return image_bytes, True
     try:
-        img_io = io.BytesIO(image_bytes)
-        img: Image.Image = Image.open(img_io)
-
-        if img.mode in ("RGBA", "P"):
+        img: Image.Image = Image.open(io.BytesIO(image_bytes))
+        # JPEG has no alpha: flatten anything that is not already RGB or L
+        # (RGBA, P, LA, CMYK ...). The old compress_image converted only RGBA
+        # and P, so an LA image could not be encoded at all.
+        if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-
-        quality = 90
-        out_io = io.BytesIO()
-        img.save(out_io, format="JPEG", quality=quality)
-
-        while out_io.tell() > max_size_kb * 1024 and quality > 10:
-            quality -= 10
-            out_io = io.BytesIO()
-            img.save(out_io, format="JPEG", quality=quality)
-
-        return out_io.getvalue()
+        for scale in (1.0, 0.85, 0.7, 0.55, 0.4):
+            if scale == 1.0:
+                candidate = img
+            else:
+                w, h = img.size
+                candidate = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+            for quality in (85, 75, 60):
+                buf = io.BytesIO()
+                candidate.save(buf, format="JPEG", quality=quality, optimize=True)
+                data = buf.getvalue()
+                if len(data) <= max_bytes:
+                    return data, True
+        # Genuinely tried everything and nothing fit: a real "too large".
+        return image_bytes, False
     except Exception as e:
+        # A real compression FAILURE (unsupported format, truncated bytes, a
+        # decompression bomb, an encoder regression), distinct from "too large".
+        # Capture the reason so an image outage is diagnosable (error_msg
+        # discipline, Codex review on PR #56).
         SafeLogger.warn(
-            "image_compression_failed",
-            "Could not compress image; returning the original bytes",
+            "image_compress_failed",
+            "Could not re-encode oversized image; returning the original bytes",
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
         )
-        return image_bytes
+        return image_bytes, False
+
+
+def compress_image(image_bytes: bytes, max_size_kb: int = 900) -> bytes:
+    """Compress an image to stay under the ~1 MB AtProto blob limit.
+
+    A thin wrapper over ``compress_image_to_fit`` for callers that only want the
+    bytes. Never raises: returns the ORIGINAL bytes when the image cannot be
+    decoded or shrunk, which is the contract ``is_usable_image`` documents and
+    every caller relies on, so callers must still validate the result.
+    """
+    data, _fits = compress_image_to_fit(image_bytes, max_size_kb * 1024)
+    return data
 
 
 def is_usable_image(image_bytes: bytes, max_bytes: int = 976 * 1024) -> bool:

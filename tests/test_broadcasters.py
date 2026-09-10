@@ -185,7 +185,7 @@ def _make_oversized_png(side: int = 600) -> bytes:
 
 def test_compress_passthrough_when_already_small():
     data = b"tiny-image-bytes"
-    out, fits = broadcasters._compress_image_to_fit(data, 1024)
+    out, fits = broadcasters.compress_image_to_fit(data, 1024)
     assert out is data
     assert fits is True
 
@@ -193,7 +193,7 @@ def test_compress_passthrough_when_already_small():
 def test_compress_reencodes_oversized_image_under_the_real_gate():
     png = _make_oversized_png(600)
     assert len(png) > broadcasters._BLUESKY_IMAGE_MAX_BYTES  # over the real gate
-    out, fits = broadcasters._compress_image_to_fit(png, broadcasters._BLUESKY_IMAGE_MAX_BYTES)
+    out, fits = broadcasters.compress_image_to_fit(png, broadcasters._BLUESKY_IMAGE_MAX_BYTES)
     assert fits is True
     assert len(out) <= broadcasters._BLUESKY_IMAGE_MAX_BYTES
     assert out is not png  # actually re-encoded, not passed through
@@ -201,7 +201,7 @@ def test_compress_reencodes_oversized_image_under_the_real_gate():
 
 def test_compress_returns_false_when_no_budget_can_fit():
     png = _make_oversized_png(200)
-    out, fits = broadcasters._compress_image_to_fit(png, 10)
+    out, fits = broadcasters.compress_image_to_fit(png, 10)
     assert fits is False
     assert out is png  # nothing usable produced; caller will skip the attach
 
@@ -216,7 +216,7 @@ def test_compress_failure_logs_reason_distinctly(monkeypatch):
                         lambda event, message="", **fields: events.append((event, fields)))
 
     garbage = b"this is not a valid image " * 100  # > budget, but Pillow can't open it
-    out, fits = broadcasters._compress_image_to_fit(garbage, 100)
+    out, fits = broadcasters.compress_image_to_fit(garbage, 100)
 
     assert fits is False
     assert out is garbage

@@ -177,8 +177,13 @@ def test_compress_image_survives_decompression_bomb(monkeypatch):
         raise Image.DecompressionBombError("image is too large")
 
     monkeypatch.setattr("src.utils.Image.open", _boom)
+    events = []
+    monkeypatch.setattr("src.utils.SafeLogger.warn", lambda event, *a, **k: events.append(event))
     original = b"not-a-real-image-but-that-is-fine"
-    assert compress_image(original) == original
+    # max_size_kb=0 forces the decode path: small inputs now pass through
+    # untouched, which would let this test pass without ever calling Image.open.
+    assert compress_image(original, max_size_kb=0) == original
+    assert "image_compress_failed" in events, "the bomb was never reached"
 
 
 # --- response size cap (_capped_stream_get) -------------------------------

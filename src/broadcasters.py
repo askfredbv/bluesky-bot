@@ -12,7 +12,7 @@ from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     MAX_HASHTAGS_PER_POST,
 )
-from src.utils import classify_retry, sleep_for_rate_limit, sleep_for_transient
+from src.utils import classify_retry, sleep_for_rate_limit, sleep_for_transient, compress_image_to_fit
 from src.net_safety import canonical_url
 from src.logger import SafeLogger
 from src.facets import build_facets
@@ -192,71 +192,6 @@ def _detect_image_mime(data: bytes) -> str:
         return "image/png"
 
 
-def _compress_image_to_fit(image_bytes: bytes, max_bytes: int) -> tuple[bytes, bool]:
-    """Re-encode (and if needed downscale) an image to fit under ``max_bytes``.
-
-    Returns ``(bytes, fits)``. Already-small images pass through unchanged.
-    For the rest: re-encode to JPEG at descending quality, then progressively
-    downscale, until the result is under budget — returning the first that
-    fits. If nothing fits (or Pillow is unavailable), returns the original
-    bytes with ``fits=False`` so the caller can skip the attach.
-
-    Why this exists (2026-06-14): the image model returns 1:1 PNGs that cluster
-    around/above the 976 KB Bluesky blob gate (Imagen 4 ran ~1.0-1.4 MB; the
-    gemini-3.1-flash-image successor is in the same ballpark). The broadcaster
-    used to *measure and drop*, so every recent Mentor image was silently
-    discarded (last image on the feed: 2026-06-08). JPEG re-encoding a flat
-    editorial illustration typically shrinks it 3-5x, well under the gate, so
-    the image actually ships. Format-agnostic: it re-encodes whatever bytes the
-    image model returns, so the 2026-06-15 Imagen->Gemini swap needs no change here.
-    """
-    if len(image_bytes) <= max_bytes:
-        return image_bytes, True
-    try:
-        from PIL import Image
-    except Exception as e:
-        # Pillow should always be present (it's a dependency), but if it ever
-        # isn't, surface WHY — don't let it masquerade as "too large" downstream.
-        SafeLogger.warn(
-            "image_compress_unavailable",
-            "Pillow unavailable; cannot compress oversized image",
-            error_type=type(e).__name__,
-            error_msg=str(e)[:200],
-        )
-        return image_bytes, False
-    try:
-        img: Image.Image = Image.open(io.BytesIO(image_bytes))
-        # JPEG has no alpha; flatten anything with transparency / palette.
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        for scale in (1.0, 0.85, 0.7, 0.55, 0.4):
-            if scale == 1.0:
-                candidate = img
-            else:
-                w, h = img.size
-                candidate = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
-            for quality in (85, 75, 60):
-                buf = io.BytesIO()
-                candidate.save(buf, format="JPEG", quality=quality, optimize=True)
-                data = buf.getvalue()
-                if len(data) <= max_bytes:
-                    return data, True
-        # Genuinely tried everything and nothing fit — a real "too large"; the
-        # caller's image_too_large log is accurate here.
-        return image_bytes, False
-    except Exception as e:
-        # A real compression FAILURE (unsupported format, truncated bytes,
-        # encoder regression) — distinct from "too large". Capture the reason
-        # so an image outage is diagnosable, per the project's error_msg
-        # discipline (Codex review on PR #56). Returns False; the caller skips.
-        SafeLogger.warn(
-            "image_compress_failed",
-            "Could not re-encode oversized image; skipping attach",
-            error_type=type(e).__name__,
-            error_msg=str(e)[:200],
-        )
-        return image_bytes, False
-
 def _enforce_post_length_invariant(content_list: List[str], max_length: int, platform_name: str) -> bool:
     """Hard invariant check — all posts must fit the platform limit.
 
@@ -348,8 +283,8 @@ async def post_to_bluesky(
                     # Image embed (Mentor/Strategist). The image model's output
                     # clusters around/above Bluesky's 1 MB blob limit, so
                     # compress to fit rather than drop (2026-06-14 fix — see
-                    # _compress_image_to_fit).
-                    fitted, fits = _compress_image_to_fit(image_bytes, _BLUESKY_IMAGE_MAX_BYTES)
+                    # compress_image_to_fit).
+                    fitted, fits = compress_image_to_fit(image_bytes, _BLUESKY_IMAGE_MAX_BYTES)
                     if not fits:
                         SafeLogger.warn(
                             "image_too_large",
