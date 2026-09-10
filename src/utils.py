@@ -208,6 +208,19 @@ async def get_link_metadata(url: str) -> Dict[str, Any]:
                                 if len(img_data) > 900 * 1024:
                                     SafeLogger.info("og_image_compression_started", "Compressing large OpenGraph image", size_kb=len(img_data)//1024)
                                     img_data = compress_image(img_data)
+                            # Validate before the bytes can reach upload_blob, the same check the
+                            # generated fallback image already gets (main.py). An undecodable or
+                            # still-oversized thumbnail used to go through unchecked: it failed at
+                            # upload, and being non-empty it also stopped the Curator's generated
+                            # fallback image from firing, so the card shipped with no picture.
+                            if img_data is not None and not is_usable_image(img_data):
+                                SafeLogger.info(
+                                    "og_image_unusable",
+                                    "OpenGraph thumbnail did not validate; dropping it so the fallback can run",
+                                    url=img_url,
+                                    size_bytes=len(img_data),
+                                )
+                                img_data = None
                         except Exception as e:
                             SafeLogger.warn(
                                 "og_image_fetch_failed",

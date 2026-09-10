@@ -169,3 +169,86 @@ async def test_a_genuinely_unreachable_article_still_falls_back(monkeypatch):
 
     assert meta["title"] == "Source Link"
     assert meta["image_data"] is None
+
+
+# ---------------------------------------------------------------------------
+# C6 (2026-09-10): the publisher thumbnail is validated before it can reach
+# upload_blob. It used to go through unchecked; an undecodable or oversized
+# thumbnail failed at upload time, and, being non-empty, it also stopped the
+# Curator's generated fallback image from firing.
+# ---------------------------------------------------------------------------
+
+
+def _noise_png(side: int) -> bytes:
+    img = Image.frombytes("RGB", (side, side), random.Random(11).randbytes(side * side * 3))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_an_undecodable_thumbnail_is_dropped_but_the_article_is_kept(monkeypatch):
+    _patch_url_guards(monkeypatch)
+
+    async def fake_safe_redirects(client, url, **kwargs):
+        if "article" in url:
+            return _Resp(text=_article_html())
+        return _Resp(content=b"<html>an error page, not an image</html>")
+
+    monkeypatch.setattr(utils, "get_with_safe_redirects", fake_safe_redirects)
+
+    meta = await utils.get_link_metadata("https://example.com/article")
+
+    assert meta["title"] == "The Real Headline"
+    assert meta["description"] == "The real description."
+    assert meta["image_data"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_thumbnail_that_cannot_be_shrunk_is_dropped(monkeypatch):
+    """The size half of the check: still over Bluesky's ~976 KB blob limit after
+    compression means the upload would be rejected anyway."""
+    _patch_url_guards(monkeypatch)
+    big = _noise_png(700)
+    assert len(big) > 976 * 1024
+
+    async def fake_safe_redirects(client, url, **kwargs):
+        if "article" in url:
+            return _Resp(text=_article_html())
+        return _Resp(content=big)
+
+    monkeypatch.setattr(utils, "get_with_safe_redirects", fake_safe_redirects)
+    monkeypatch.setattr(utils, "compress_image", lambda data, **kwargs: data)  # "could not shrink it"
+
+    meta = await utils.get_link_metadata("https://example.com/article")
+
+    assert meta["image_data"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_thumbnail_lets_the_curator_fallback_run(monkeypatch):
+    """The consequence that matters. An unusable publisher thumbnail used to count
+    as 'has a thumbnail', so main.py never ran the generated fallback and the
+    card shipped with no picture at all."""
+    import main
+
+    _patch_url_guards(monkeypatch)
+
+    async def fake_safe_redirects(client, url, **kwargs):
+        if "article" in url:
+            return _Resp(text=_article_html())
+        return _Resp(content=b"not an image")
+
+    async def fake_generate_post_image(*args, **kwargs):
+        return b"generated-image"
+
+    monkeypatch.setattr(utils, "get_with_safe_redirects", fake_safe_redirects)
+    monkeypatch.setattr(main, "generate_post_image", fake_generate_post_image)
+    monkeypatch.setattr(main, "compress_image", lambda data, **kwargs: data)
+    monkeypatch.setattr(main, "is_usable_image", lambda *a, **k: True)
+
+    link_meta = await utils.get_link_metadata("https://example.com/article")
+    generated = await main._apply_curator_fallback_image(link_meta, "key", "The Real Headline")
+
+    assert generated == b"generated-image"
+    assert link_meta["image_data"] == b"generated-image"
