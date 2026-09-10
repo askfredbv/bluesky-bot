@@ -1,10 +1,10 @@
-"""Tests for cross-publisher story clustering (fuzzy consensus) in src/utils."""
+"""Tests for cross-publisher story clustering (fuzzy consensus) in src/news."""
 from datetime import datetime, timezone
 
 import pytest
 
 from src.config import CONSENSUS_SYNERGY_BONUS
-from src.utils import (
+from src.news import (
     _title_tokens,
     _titles_cluster,
     annotate_cross_publisher_consensus,

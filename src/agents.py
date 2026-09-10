@@ -26,10 +26,7 @@ from src.config import (
     MASTODON_TAGS_ENABLED, MASTODON_TAGS_EXCLUDED,
     MASTODON_TAGS_TIMEOUT_SECONDS, MAX_HASHTAGS_PER_POST,
 )
-from src.utils import prune_pioneer_recent, update_replied_to
-# Imported from its real home rather than through the src.utils re-export shim:
-# that shim is an unfinished migration (ledger C2) and adding to it deepens it.
-from src.state_store import load_replied_to_strict
+from src.state_store import load_replied_to_strict, prune_pioneer_recent, update_replied_to
 from src.logger import SafeLogger
 
 # v4.14 voice rules

@@ -12,7 +12,8 @@ from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     MAX_HASHTAGS_PER_POST,
 )
-from src.utils import classify_retry, sleep_for_rate_limit, sleep_for_transient, compress_image_to_fit
+from src.retry import classify_retry, sleep_for_rate_limit, sleep_for_transient
+from src.utils import compress_image_to_fit
 from src.net_safety import canonical_url
 from src.logger import SafeLogger
 from src.facets import build_facets

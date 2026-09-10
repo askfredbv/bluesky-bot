@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src import retry, utils
+from src import retry
 from src.config import RATE_LIMIT_BASE_WAIT_SECONDS, RATE_LIMIT_MAX_RETRIES, MAX_API_RETRIES
 
 
@@ -11,7 +11,7 @@ from src.config import RATE_LIMIT_BASE_WAIT_SECONDS, RATE_LIMIT_MAX_RETRIES, MAX
 # ---------------------------------------------------------------------------
 
 def _make_sleep_capture(monkeypatch):
-    """Patch asyncio.sleep on utils and return a list that records every call."""
+    """Patch asyncio.sleep on retry and return a list that records every call."""
     calls = []
 
     async def fake_sleep(seconds):
@@ -42,7 +42,7 @@ async def test_retry_waits_at_least_base_seconds_on_429(monkeypatch):
     sleep_calls = _make_sleep_capture(monkeypatch)
     Fake429Error = _make_429_error()
 
-    @utils.retry_with_backoff
+    @retry.retry_with_backoff
     async def always_429():
         raise Fake429Error()
 
@@ -59,7 +59,7 @@ async def test_retry_429_uses_retry_after_header_value(monkeypatch):
     sleep_calls = _make_sleep_capture(monkeypatch)
     Fake429Error = _make_429_error(retry_after="90")
 
-    @utils.retry_with_backoff
+    @retry.retry_with_backoff
     async def always_429_with_header():
         raise Fake429Error()
 
@@ -76,7 +76,7 @@ async def test_retry_429_exhausts_separate_budget(monkeypatch):
     call_count = [0]
     Fake429Error = _make_429_error()
 
-    @utils.retry_with_backoff
+    @retry.retry_with_backoff
     async def always_429():
         call_count[0] += 1
         raise Fake429Error()
@@ -98,7 +98,7 @@ async def test_retry_non_429_uses_short_exponential_backoff(monkeypatch):
     """Non-429 errors use the short exponential backoff — well under 60 seconds."""
     sleep_calls = _make_sleep_capture(monkeypatch)
 
-    @utils.retry_with_backoff
+    @retry.retry_with_backoff
     async def always_network_error():
         raise ConnectionError("timeout")
 
@@ -117,7 +117,7 @@ async def test_retry_non_429_exhausts_after_max_api_retries(monkeypatch):
     _make_sleep_capture(monkeypatch)
     call_count = [0]
 
-    @utils.retry_with_backoff
+    @retry.retry_with_backoff
     async def always_fails():
         call_count[0] += 1
         raise RuntimeError("generic failure")
@@ -145,15 +145,15 @@ def _exc_with_status(status):
 
 
 def test_classify_retry_returns_rate_limit_for_429():
-    assert utils.classify_retry(_exc_with_status(429)) == "rate_limit"
+    assert retry.classify_retry(_exc_with_status(429)) == "rate_limit"
 
 
 def test_classify_retry_returns_transient_for_500():
-    assert utils.classify_retry(_exc_with_status(500)) == "transient"
+    assert retry.classify_retry(_exc_with_status(500)) == "transient"
 
 
 def test_classify_retry_returns_transient_when_no_response_attr():
-    assert utils.classify_retry(ConnectionError("timeout")) == "transient"
+    assert retry.classify_retry(ConnectionError("timeout")) == "transient"
 
 
 def test_classify_retry_returns_transient_when_status_is_none():
@@ -164,7 +164,7 @@ def test_classify_retry_returns_transient_when_status_is_none():
     class FakeError(Exception):
         response = FakeResponse()
 
-    assert utils.classify_retry(FakeError()) == "transient"
+    assert retry.classify_retry(FakeError()) == "transient"
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ def test_classify_retry_returns_transient_when_status_is_none():
 # ---------------------------------------------------------------------------
 
 def test_parse_retry_after_accepts_seconds():
-    assert utils._parse_retry_after_header("90") == 90.0
+    assert retry._parse_retry_after_header("90") == 90.0
 
 
 def test_parse_retry_after_accepts_http_date(monkeypatch):
@@ -185,13 +185,13 @@ def test_parse_retry_after_accepts_http_date(monkeypatch):
             return pinned_now
 
     monkeypatch.setattr(retry, "datetime", FakeDatetime)
-    result = utils._parse_retry_after_header("Wed, 22 Apr 2026 12:01:00 GMT")
+    result = retry._parse_retry_after_header("Wed, 22 Apr 2026 12:01:00 GMT")
     assert result is not None
     assert 59.0 <= result <= 61.0
 
 
 def test_parse_retry_after_returns_none_for_garbage():
-    assert utils._parse_retry_after_header("not-a-thing") is None
+    assert retry._parse_retry_after_header("not-a-thing") is None
 
 
 def test_parse_retry_after_clamps_past_date_to_zero(monkeypatch):
@@ -203,7 +203,7 @@ def test_parse_retry_after_clamps_past_date_to_zero(monkeypatch):
             return pinned_now
 
     monkeypatch.setattr(retry, "datetime", FakeDatetime)
-    assert utils._parse_retry_after_header("Wed, 22 Apr 2026 11:59:00 GMT") == 0.0
+    assert retry._parse_retry_after_header("Wed, 22 Apr 2026 11:59:00 GMT") == 0.0
 
 
 def test_parse_ratelimit_reset_accepts_unix_timestamp(monkeypatch):
@@ -219,7 +219,7 @@ def test_parse_ratelimit_reset_accepts_unix_timestamp(monkeypatch):
 
     monkeypatch.setattr(retry, "datetime", FakeDatetime)
     reset = pinned_now.timestamp() + 120
-    assert utils._parse_ratelimit_reset_header(str(reset)) == pytest.approx(120.0, abs=1.0)
+    assert retry._parse_ratelimit_reset_header(str(reset)) == pytest.approx(120.0, abs=1.0)
 
 
 def test_parse_ratelimit_reset_accepts_iso8601(monkeypatch):
@@ -234,19 +234,19 @@ def test_parse_ratelimit_reset_accepts_iso8601(monkeypatch):
             return datetime.fromisoformat(s)
 
     monkeypatch.setattr(retry, "datetime", FakeDatetime)
-    result = utils._parse_ratelimit_reset_header("2026-04-22T12:02:00+00:00")
+    result = retry._parse_ratelimit_reset_header("2026-04-22T12:02:00+00:00")
     assert result == pytest.approx(120.0, abs=1.0)
 
 
 def test_parse_ratelimit_reset_returns_none_for_garbage():
-    assert utils._parse_ratelimit_reset_header("garbage") is None
+    assert retry._parse_ratelimit_reset_header("garbage") is None
 
 
 def test_extract_rate_limit_wait_prefers_retry_after():
     class FakeResponse:
         headers = {"retry-after": "45", "x-ratelimit-reset": "999999"}
 
-    assert utils._extract_rate_limit_wait(FakeResponse()) == 45.0
+    assert retry._extract_rate_limit_wait(FakeResponse()) == 45.0
 
 
 def test_extract_rate_limit_wait_falls_back_to_x_ratelimit_reset(monkeypatch):
@@ -265,14 +265,14 @@ def test_extract_rate_limit_wait_falls_back_to_x_ratelimit_reset(monkeypatch):
     class FakeResponse:
         headers = {"x-ratelimit-reset": str(pinned_now.timestamp() + 30)}
 
-    assert utils._extract_rate_limit_wait(FakeResponse()) == pytest.approx(30.0, abs=1.0)
+    assert retry._extract_rate_limit_wait(FakeResponse()) == pytest.approx(30.0, abs=1.0)
 
 
 def test_extract_rate_limit_wait_returns_none_when_no_headers():
     class FakeResponse:
         headers = {}
 
-    assert utils._extract_rate_limit_wait(FakeResponse()) is None
+    assert retry._extract_rate_limit_wait(FakeResponse()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ async def test_retry_429_uses_x_ratelimit_reset_header(monkeypatch):
     class Fake429Error(Exception):
         response = FakeResponse()
 
-    @utils.retry_with_backoff
+    @retry.retry_with_backoff
     async def always_429():
         raise Fake429Error()
 

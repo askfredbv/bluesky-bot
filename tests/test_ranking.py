@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timezone, timedelta
-from src.utils import calculate_relevance_score
+from src.news import calculate_relevance_score
 
 def test_source_tier_ranking():
     """Verify that elite sources (OpenAI) get higher scores than general news."""

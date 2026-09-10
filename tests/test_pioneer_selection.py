@@ -6,7 +6,7 @@ import pytest
 
 from src import config
 from src.agents import select_pioneer_topic
-from src.utils import prune_pioneer_recent
+from src.state_store import prune_pioneer_recent
 
 
 # ── Test fixtures ────────────────────────────────────────────────────────────

@@ -48,7 +48,7 @@ from src.config import (
     PROACTIVE_REPLY_PER_HANDLE_COOLDOWN_DAYS,
 )
 from src.logger import SafeLogger
-from src.utils import _load_gist_state_strict, _save_gist_state
+from src.state_store import _load_gist_state_strict, _save_gist_state
 
 _PENDING_REPLIES_FILENAME = "pending_replies.json"
 

@@ -1,4 +1,4 @@
-from src.utils import canonical_url
+from src.net_safety import canonical_url
 
 
 def test_arxiv_abs_bare():
