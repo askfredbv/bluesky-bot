@@ -56,7 +56,9 @@ for the hard-won context before proposing structural changes.
 
 7. **Two-platform symmetry, no per-platform divergence of intent.** Same content to
    Bluesky and Mastodon. A platform's *mechanics* may differ — a length trim, embed
-   shape, Mastodon-only discovery hashtags (`apply_mastodon_tags`, added because
+   shape (the Curator's source rides as a link card on Bluesky and as a URL in the
+   Mastodon text, `ensure_mastodon_source_link`), Mastodon-only discovery hashtags
+   (`apply_mastodon_tags`, added because
    Mastodon has no algorithmic feed and a followed tag is its discovery mechanism),
    or Mastodon-only thread-position markers (`number_mastodon_thread`, "1/2",
    "2/2", added because Mastodon lists a self-thread newest-first, so part 2 reaches

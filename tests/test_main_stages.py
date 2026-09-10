@@ -1071,3 +1071,92 @@ def test_build_automation_payload_is_pure(monkeypatch):
     assert payload.delivered is True  # Mastodon alone counts
     assert payload.mode == "curator"
     assert payload.posted_topic_category == "LLMs"
+
+
+# ---------------------------------------------------------------------------
+# X6 (2026-09-10): Mastodon must receive the same source link Bluesky's card
+# carries. The model usually leaves the URL out of the text, so without this
+# 4 of the last 5 Curator posts reached Mastodon with no source at all.
+# ---------------------------------------------------------------------------
+
+
+def _x6_creds():
+    return SimpleNamespace(
+        gemini_api_key="g", bluesky_username="u", bluesky_password="p",
+        mastodon_access_token="t", mastodon_api_base_url="https://masto",
+    )
+
+
+def _x6_settings():
+    return SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
+
+
+def _x6_patches(monkeypatch, generate_result, captured):
+    from src.metrics import BroadcastResult
+
+    async def fake_generate(*args, **kwargs):
+        return generate_result
+
+    async def fake_get_link_metadata(url):
+        return {"title": "Chosen", "description": "", "image_data": None, "url": url}
+
+    async def fake_post_to_bluesky(client, content_list, link_meta, **kwargs):
+        captured["card"] = link_meta.get("url") if link_meta else None
+        return BroadcastResult(client=client, sent_uris=["at://x"])
+
+    async def fake_post_to_mastodon(*args, **kwargs):
+        captured["mastodon_source"] = kwargs.get("source_url", "NOT PASSED")
+        return BroadcastResult(client=None, sent_uris=["1"])
+
+    async def no_tags(*args, **kwargs):
+        return []
+
+    async def no_delay(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate)
+    monkeypatch.setattr(main, "get_link_metadata", fake_get_link_metadata)
+    monkeypatch.setattr(main, "post_to_bluesky", fake_post_to_bluesky)
+    monkeypatch.setattr(main, "post_to_mastodon", fake_post_to_mastodon)
+    monkeypatch.setattr(main, "generate_mastodon_tags", no_tags)
+    monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
+    monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
+
+
+@pytest.mark.asyncio
+async def test_broadcasting_stage_hands_mastodon_the_card_link(monkeypatch):
+    captured = {}
+    _x6_patches(monkeypatch, (["a post"], "Chosen Topic", "https://chosen.example.com/article"), captured)
+    prep = main.ContentPrepPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[{"title": "Top", "link": "https://top.example.com/article"}],
+        link_meta={"title": "Top", "description": "", "image_data": None, "url": "https://top.example.com/article"},
+        bsky_client="some-client",
+        recent_posts=[],
+        source_domain="top.example.com",
+    )
+
+    await main.broadcasting_stage(prep, _x6_settings(), _x6_creds())
+
+    # The realigned card link, not the pre-fetched top item, and the same on both platforms.
+    assert captured["card"] == "https://chosen.example.com/article"
+    assert captured["mastodon_source"] == captured["card"]
+
+
+@pytest.mark.asyncio
+async def test_broadcasting_stage_gives_mastodon_no_link_when_there_is_no_card(monkeypatch):
+    captured = {}
+    _x6_patches(monkeypatch, (["a mentor post"], "Career", None), captured)
+    prep = main.ContentPrepPayload(
+        mode="mentor",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[],
+        link_meta=None,
+        bsky_client="some-client",
+        recent_posts=[],
+    )
+
+    await main.broadcasting_stage(prep, _x6_settings(), _x6_creds())
+
+    assert captured["mastodon_source"] is None
