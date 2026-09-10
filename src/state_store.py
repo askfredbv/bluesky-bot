@@ -414,7 +414,7 @@ def save_seen_articles(seen_data: Dict[str, Any]) -> None:
     except Exception as e:
         SafeLogger.error("seen_articles_save_failed", "Failed to save seen articles", exception=e)
 def load_replied_to_strict() -> Tuple[List[str], bool]:
-    """``load_replied_to``, plus whether the result is safe to write back.
+    """Load replied_to state, plus whether the result is safe to write back.
 
     The same distinction ``load_seen_articles_strict`` draws, for the same reason:
     ``replied_to.json`` is gitignored, so a fresh Actions runner has no local copy
@@ -454,11 +454,6 @@ def load_replied_to_strict() -> Tuple[List[str], bool]:
     return [], True
 
 
-def load_replied_to() -> List[str]:
-    """Thin wrapper over ``load_replied_to_strict`` that drops the trust flag,
-    preserving the original contract for read-only callers. Anything that will
-    WRITE the result back must use the strict variant and honour ``trusted``."""
-    return load_replied_to_strict()[0]
 def save_replied_to(replied_ids: List[str]) -> None:
     if _save_gist_state("replied_to.json", replied_ids):
         return
