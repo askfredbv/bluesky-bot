@@ -86,7 +86,7 @@ Open question while in there: `seen_data["links"]` is updated on the same uncond
 
 Worth doing before any larger scoring rework — it is cheap, and it changes what the data says.
 
-### Duplicate-source-posts follow-ups (surfaced 2026-05-13)
+### ~~Duplicate-source-posts follow-ups~~ (surfaced 2026-05-13) [**resolved**: all three shipped, and the open follow-up below is moot]
 
 Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. **All three shipped:** #1 and #3 in `2be1148` (2026-05-14), #2 in `76f1287` (2026-05-15).
 
@@ -114,7 +114,7 @@ Validation run showed `bluesky=2, mastodon=0, skipped=2, errors=11` on the metri
 
 Shipped: Mastodon 404s now mark the row `orphaned=True` (upstream deletion) instead of counting as errors. `should_refresh` skips orphaned rows so the loop terminates. Detection uses exception type name or "404"/"Not Found" substring to avoid importing Mastodon.py classes into the metrics layer. Non-404 errors still count as errors. Four tests cover orphan-skip, 404→orphaned, non-404 counter, and no-repoll.
 
-**Open follow-up:** the Bluesky-side hypothesis (URI format drift from older SDK versions) isn't addressed here. If `errors` stays >0 on next run after Mastodon 404s are filtered out, the remainder belongs to Bluesky and warrants its own diagnostic pass.
+**Open follow-up:** the Bluesky-side hypothesis (URI format drift from older SDK versions) isn't addressed here. If `errors` stays >0 on next run after Mastodon 404s are filtered out, the remainder belongs to Bluesky and warrants its own diagnostic pass. **Closed 2026-09-11:** `post_metrics_refreshed` reported `errors: 0` on each of the last six runs (2026-09-08 to 2026-09-11), so there is no Bluesky-side remainder to diagnose.
 
 ---
 
@@ -139,7 +139,7 @@ Lessons:
 
 Fixes landed: `67bf81f` (UA header, cargo-culted but harmless), `8a9e07a` (urllib→httpx, keeps the codepath aligned with the bot's own Gist access).
 
-### Post length is a hard requirement [**shipped v4.15.3, 2026-04-22**]
+### ~~Post length is a hard requirement~~ [**shipped v4.15.3, 2026-04-22**]
 
 Retro kept for reference — the anti-pattern is worth remembering.
 
@@ -162,7 +162,7 @@ A Mastodon post ended *mid-sentence* with "De uitdaging blijft echter om" — co
 
 Shipped same-day as observation. New `BANNED_TEASER_PATTERNS` list in `src/config.py` covers `more to follow / more soon / more to come / stay tuned / to be continued / watch this space / follow for more / details coming / i'll dig deeper / i'll write more / i'll share more / thread incoming / 🧵`. Defensive trim in `agents.py` (`_ends_with_teaser`, `_strip_trailing_teaser`) handles both sentence-boundary and em-dash-fragment shapes — the live observation was "Notes on X — more soon." which is the em-dash fragment case. Prompt rules updated in `STYLE_GUIDELINES`. 10 new tests in `test_voice_trim.py`. Tonight's afternoon Mentor run is the first natural validator.
 
-### Extend `post_metrics.json` schema with formatting features [observed 2026-05-05]
+### ~~Extend `post_metrics.json` schema with formatting features~~ [observed 2026-05-05] [**shipped, `1e40ab8`**: `emoji_count`, `hashtag_count`, `question_count`, `length_chars`, `time_of_day_bucket`. `thread_length_posts` was not added; as the item says, it is implicit via `thread_position`]
 
 Phase 1 telemetry currently captures `had_image` and `had_link_card`, plus the raw `content_preview`. To answer formatting questions with data ("does length matter?", "do hashtags help?", "do questions in posts hurt?"), the schema needs a few cheap derived fields. Compute once at record time, no API calls:
 
@@ -177,7 +177,7 @@ This is a Track A move per the formatting-→-engagement roadmap (see §3 "Voice
 
 Effort: ~30 min in `record_post_metric` + `tests/test_metrics.py`. Risk: none (additive fields, ignored by older readers). Trigger: any time. Recommended to ship before Phase 2 starts so the digest doesn't have to backfill.
 
-### Bluesky session cache misses every run [observed 2026-05-05]
+### ~~Bluesky session cache misses every run~~ [observed 2026-05-05] [**resolved v4.20.1, `76f1287`**: atproto rotates the JWT pair mid-run and only the first pair was saved; see item 2 of the duplicate-source follow-ups above. The 2026-09-11 run logged `bluesky_session_reused`]
 
 `bluesky_session_stale` (with `error_type: BadRequestError`) fires on basically every natural run, immediately followed by `bluesky_session_cached` after the password-fallback succeeds. The caching path in `src/bluesky_session.py` is wired correctly — load from Gist → try session-string login → fall back to password → save new string back. So the writes happen; the reads happen; but the *next* read produces a string atproto rejects.
 

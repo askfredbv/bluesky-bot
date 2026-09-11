@@ -3,7 +3,6 @@ import io
 import random
 import re
 import uuid
-from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
 from atproto import AsyncClient, models
 from mastodon import Mastodon
@@ -121,23 +120,31 @@ _MASTODON_LINK_SEPARATOR = _MASTODON_TAG_SEPARATOR
 _URL_TRAILING = '.,;:!?)]}"' + "'"
 
 
+def _link_key(url: str) -> str:
+    """``canonical_url`` with a leading ``www.`` dropped, so both forms compare equal."""
+    return re.sub(r"^https://www\.", "https://", canonical_url(url))
+
+
 def _text_mentions_url(text: str, source_url: str) -> bool:
     """True if ``text`` already carries ``source_url`` in any common form.
 
-    Compared canonically, so http/https, tracking parameters, a trailing slash
-    and arXiv abs/pdf/version forms all count as the same link. A bare host/path
-    mention without a scheme counts too.
+    Each whitespace-separated word is compared as a whole link. The comparison
+    is canonical, so http/https, tracking parameters, a trailing slash, a leading
+    www. and arXiv abs/pdf/version forms all count as the same link. A bare
+    host/path mention without a scheme counts too.
+
+    Whole words, not substrings: until 2026-09-11 a bare mention matched as a
+    substring, so notexample.com/p, example.com/p/deeper and example.com/pages
+    all counted as example.com/p, and the real source link was never added.
     """
-    target = canonical_url(source_url)
+    target = _link_key(source_url)
     for token in text.split():
         candidate = token.lstrip("(<[").rstrip(_URL_TRAILING)
-        if candidate.startswith(("http://", "https://")) and canonical_url(candidate) == target:
+        if not candidate.startswith(("http://", "https://")):
+            candidate = "https://" + candidate
+        if _link_key(candidate) == target:
             return True
-    parsed = urlparse(source_url.strip())
-    bare = (parsed.netloc + parsed.path).rstrip("/").lower()
-    if bare.startswith("www."):
-        bare = bare[4:]
-    return bool(bare) and bare in text.lower()
+    return False
 
 
 def ensure_mastodon_source_link(
