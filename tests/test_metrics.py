@@ -250,6 +250,30 @@ def test_feed_health_alert_tolerates_unparseable_timestamps(monkeypatch):
     assert metrics.check_feed_health_alerts(health, now=_NOW) == []
 
 
+def test_a_stale_exempt_feed_does_not_alert_as_stale():
+    """A publisher kept on purpose although it posts rarely (2026-09-11)."""
+    from src.config import FEED_HEALTH_STALE_AFTER_DAYS
+    health = {"feeds": {"https://quiet": _feed(ok_days_ago=0,
+                                               accepted_days_ago=FEED_HEALTH_STALE_AFTER_DAYS + 30)}}
+    assert metrics.feed_health_alerts(health, now=_NOW, stale_exempt={"https://quiet"}) == []
+
+
+def test_a_stale_exempt_feed_still_alerts_when_it_breaks():
+    from src.config import FEED_HEALTH_BROKEN_AFTER_DAYS
+    health = {"feeds": {"https://quiet": _feed(ok_days_ago=FEED_HEALTH_BROKEN_AFTER_DAYS + 1,
+                                               accepted_days_ago=90)}}
+    alerts = metrics.feed_health_alerts(health, now=_NOW, stale_exempt={"https://quiet"})
+    assert [(a["url"], a["reason"]) for a in alerts] == [("https://quiet", "broken")]
+
+
+def test_the_configured_stale_exemptions_are_feeds_we_still_fetch():
+    """developers.openai.com is kept on purpose (Frederik, 2026-09-10). An
+    exemption for a feed no longer in RSS_FEEDS would be dead config."""
+    from src.config import FEED_HEALTH_STALE_EXEMPT, RSS_FEEDS
+    assert FEED_HEALTH_STALE_EXEMPT == ("https://developers.openai.com/rss.xml",)
+    assert all(url in RSS_FEEDS for url in FEED_HEALTH_STALE_EXEMPT)
+
+
 # ---------------------------------------------------------------------------
 # load_feed_health / save_feed_health
 # ---------------------------------------------------------------------------
