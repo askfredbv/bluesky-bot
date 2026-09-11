@@ -633,6 +633,10 @@ def _patch_mastodon(monkeypatch):
         return m
 
     monkeypatch.setattr(broadcasters, "Mastodon", factory)
+    # A multi-part thread waits a real "normal" pause between parts (20-75 s,
+    # random). Without this stub one test here slept that long in every run.
+    # The pause itself is covered by the test_sample_thread_pause_* tests.
+    monkeypatch.setattr(broadcasters, "_sample_thread_pause", lambda _profile: 0.0)
     return instances
 
 
