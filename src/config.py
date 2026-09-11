@@ -366,7 +366,7 @@ LLM-written, house rules: no hype, no reader-bait."""
 
 APPROVED_BIO_MASTODON = """askfred.be in feed form. AI and tech research links at 07:00 UTC, IT leadership notes at 14:30 UTC. Quiet news days: a longer take instead.
 
-Written by an LLM, edited by house rules — no hype, no reader-bait, statements only."""
+Written by an LLM, edited by house rules: no hype, no reader-bait, statements only."""
 
 # RSS Feeds (v4.1 Scholar Priority)
 RSS_FEEDS = [
