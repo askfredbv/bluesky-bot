@@ -427,3 +427,61 @@ def test_update_replied_returns_the_read_when_it_skips(monkeypatch, tmp_path):
     monkeypatch.setattr(state_store, "REPLIED_FILE", tmp_path / "replied_to.json")
     monkeypatch.setattr(state_store, "load_replied_to_strict", lambda: (["at://old"], False))
     assert state_store.update_replied_to(lambda _c: []) == ["at://old"]
+
+
+# ---------------------------------------------------------------------------
+# Trust comes from real data, not from a file existing (fixed 2026-09-11).
+# `local_exists` used to count a stray .bak while the loader ignored the .bak
+# when the primary was missing, so a failed Gist read returned the empty
+# default marked trusted, and the next save could overwrite the Gist with it.
+# ---------------------------------------------------------------------------
+
+def test_loader_restores_a_backup_whose_primary_is_missing(tmp_path):
+    path = tmp_path / "state.json"
+    path.with_suffix(".json.bak").write_text(json.dumps({"n": 1}))
+
+    assert state_store._load_json_with_repair_strict(path, lambda: {"d": 1}) == ({"n": 1}, True)
+    assert json.loads(path.read_text()) == {"n": 1}, "the primary is written back from the backup"
+
+
+@pytest.mark.parametrize("setup", ["no files", "corrupt primary and backup"])
+def test_loader_says_when_it_returned_the_default(tmp_path, setup):
+    path = tmp_path / "state.json"
+    if setup != "no files":
+        path.write_text("{broken")
+        path.with_suffix(".json.bak").write_text("{also broken")
+    assert state_store._load_json_with_repair_strict(path, lambda: {"d": 1}) == ({"d": 1}, False)
+
+
+def test_seen_read_uses_a_surviving_backup_when_the_gist_failed(monkeypatch, tmp_path):
+    _seen_env(monkeypatch, tmp_path, gist=(None, False))
+    real = {"links": ["real-1", "real-2"], "recent_topics": ["LLMs"]}
+    state_store.SEEN_FILE.with_suffix(".json.bak").write_text(json.dumps(real))
+
+    assert state_store.load_seen_articles_strict() == ({**real, "pioneer_recent": []}, True)
+
+
+def test_replied_read_uses_a_surviving_backup_when_the_gist_failed(monkeypatch, tmp_path):
+    _replied_env(monkeypatch, tmp_path, gist=(None, False))
+    state_store.REPLIED_FILE.with_suffix(".json.bak").write_text(json.dumps(["at://answered"]))
+
+    assert state_store.load_replied_to_strict() == (["at://answered"], True)
+
+
+@pytest.mark.parametrize("backup", [None, "{broken"])
+def test_seen_read_is_untrusted_when_local_files_hold_nothing_real(monkeypatch, tmp_path, backup):
+    """A failed Gist read and local files that yield no real state: that empty
+    is UNKNOWN, whatever files happen to exist."""
+    _seen_env(monkeypatch, tmp_path, gist=(None, False))
+    state_store.SEEN_FILE.write_text("{broken")
+    if backup is not None:
+        state_store.SEEN_FILE.with_suffix(".json.bak").write_text(backup)
+
+    assert state_store.load_seen_articles_strict() == (DEFAULT_SEEN, False)
+
+
+def test_replied_read_is_untrusted_when_local_files_hold_nothing_real(monkeypatch, tmp_path):
+    _replied_env(monkeypatch, tmp_path, gist=(None, False))
+    state_store.REPLIED_FILE.write_text("[broken")
+
+    assert state_store.load_replied_to_strict() == ([], False)

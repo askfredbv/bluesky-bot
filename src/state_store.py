@@ -255,61 +255,91 @@ def _atomic_write_json(file_path: Path, data: Any) -> None:
     finally:
         if temp_path.exists():
             temp_path.unlink()
+def _restore_from_backup(file_path: Path, backup_path: Path) -> Optional[Any]:
+    """Load ``backup_path`` and write it back over ``file_path``; None if unusable."""
+    try:
+        with open(backup_path, "r") as backup_file:
+            restored_data = json.load(backup_file)
+        _atomic_write_json(file_path, restored_data)
+        SafeLogger.warn("json_restored_from_backup", "Restored file from backup", file_path=str(file_path), backup_path=str(backup_path))
+        return restored_data
+    except Exception as backup_error:
+        SafeLogger.error("json_backup_restore_failed", "Backup restore failed", exception=backup_error, file_path=str(file_path))
+        return None
+
+
+def _load_json_with_repair_strict(
+    file_path: Path,
+    default_factory: Callable[[], T],
+    *,
+    migrate_list_to_seen_shape: bool = False
+) -> Tuple[T, bool]:
+    """Load JSON with corruption repair, and say whether the result came from disk.
+
+    - If the file is missing but its ``.bak`` survives, restore from the backup:
+      a backup without its primary is an interrupted or half-cleaned write, not
+      an empty history.
+    - If decode fails, try restoring from ``.bak``.
+    - If the backup is also invalid or missing, preserve the corrupt file and
+      reset to default.
+
+    Returns ``(data, from_file)``. ``from_file`` is False whenever ``data`` is the
+    synthesised default, so a caller can tell "the local tier had nothing" from
+    "the local tier had real state". The load chains used to decide that from
+    whether a file EXISTED, and a stray ``.bak`` then made an empty default look
+    like real local state (found 2026-09-11).
+    """
+    default_data = default_factory()
+    backup_path = file_path.with_suffix(file_path.suffix + ".bak")
+    if not file_path.exists():
+        restored_data = _restore_from_backup(file_path, backup_path) if backup_path.exists() else None
+        if restored_data is None:
+            return default_data, False
+        data = restored_data
+    else:
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            SafeLogger.error("json_corrupt_detected", "Corrupt JSON detected", exception=e, file_path=str(file_path))
+            restored_data = _restore_from_backup(file_path, backup_path) if backup_path.exists() else None
+            if restored_data is None:
+                import time as _time
+                corrupt_copy = file_path.parent / f"{file_path.name}.corrupt.{int(_time.time())}"
+                moved = False
+                try:
+                    os.replace(file_path, corrupt_copy)
+                    moved = True
+                    SafeLogger.warn("json_corrupt_moved", "Moved corrupt file", file_path=str(file_path), corrupt_copy=str(corrupt_copy))
+                except Exception as move_error:
+                    SafeLogger.error("json_corrupt_move_failed", "Failed moving corrupt file", exception=move_error, file_path=str(file_path))
+                if moved:
+                    _atomic_write_json(file_path, default_data)
+                return default_data, False
+            data = restored_data
+        except Exception as e:
+            SafeLogger.error("json_load_failed", "Failed to load JSON", exception=e, file_path=str(file_path))
+            return default_data, False
+
+    if migrate_list_to_seen_shape and isinstance(data, list):
+        migrated = {"links": data, "recent_topics": [], "pioneer_recent": []}
+        _atomic_write_json(file_path, migrated)
+        return migrated, True  # type: ignore[return-value]
+
+    return data, True
+
+
 def _load_json_with_repair(
     file_path: Path,
     default_factory: Callable[[], T],
     *,
     migrate_list_to_seen_shape: bool = False
 ) -> T:
-    """
-    Load JSON with corruption repair.
-    - If decode fails, try restoring from .bak.
-    - If backup is also invalid/missing, preserve corrupt file and reset to default.
-    """
-    default_data = default_factory()
-    if not file_path.exists():
-        return default_data
-
-    backup_path = file_path.with_suffix(file_path.suffix + ".bak")
-    try:
-        with open(file_path, "r") as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        SafeLogger.error("json_corrupt_detected", "Corrupt JSON detected", exception=e, file_path=str(file_path))
-        restored_data = None
-        if backup_path.exists():
-            try:
-                with open(backup_path, "r") as backup_file:
-                    restored_data = json.load(backup_file)
-                _atomic_write_json(file_path, restored_data)
-                SafeLogger.warn("json_restored_from_backup", "Restored file from backup", file_path=str(file_path), backup_path=str(backup_path))
-            except Exception as backup_error:
-                SafeLogger.error("json_backup_restore_failed", "Backup restore failed", exception=backup_error, file_path=str(file_path))
-
-        if restored_data is None:
-            import time as _time
-            corrupt_copy = file_path.parent / f"{file_path.name}.corrupt.{int(_time.time())}"
-            moved = False
-            try:
-                os.replace(file_path, corrupt_copy)
-                moved = True
-                SafeLogger.warn("json_corrupt_moved", "Moved corrupt file", file_path=str(file_path), corrupt_copy=str(corrupt_copy))
-            except Exception as move_error:
-                SafeLogger.error("json_corrupt_move_failed", "Failed moving corrupt file", exception=move_error, file_path=str(file_path))
-            if moved:
-                _atomic_write_json(file_path, default_data)
-            return default_data
-        data = restored_data
-    except Exception as e:
-        SafeLogger.error("json_load_failed", "Failed to load JSON", exception=e, file_path=str(file_path))
-        return default_data
-
-    if migrate_list_to_seen_shape and isinstance(data, list):
-        migrated = {"links": data, "recent_topics": [], "pioneer_recent": []}
-        _atomic_write_json(file_path, migrated)
-        return migrated  # type: ignore[return-value]
-
-    return data
+    """``_load_json_with_repair_strict`` without the from-file flag, for callers
+    that do not need to know where the value came from (the metrics files)."""
+    return _load_json_with_repair_strict(
+        file_path, default_factory, migrate_list_to_seen_shape=migrate_list_to_seen_shape
+    )[0]
 def prune_pioneer_recent(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Drop pioneer_recent entries older than PIONEER_COOLDOWN_DAYS.
 
@@ -367,18 +397,18 @@ def load_seen_articles_strict() -> Tuple[Dict[str, Any], bool]:
         _save_state_to_store("seen_articles", migrated)
         return migrated, True
     # 3. Local file fallback
-    local_exists = SEEN_FILE.exists() or SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".bak").exists()
-    data = _load_json_with_repair(
+    data, from_file = _load_json_with_repair_strict(
         SEEN_FILE,
         lambda: default,
         migrate_list_to_seen_shape=True
     )
     if isinstance(data, dict) and "links" in data and "recent_topics" in data:
-        # An absent local file yields the well-shaped default, which is
-        # indistinguishable from genuinely-empty state. Real local state (the
-        # file is there) is trustworthy on its own; the synthesised default is
-        # only trustworthy if the Gist read ahead of it actually succeeded.
-        return _ensure_pioneer_field(data), (local_exists or gist_trusted)
+        # The synthesised default is indistinguishable from genuinely-empty
+        # state. Real local state (read from the file or its backup) is
+        # trustworthy on its own; the default is only trustworthy if the Gist
+        # read ahead of it actually succeeded. Deciding this from whether a file
+        # exists let a stray .bak mark the default as real (fixed 2026-09-11).
+        return _ensure_pioneer_field(data), (from_file or gist_trusted)
     # 4. Nothing supplied real state. Whether the empty default is trustworthy
     #    depends entirely on whether the Gist read succeeded: a reachable Gist
     #    with no file yet is a legitimate first run, an unreachable one is not.
@@ -435,14 +465,14 @@ def load_replied_to_strict() -> Tuple[List[str], bool]:
     if isinstance(remote_data, list):
         return remote_data, True
     # 3. Local file fallback
-    local_exists = REPLIED_FILE.exists() or REPLIED_FILE.with_suffix(REPLIED_FILE.suffix + ".bak").exists()
-    data: List[str] = _load_json_with_repair(REPLIED_FILE, lambda: [])
+    loaded: Tuple[List[str], bool] = _load_json_with_repair_strict(REPLIED_FILE, lambda: [])
+    data, from_file = loaded
     if isinstance(data, list):
-        # An absent local file yields the empty list, which is indistinguishable
-        # from a genuinely empty history. Real local state is trustworthy on its
-        # own; the synthesised empty is only trustworthy if the Gist read ahead of
-        # it actually succeeded.
-        return data, (local_exists or gist_trusted)
+        # The synthesised empty list is indistinguishable from a genuinely empty
+        # history. Real local state (read from the file or its backup) is
+        # trustworthy on its own; the empty default is only trustworthy if the
+        # Gist read ahead of it actually succeeded (see load_seen_articles_strict).
+        return data, (from_file or gist_trusted)
     if not gist_trusted:
         SafeLogger.error(
             "replied_to_read_untrusted",
