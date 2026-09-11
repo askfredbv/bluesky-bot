@@ -77,7 +77,7 @@ Create a `.env` from `.env.example` for local credentials.
 pytest
 ```
 
-CI enforces a single **global 80% coverage floor** across `main.py` and `src/` (`pytest --cov-fail-under=80`), alongside `ruff` and a whole-codebase `mypy` gate.
+CI enforces a single **global 80% coverage floor** across `main.py` and `src/` (`pytest --cov-fail-under=80`), alongside `ruff` and a whole-codebase `mypy` gate. A separate `dependency-audit.yml` workflow checks the runtime lockfile for known vulnerabilities (`pip-audit`) on every PR, on pushes to `main`, and weekly.
 
 ### Dependency management
 
@@ -135,7 +135,7 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 ├── scripts/                # One-shot tools: watchlist audit, model discovery, voice audit
 ├── tests/                  # pytest suite
 ├── docs/                   # PLAN, BACKLOG, RELEASING (release checklist), retros, VOICE_AUDIT
-├── .github/workflows/      # daily_post, schedule-health, lockfile-check, codeql,
+├── .github/workflows/      # daily_post, schedule-health, lockfile-check, codeql, dependency-audit,
 │                           #   proactive_scan + approve_pending_reply (dormant), voice-audit, model-discovery
 ├── AGENTS.md               # Briefs the Codex PR reviewer on project principles
 ├── pyproject.toml          # Dependency constraints (runtime + dev extra) + project metadata
