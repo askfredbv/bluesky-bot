@@ -134,7 +134,7 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 │   └── ...                 # file_lock, logger, settings
 ├── scripts/                # One-shot tools: watchlist audit, model discovery, voice audit
 ├── tests/                  # pytest suite
-├── docs/                   # PLAN, BACKLOG, retros, VOICE_AUDIT
+├── docs/                   # PLAN, BACKLOG, RELEASING (release checklist), retros, VOICE_AUDIT
 ├── .github/workflows/      # daily_post, schedule-health, lockfile-check, codeql,
 │                           #   proactive_scan + approve_pending_reply (dormant), voice-audit, model-discovery
 ├── AGENTS.md               # Briefs the Codex PR reviewer on project principles
