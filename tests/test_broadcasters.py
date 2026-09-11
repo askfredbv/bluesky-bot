@@ -765,6 +765,27 @@ def test_link_then_marker_then_tags_on_a_thread():
     assert parts == ["Prose." + P + SRC + " 1/2" + P + "#AI #Security", "Part two. 2/2"]
 
 
+@pytest.mark.parametrize("text", [
+    "See notexample.com/p for it",      # a different site whose name ends in the source's
+    "See example.com/p/deeper for it",  # a different, deeper page on the same site
+    "See example.com/pages for it",     # a different page that merely starts the same
+])
+def test_a_page_that_merely_contains_the_source_is_not_the_source(text):
+    """Until 2026-09-11 a bare mention matched as a substring, so each of these
+    counted as the source and the real link was never added."""
+    out = broadcasters.ensure_mastodon_source_link([text], "https://example.com/p")
+    assert out == [text + P + "https://example.com/p"]
+
+
+@pytest.mark.parametrize("text", [
+    "See www.example.com/p for it",
+    "See example.com/p.",
+    "See (example.com/p) for it",
+])
+def test_a_bare_mention_of_the_source_still_counts(text):
+    assert broadcasters.ensure_mastodon_source_link([text], "https://example.com/p") == [text]
+
+
 @pytest.mark.asyncio
 async def test_post_to_mastodon_carries_the_source_link(monkeypatch):
     sent = []

@@ -251,7 +251,8 @@ SOURCE_TIERS: Dict[str, int] = {
     "lwn.net": 9,
     "krebsonsecurity.com": 8,
     "lobste.rs": 8,
-    "hnrss.org": 6,
+    # "hnrss.org": 6 removed 2026-09-11. Scoring reads the ITEM's domain and HN
+    # items link to the article itself, so this entry never matched anything.
 }
 
 PRODUCT_KEYWORDS: List[str] = ["launch", "integrated", "available", "feature", "release", "app", "tool", "partnership"]
