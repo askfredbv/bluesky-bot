@@ -17,6 +17,7 @@ from typing import Any, Collection, Dict, List, Optional
 from src.config import (
     FEED_HEALTH_BROKEN_AFTER_DAYS,
     FEED_HEALTH_STALE_AFTER_DAYS,
+    FEED_HEALTH_STALE_EXEMPT,
     FEED_HEALTH_FILE,
     FEED_HEALTH_RECENT_ATTEMPTS_LIMIT,
     GROWTH_FILE,
@@ -178,13 +179,14 @@ def _iso_age_days(stamp: Optional[str], now: datetime) -> Optional[float]:
     return (now - parsed).total_seconds() / 86400.0
 
 
-def check_feed_health_alerts(
+def feed_health_alerts(
     feed_health: Dict[str, Any],
     configured_feeds: Optional[Collection[str]] = None,
     *,
     now: Optional[datetime] = None,
-) -> List[str]:
-    """Warn on configured feeds that have quietly died. Two distinct signals.
+    stale_exempt: Collection[str] = FEED_HEALTH_STALE_EXEMPT,
+) -> List[Dict[str, Any]]:
+    """Configured feeds that have quietly died. Two distinct signals.
 
       - **broken**: no successful fetch in FEED_HEALTH_BROKEN_AFTER_DAYS days
         (timeout / TLS / DNS / SSRF block / non-200). The feed is unreachable.
@@ -208,10 +210,18 @@ def check_feed_health_alerts(
 
     `configured_feeds`, when given, restricts alerting to feeds still in RSS_FEEDS
     — feed_health.json retains rows for removed feeds, which would otherwise alert
-    forever. Emits one WARN per alerting feed and returns their URLs.
+    forever.
+
+    ``stale_exempt`` feeds skip the stale signal only. A publisher that is quiet
+    by nature, and kept on purpose, would otherwise alert forever; it still
+    alerts as broken if it stops answering.
+
+    Pure: returns one dict per alerting feed and logs nothing.
+    ``check_feed_health_alerts`` logs them during the run, and
+    ``scripts/report_feed_health.py`` turns them into a GitHub issue.
     """
     now = now or datetime.now(timezone.utc)
-    alerting: List[str] = []
+    alerts: List[Dict[str, Any]] = []
     for url, entry in (feed_health.get("feeds") or {}).items():
         if configured_feeds is not None and url not in configured_feeds:
             continue
@@ -232,7 +242,7 @@ def check_feed_health_alerts(
                 else f"never fetched successfully in {since_ok:.1f} days since first seen"
             )
             reason = "broken"
-        elif since_accepted > FEED_HEALTH_STALE_AFTER_DAYS:
+        elif url not in stale_exempt and since_accepted > FEED_HEALTH_STALE_AFTER_DAYS:
             detail = (
                 f"no usable entry in {since_accepted:.1f} days"
                 if accepted_age is not None
@@ -242,17 +252,35 @@ def check_feed_health_alerts(
         else:
             continue
 
+        alerts.append({
+            "url": url,
+            "reason": reason,
+            "detail": detail,
+            "last_ok_at": entry.get("last_ok_at"),
+            "last_accepted_at": entry.get("last_accepted_at"),
+        })
+    return alerts
+
+
+def check_feed_health_alerts(
+    feed_health: Dict[str, Any],
+    configured_feeds: Optional[Collection[str]] = None,
+    *,
+    now: Optional[datetime] = None,
+) -> List[str]:
+    """Warn in the run log on every feed ``feed_health_alerts`` flags; return their URLs."""
+    alerts = feed_health_alerts(feed_health, configured_feeds, now=now)
+    for alert in alerts:
         SafeLogger.warn(
             "feed_persistently_unhealthy",
-            f"Feed looks dead ({reason}); check the URL is still live",
-            url=url,
-            reason=reason,
-            detail=detail,
-            last_ok_at=entry.get("last_ok_at"),
-            last_accepted_at=entry.get("last_accepted_at"),
+            f"Feed looks dead ({alert['reason']}); check the URL is still live",
+            url=alert["url"],
+            reason=alert["reason"],
+            detail=alert["detail"],
+            last_ok_at=alert["last_ok_at"],
+            last_accepted_at=alert["last_accepted_at"],
         )
-        alerting.append(url)
-    return alerting
+    return [alert["url"] for alert in alerts]
 
 
 # ---------------------------------------------------------------------------

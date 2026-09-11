@@ -159,3 +159,38 @@ jobs:
           name: gist-state-${{ github.run_id }}
           path: backup/
           retention-days: 90
+
+  # Turns the feed-health check into one GitHub issue (opened, updated, closed)
+  # so a dead feed reaches a person instead of a run log. It is a job of its own
+  # so the posting job keeps a read-only token: this is the only job that may
+  # write issues. It runs after every post, a failed one included, and the post
+  # has already shipped by then. See scripts/report_feed_health.py.
+  feed-health-issue:
+    needs: post
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Open, update or close the feed-health issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: python -m scripts.report_feed_health
