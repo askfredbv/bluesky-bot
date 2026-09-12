@@ -194,9 +194,10 @@ async def test_mastodon_transient_failure_mid_thread_stops_and_keeps_earlier_pos
 
         def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
             call_log.append(status)
-            # Match the part, not the exact text: Mastodon parts now carry a "2/3"
-            # position marker, and this test is about partial delivery, not format.
-            if status.startswith("post-2"):
+            # Match the part, not the exact text: later Mastodon parts open with a
+            # "2/3: " position marker, and this test is about partial delivery,
+            # not format.
+            if "post-2" in status:
                 raise RuntimeError("mastodon blew up")
             id_counter["n"] += 1
             return {"id": id_counter["n"] * 1000}
@@ -213,14 +214,14 @@ async def test_mastodon_transient_failure_mid_thread_stops_and_keeps_earlier_pos
     )
 
     def sent(part: str) -> int:
-        return sum(1 for s in call_log if s.startswith(part))
+        return sum(1 for s in call_log if part in s)
 
     assert sent("post-1") == 1
     assert sent("post-2") == MAX_API_RETRIES + 1
     assert sent("post-3") == 0
     # Every retry of part 2 is byte-identical, marker included, so its
     # idempotency key and Mastodon's dedupe still hold.
-    assert len({s for s in call_log if s.startswith("post-2")}) == 1
+    assert len({s for s in call_log if "post-2" in s}) == 1
 
     assert isinstance(result, BroadcastResult)
     assert result.sent_uris == ["1000"]
@@ -323,7 +324,9 @@ async def test_mastodon_rate_limit_exhausts_shared_budget(monkeypatch):
             # whose own budget does end it, and the count assertions then fail.
             if len(call_log) > 20:
                 raise AssertionError("the retry loop never gave up")
-            if status.startswith("post-2"):
+            # Later Mastodon parts open with a "2/3: " marker: match the part, not
+            # the start of the text.
+            if "post-2" in status:
                 raise _FakeRateLimitError(retry_after="65")
             id_counter["n"] += 1
             return {"id": id_counter["n"] * 1000}
@@ -335,7 +338,7 @@ async def test_mastodon_rate_limit_exhausts_shared_budget(monkeypatch):
     )
 
     def sent(part: str) -> int:
-        return sum(1 for s in call_log if s.startswith(part))
+        return sum(1 for s in call_log if part in s)
 
     assert sent("post-1") == 1
     assert sent("post-2") == RATE_LIMIT_MAX_RETRIES + 1

@@ -650,10 +650,11 @@ async def test_post_to_mastodon_sends_tagged_root_and_reports_it(monkeypatch):
         tags=["#LLM", "#Python"],
     )
 
-    # Thread parts now carry a Mastodon-only position marker, placed before the
-    # tags (number_mastodon_thread). The point is unchanged: delivered_texts
-    # records the text actually sent, marker and tags included.
-    sent = ["a note 1/2\n\n#LLM #Python", "second 2/2"]
+    # Thread parts carry a Mastodon-only position marker: at the end of the root,
+    # before the tags, and at the start of later parts (number_mastodon_thread).
+    # The point is unchanged: delivered_texts records the text actually sent,
+    # marker and tags included.
+    sent = ["a note 1/2\n\n#LLM #Python", "2/2: second"]
     assert instances[0].posted == sent
     assert result.delivered_texts == sent
 

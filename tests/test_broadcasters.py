@@ -590,13 +590,18 @@ async def test_mastodon_idempotent_retry_does_not_double_count_delivery(monkeypa
 # Mastodon lists a self-thread newest-first, so a timeline reader met part 2
 # ("Continued thread") before part 1. Bluesky's client already labels
 # self-threads "1/2", "2/2"; Mastodon readers got nothing. The broadcaster now
-# numbers Mastodon parts, before the discovery tags are appended.
+# numbers Mastodon parts, before the discovery tags are appended. Since
+# 2026-09-12 a later part opens with its marker, so the part a timeline reader
+# meets first says at once that it continues something.
 # ---------------------------------------------------------------------------
 
 
 def test_each_part_of_a_thread_is_labelled():
-    assert broadcasters.number_mastodon_thread(["First.", "Second."]) == ["First. 1/2", "Second. 2/2"]
-    assert broadcasters.number_mastodon_thread(["a", "b", "c"]) == ["a 1/3", "b 2/3", "c 3/3"]
+    """The first part ends with its marker: read top-down, it says more follows.
+    Later parts open with theirs: in a newest-first timeline a later part is the
+    one a reader meets first, and it must say at once that it continues something."""
+    assert broadcasters.number_mastodon_thread(["First.", "Second."]) == ["First. 1/2", "2/2: Second."]
+    assert broadcasters.number_mastodon_thread(["a", "b", "c"]) == ["a 1/3", "2/3: b", "3/3: c"]
 
 
 def test_a_single_post_is_not_labelled():
@@ -611,6 +616,14 @@ def test_numbering_is_all_or_nothing_when_a_part_would_overflow():
     assert broadcasters.number_mastodon_thread(parts, max_length=500) == parts
 
 
+def test_a_later_part_may_fill_the_limit_with_its_opening_marker():
+    """The opening "2/2: " costs a later part five characters."""
+    fits = ["short", "x" * 495]
+    assert broadcasters.number_mastodon_thread(fits, max_length=500) == ["short 1/2", "2/2: " + "x" * 495]
+    overflows = ["short", "x" * 496]
+    assert broadcasters.number_mastodon_thread(overflows, max_length=500) == overflows
+
+
 def test_the_marker_sits_with_the_prose_and_the_tags_stay_their_own_paragraph():
     """Numbering runs first. The tags must remain a hashtag-only final paragraph,
     or Mastodon's web client stops lifting them into its hashtag bar."""
@@ -618,7 +631,7 @@ def test_the_marker_sits_with_the_prose_and_the_tags_stay_their_own_paragraph():
     tagged = broadcasters.apply_mastodon_tags(numbered, ["#Management", "#CorporateCulture"])
 
     assert tagged[0] == "They are looking for cover. 1/2\n\n#Management #CorporateCulture"
-    assert tagged[1] == "Part two. 2/2"
+    assert tagged[1] == "2/2: Part two."
 
 
 @pytest.mark.asyncio
@@ -648,7 +661,7 @@ async def test_post_to_mastodon_sends_numbered_parts_with_tags_after_the_marker(
 
     assert [s["status"] for s in sent] == [
         "When a stakeholder asks for an options paper, they want cover. 1/2\n\n#Management #CorporateCulture",
-        "The document exists to provide the audit trail. 2/2",
+        "2/2: The document exists to provide the audit trail.",
     ]
     assert sent[1]["in_reply_to_id"] == "1", "part 2 must still thread under part 1"
     # The metrics rows read delivered_texts, so they must record what was actually sent.
@@ -757,12 +770,13 @@ def test_a_link_that_would_overflow_is_skipped_and_logged(monkeypatch):
 
 
 def test_link_then_marker_then_tags_on_a_thread():
-    """The link joins the root as its own paragraph, the marker ends the part's
-    text, and the tags stay a hashtag-only final paragraph."""
+    """The link joins the root as its own paragraph, the root's marker ends its
+    text, a later part opens with its marker, and the tags stay a hashtag-only
+    final paragraph."""
     parts = broadcasters.ensure_mastodon_source_link(["Prose.", "Part two."], SRC)
     parts = broadcasters.number_mastodon_thread(parts)
     parts = broadcasters.apply_mastodon_tags(parts, ["#AI", "#Security"])
-    assert parts == ["Prose." + P + SRC + " 1/2" + P + "#AI #Security", "Part two. 2/2"]
+    assert parts == ["Prose." + P + SRC + " 1/2" + P + "#AI #Security", "2/2: Part two."]
 
 
 @pytest.mark.parametrize("text", [
