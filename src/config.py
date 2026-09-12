@@ -468,9 +468,9 @@ MENTOR_TOPICS: List[str] = [
     "estimating your own time vs estimating someone else's",
     "the half-life of a clever workaround",
     "draft revision vs writing from a blank page",
-    "code review dynamics — what changes when the reviewer is more senior than the author",
+    "code review dynamics: what changes when the reviewer is more senior than the author",
     "the half-life of internal documentation",
-    "migrations — what makes them succeed besides 'doing them'",
+    "migrations: what makes them succeed besides 'doing them'",
     "the difference between a decision that looks technical and one that is",
 ]
 
