@@ -64,7 +64,9 @@ for the hard-won context before proposing structural changes.
    or Mastodon-only thread-position markers (`number_mastodon_thread`, "1/2",
    "2/2", added because Mastodon lists a self-thread newest-first, so part 2 reaches
    a timeline reader before part 1; Bluesky's client already labels self-threads
-   this way, so the marker gives Mastodon readers what Bluesky readers see).
+   this way, so the marker gives Mastodon readers what Bluesky readers see. The
+   first part ends with its marker; later parts open with theirs, so the part a
+   timeline reader meets first says at once where it belongs).
    Its *intent* may not: no different take, link, framing, or one-platform voice rule,
    and generation stays platform-neutral — divergence lives in the broadcaster, never
    in the prompt. Partial delivery must be handled cleanly (`*_partial_delivery`),

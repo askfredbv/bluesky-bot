@@ -80,7 +80,7 @@ def number_mastodon_thread(
     content_list: List[str],
     max_length: int = MAX_POST_LENGTH_MASTODON,
 ) -> List[str]:
-    """Return a multi-part thread with "1/2", "2/2" ... appended to each part.
+    """Label a multi-part thread's parts "1/2", "2/2" ... for Mastodon.
 
     Mastodon lists a self-thread newest-first, so in a profile or home timeline
     part 2 arrives above part 1 under a "Continued thread" label, and a reader
@@ -89,11 +89,19 @@ def number_mastodon_thread(
     already had this and Mastodon readers did not. Measured on the Bluesky feed
     2026-09-10: 145 of 313 root posts were threads (18 of the last 60), and only
     31 of those 145 would fit in one 500-char Mastodon post, so collapsing
-    threads is not the fix; numbering is.
+    threads is not the fix; numbering is. Re-measured 2026-09-12 with the source
+    link and tags a Mastodon copy carries: 20 of 148 fit, and 1 of 86 Curator
+    threads.
+
+    Where the marker sits (2026-09-12): the first part ENDS with "1/2", the cue
+    that more follows once it has been read. Every later part OPENS with its
+    marker ("2/2: ..."). In a newest-first timeline that later part is the one a
+    reader meets first, and a marker at its end arrived only after the reader
+    had already read the continuation cold.
 
     Call this AFTER ensure_mastodon_source_link and BEFORE apply_mastodon_tags.
-    The marker ends the part's text, after an inline source link if there is
-    one, and the tags must stay a paragraph of their own so Mastodon's web
+    The first part's marker ends its text, after an inline source link if there
+    is one, and the tags must stay a paragraph of their own so Mastodon's web
     client still lifts them into its hashtag bar.
 
     Not a teaser (AGENTS.md #1 bans 🧵 and "thread incoming"): those announce
@@ -108,7 +116,10 @@ def number_mastodon_thread(
     total = len(content_list)
     if total < 2:
         return list(content_list)
-    numbered = [f"{part.rstrip()} {i}/{total}" for i, part in enumerate(content_list, start=1)]
+    numbered = [
+        f"{part.rstrip()} {i}/{total}" if i == 1 else f"{i}/{total}: {part.strip()}"
+        for i, part in enumerate(content_list, start=1)
+    ]
     if any(len(part) > max_length for part in numbered):
         return list(content_list)
     return numbered
@@ -437,7 +448,8 @@ async def post_to_mastodon(
     # Mastodon-only mechanics, in this order, all BEFORE the length invariant so
     # it measures the text that actually ships:
     #   1. the Curator's source link, when the text does not already carry it;
-    #   2. "1/2" thread-position markers;
+    #   2. "1/2" thread-position markers (the first part ends with its marker,
+    #      later parts open with theirs);
     #   3. discovery tags last, so they stay a hashtag-only final paragraph that
     #      Mastodon lifts into its tag bar.
     # Each step declines rather than overflow, so none should trip the check.
