@@ -281,6 +281,17 @@ def _apply_voice_trim(content_list: List[str]) -> List[str]:
                 post_index=idx,
                 hype_words=hype_hits,
             )
+        # Em-dashes are log-only too: the voice rule asks the model not to
+        # write them, and this measures whether it listens (2026-09-12). A
+        # spaced en-dash is the same dash; an unspaced one is a range.
+        dashes = post.count("—") + post.count(" – ")
+        if dashes:
+            SafeLogger.warn(
+                "em_dash_detected",
+                "Em-dash slipped past the voice rule",
+                post_index=idx,
+                count=dashes,
+            )
         trimmed.append(post)
     return trimmed
 
@@ -518,7 +529,7 @@ def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
     else:
         link_line = ""
         link_directive = (
-            "No URL is required for this entry — write the post as a complete observation. "
+            "No URL is required for this entry: write the post as a complete observation. "
             "Do NOT invent or fabricate a URL. Do NOT add 'Source:' references or '(via …)' "
             "attributions for sources we have not provided. The detail above is the post.\n"
         )
@@ -641,7 +652,7 @@ def _build_avoidance_constraints(
         bullets = "\n".join(f"  {i + 1}. {ex}" for i, ex in enumerate(excerpts))
         excerpt_block = (
             "\n- Recent post excerpts (do NOT produce text that is structurally or "
-            "rhetorically similar to any of these — different opening, different "
+            "rhetorically similar to any of these: different opening, different "
             "metaphor, different sentence rhythm):\n"
             f"{bullets}"
         )
@@ -1246,7 +1257,7 @@ async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Option
         "You produce image generation prompts for editorial illustrations. "
         "Output ONE sentence, under 60 words. No text, no people, no hands. "
         "Flat modern design, muted palette. Describe concrete visual elements "
-        "(shapes, objects, composition) — not abstract concepts."
+        "(shapes, objects, composition), not abstract concepts."
     )
     task = (
         f"TOPIC: {topic}\n\n"
@@ -1435,7 +1446,7 @@ async def generate_content(
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             "ITEMS TO WORK WITH:\n"
             f"{news_text}\n\n"
-            "Write the thread. Start with whichever item has the most interesting 'so what' — "
+            "Write the thread. Start with whichever item has the most interesting 'so what', "
             "not necessarily the most prominent headline. Connect where it makes sense, but don't force links."
         )
     elif mode == Mode.STRATEGIST:
@@ -1448,7 +1459,7 @@ async def generate_content(
         task = (
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             f"TOPIC: {topic}\n\n"
-            "Write the thread. This is the longer-horizon take — not 'what to do Monday' but "
+            "Write the thread. This is the longer-horizon take: not 'what to do Monday' but "
             "'what does this look like in five years and what should someone be building toward now'."
         )
     else:
@@ -1463,7 +1474,7 @@ async def generate_content(
         task = (
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             f"TOPIC: {topic}\n\n"
-            "Write the thread. Find the angle on this topic that most people don't articulate — "
+            "Write the thread. Find the angle on this topic that most people don't articulate: "
             "the thing that's obvious in hindsight but that someone earlier in their career genuinely hasn't heard yet."
         )
 
@@ -1482,7 +1493,7 @@ async def generate_content(
             "URLs character-for-character. Do not invent, shorten, or guess a URL.\n"
             "- \"posts\": a JSON array of 1 to 3 strings. ONE is the default. Use 2 "
             "only if the story genuinely needs a follow-on beat. 3 is rare.\n"
-            f"- Each post string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
+            f"- Each post string must be {MAX_POST_LENGTH_BSKY} characters or fewer (count carefully)\n"
             "- Never cut off mid-word or mid-sentence\n"
             "- No thread numbers, labels, or markdown outside the JSON object"
         )
@@ -1491,7 +1502,7 @@ async def generate_content(
             "OUTPUT FORMAT:\n"
             "Return ONLY a JSON array of strings, like: [\"post one\"] or [\"post one\", \"post two\"]\n"
             "- 1 to 3 strings. ONE is the default. Use 2 only if the story genuinely needs a follow-on beat. 3 is rare.\n"
-            f"- Each string must be {MAX_POST_LENGTH_BSKY} characters or fewer — count carefully\n"
+            f"- Each string must be {MAX_POST_LENGTH_BSKY} characters or fewer (count carefully)\n"
             "- Never cut off mid-word or mid-sentence\n"
             "- No thread numbers, labels, or markdown outside the JSON array"
         )
