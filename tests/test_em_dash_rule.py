@@ -85,6 +85,15 @@ async def test_the_prompt_generate_content_sends_carries_no_em_dash(monkeypatch,
     assert "—" not in _without_kept_quotes(sent[0])
 
 
+def test_no_topic_in_the_pools_carries_an_em_dash():
+    """A Mentor or Strategist topic reaches the prompt as "TOPIC: ...", so a
+    dashed topic is as good as dashed prose. Checked entry by entry, because
+    generate_content draws one at random: two dashed Mentor topics made the test
+    above fail only when one of them was drawn (PR #160's CI, 2026-09-12)."""
+    dashed = [topic for topic in (*config.MENTOR_TOPICS, *config.SECONDARY_TOPICS) if "—" in topic]
+    assert dashed == []
+
+
 # ---------------------------------------------------------------------------
 # The detector: log it, leave the post alone
 # ---------------------------------------------------------------------------
