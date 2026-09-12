@@ -8,7 +8,7 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.27.1** (20
 
 ## Priority order
 
-1. **Voice: no em-dashes in posts.** Decided 2026-09-11, first up after the 2026-09-12 release: a voice rule in both system instructions, the instruction prose itself de-dashed (quotes of Frederik stay verbatim), and a log-only detector. 3 of the 50 posts up to 2026-09-11 carried one.
+1. **Voice: measure the em-dash rule.** On `main` since 2026-09-12 (unreleased): a "never use an em-dash" rule in `STYLE_GUIDELINES`, which both system instructions include; the prompt prose de-dashed (two of Frederik's samples and two BAD example posts keep theirs, as quotes); and an `em_dash_detected` warning when one still slips through. Before: 3 of the 50 posts up to 2026-09-11. Count the warnings over ~2 weeks, and add reject-and-regenerate only if they do not drop to ~0.
 2. **Remaining open issues** — fix when convenient (see §2)
 3. **Observational items** — wait for more runs, then decide (see §3)
 4. **The plan** — `PLAN_engagement.md` covers everything else (see §4). Phase 2 and 3 stay data-gated; Phase 4b is code-complete and dormant (see §1).
