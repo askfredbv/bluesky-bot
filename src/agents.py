@@ -1437,6 +1437,24 @@ async def generate_content(
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
+        # What the model is offered, so a post can be traced to its inputs. The
+        # log otherwise records only the item it chose: on 2026-09-13 a post
+        # named Sam Altman while its link never did, and the run log could not
+        # show which offered item carried him.
+        SafeLogger.info(
+            "curator_candidates",
+            "News items offered to the model",
+            count=len(news_items),
+            candidates=[
+                {
+                    "title": str(i.get("title", ""))[:120],
+                    "link": i.get("link"),
+                    "score": round(i["score"], 1) if isinstance(i.get("score"), (int, float)) else None,
+                    "topic": i.get("detected_topic"),
+                }
+                for i in news_items
+            ],
+        )
         instr = (
             f"{SYSTEM_INSTRUCTIONS_CURATOR}\n\n"
             f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
