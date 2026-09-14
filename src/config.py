@@ -231,7 +231,9 @@ SOURCE_TIERS: Dict[str, int] = {
     "semianalysis.com": 8,
     "the-decoder.com": 7,
     "techcrunch.com": 6,
-    "export.arxiv.org": 8,  # v4.6 Hidden Gem Upgrade: Guarantee research survival
+    # "export.arxiv.org": 8 removed 2026-09-14. The arXiv feeds are served from
+    # export.arxiv.org, but their items link to arxiv.org/abs/..., and scoring reads
+    # the ITEM's domain, so this entry never matched: papers scored at the 3.0 default.
     # v4.13.0 feed expansion
     "thegradient.pub": 8,
     "magazine.sebastianraschka.com": 8,
