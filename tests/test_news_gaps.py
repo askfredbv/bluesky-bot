@@ -49,6 +49,7 @@ def _score(title, link="https://example.com/a", *, age_hours=0.0):
 @pytest.mark.parametrize("title, link, expected", [
     ("Quiet weekly roundup", "https://techcrunch.com/a", 6.0),     # tier 6, nothing else
     ("Quiet weekly roundup", "https://example.com/a", 3.0),        # no tier: the 3.0 default
+    ("Quiet weekly roundup", "https://arxiv.org/abs/2609.12345", 3.0),  # arXiv items link to arxiv.org: no tier
     ("Quiet weekly roundup", "http://[::1", 3.0),                  # unparseable link: 3.0 too
     ("Quiet launch roundup", "https://example.com/a", 8.0),        # product keyword: +5
     ("Quiet benchmark roundup", "https://example.com/a", 10.0),    # groundbreaking keyword: +7
