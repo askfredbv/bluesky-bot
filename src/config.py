@@ -178,7 +178,14 @@ FEED_HEALTH_STALE_AFTER_DAYS: int = 14
 # answering. This is for a publisher that is quiet by nature and kept on purpose,
 # which would otherwise alert as stale for good. developers.openai.com last posted
 # in April 2026; Frederik chose on 2026-09-10 to keep it as a primary vendor source.
-FEED_HEALTH_STALE_EXEMPT: tuple[str, ...] = ("https://developers.openai.com/rss.xml",)
+# microsoft.com/research publishes ~weekly (verified live 2026-09-17: HTTP 200,
+# valid RSS, newest item 2026-08-31); its posts rarely land inside the 2-day
+# freshness window, so it went stale on its own cadence, not from being broken.
+# Frederik chose on 2026-09-17 to keep it as a primary research source.
+FEED_HEALTH_STALE_EXEMPT: tuple[str, ...] = (
+    "https://developers.openai.com/rss.xml",
+    "https://www.microsoft.com/en-us/research/feed/",
+)
 
 # Post metrics telemetry (Phase 1 Step 4-5)
 POST_METRICS_CONTENT_PREVIEW_MAX_CHARS: int = 80
