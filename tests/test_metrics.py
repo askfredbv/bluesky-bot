@@ -267,10 +267,14 @@ def test_a_stale_exempt_feed_still_alerts_when_it_breaks():
 
 
 def test_the_configured_stale_exemptions_are_feeds_we_still_fetch():
-    """developers.openai.com is kept on purpose (Frederik, 2026-09-10). An
-    exemption for a feed no longer in RSS_FEEDS would be dead config."""
+    """developers.openai.com (Frederik, 2026-09-10) and microsoft.com/research
+    (Frederik, 2026-09-17) are kept on purpose. An exemption for a feed no
+    longer in RSS_FEEDS would be dead config."""
     from src.config import FEED_HEALTH_STALE_EXEMPT, RSS_FEEDS
-    assert FEED_HEALTH_STALE_EXEMPT == ("https://developers.openai.com/rss.xml",)
+    assert FEED_HEALTH_STALE_EXEMPT == (
+        "https://developers.openai.com/rss.xml",
+        "https://www.microsoft.com/en-us/research/feed/",
+    )
     assert all(url in RSS_FEEDS for url in FEED_HEALTH_STALE_EXEMPT)
 
 
