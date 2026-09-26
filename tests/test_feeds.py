@@ -45,11 +45,13 @@ def test_feeds_found_dead_on_2026_09_10_are_gone_or_replaced():
         "https://ai.stanford.edu/blog/feed.xml",            # newest post June 2022
     ):
         assert dead not in RSS_FEEDS, dead
-    for replacement in (
-        "https://engineering.fb.com/category/ai-research/feed/",
-        "https://stability.ai/news-updates?format=rss",
-    ):
-        assert replacement in RSS_FEEDS, replacement
+    # Stability's replacement (/news-updates) was itself dropped on 2026-09-26.
+    assert "https://engineering.fb.com/category/ai-research/feed/" in RSS_FEEDS
+
+
+def test_stability_dropped_on_frederiks_call_2026_09_26():
+    # Fetches fine, but too rare and too product-centric to earn its slot.
+    assert "https://stability.ai/news-updates?format=rss" not in RSS_FEEDS
 
 
 def test_feeds_dropped_or_replaced_on_frederiks_call_2026_09_10():
