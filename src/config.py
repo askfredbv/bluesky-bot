@@ -182,9 +182,15 @@ FEED_HEALTH_STALE_AFTER_DAYS: int = 14
 # valid RSS, newest item 2026-08-31); its posts rarely land inside the 2-day
 # freshness window, so it went stale on its own cadence, not from being broken.
 # Frederik chose on 2026-09-17 to keep it as a primary research source.
+# engineering.fb.com (AI research, ~monthly; newest item 2026-09-02) and
+# magazine.sebastianraschka.com (every 2-4 weeks; newest item 2026-09-09) went
+# stale the same way (verified live 2026-09-26: both HTTP 200, valid RSS).
+# Frederik chose on 2026-09-26 to keep both.
 FEED_HEALTH_STALE_EXEMPT: tuple[str, ...] = (
     "https://developers.openai.com/rss.xml",
     "https://www.microsoft.com/en-us/research/feed/",
+    "https://engineering.fb.com/category/ai-research/feed/",
+    "https://magazine.sebastianraschka.com/feed",
 )
 
 # Post metrics telemetry (Phase 1 Step 4-5)
@@ -403,9 +409,9 @@ RSS_FEEDS = [
     # to the bot and 404 elsewhere, and no feed URL exists (/the-batch/feed/,
     # /the-batch/feed.xml, /the-batch/rss.xml, /feed/, /rss.xml all 404).
     "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss",
-    # 2026-09-10: /blog?format=rss returns 404; Stability's posts moved to
-    # /news-updates, which serves RSS.
-    "https://stability.ai/news-updates?format=rss",
+    # 2026-09-26: stability.ai REMOVED on Frederik's call. /news-updates fetches
+    # fine but posts rarely (May, then August 2026) and mostly about its own
+    # products, so it alerted as stale without ever feeding a run.
     "https://siliconangle.com/category/ai/feed",
     # v4.13.0 feed expansion — validated 2026-04-18
     # 2026-09-10: thegradient.pub REMOVED on Frederik's call. One post since
