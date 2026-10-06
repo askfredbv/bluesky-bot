@@ -130,20 +130,38 @@ DEFAULT_SOURCE_TIER = 3.0
 
 
 def source_tier(link: str) -> float:
-    """The SOURCE_TIERS score for a link's domain, or DEFAULT_SOURCE_TIER.
+    """The SOURCE_TIERS score for a link's host, or DEFAULT_SOURCE_TIER.
 
     Extracted so scoring and candidate selection cannot disagree about what a
     link's tier is — selection has to recognise a primary source by exactly the
-    rule that scored it. Matching is a substring test against the netloc, which
-    is how "openai.com" also covers "developers.openai.com".
+    rule that scored it.
+
+    Matching is on the parsed HOSTNAME, requiring either an exact match or a
+    "<something>.<configured domain>" suffix. It used to be a substring test
+    against the netloc, which handed OpenAI's tier-10 to `notopenai.com`,
+    `openai.com.evil.example` and `openai.com@attacker.example` alike. That was
+    always wrong but merely inflated a score; once _is_tier1 began guaranteeing
+    shortlist seats it became a way to force a spoofed host into the Curator's
+    candidates as an AI lab's own announcement — and items DO arrive from
+    arbitrary third-party domains via the Hacker News and Lobsters feeds.
+    Using .hostname rather than .netloc also drops userinfo and port, which is
+    what defeats the `@attacker.example` form. (Found in review of #169.)
+
+    The suffix rule preserves the documented intent that "openai.com" also
+    covers "developers.openai.com". Where several entries match, the most
+    specific (longest) wins, so the result no longer depends on dict order.
     """
     try:
-        parsed = urlparse(link)
-        source_domain = parsed.netloc if parsed.netloc else ""
-        return float(next((val for domain, val in SOURCE_TIERS.items()
-                           if domain in source_domain), DEFAULT_SOURCE_TIER))
+        host = (urlparse(link).hostname or "").lower().rstrip(".")
     except Exception:
         return DEFAULT_SOURCE_TIER  # unparseable link
+    if not host:
+        return DEFAULT_SOURCE_TIER
+    matches = [(len(domain), val) for domain, val in SOURCE_TIERS.items()
+               if host == domain or host.endswith("." + domain)]
+    if not matches:
+        return DEFAULT_SOURCE_TIER
+    return float(max(matches)[1])
 
 
 def _is_gem(link: str) -> bool:
@@ -173,10 +191,20 @@ def select_candidates(ranked: List[Dict[str, Any]], limit: int) -> List[Dict[str
     negative scores stay out, since a floor is a diversity guarantee, not a
     licence to ship a bad candidate.
     """
-    # Pass 1: best-first, holding the gem cap.
+    # The cap may only ever displace a gem in favour of a candidate that is
+    # itself worth offering. Applying it across the whole ranked list let a
+    # NEGATIVE-scoring non-gem take a slot from a positive gem: gems at
+    # 10/9/8/7 plus non-gems at -1/-2/-3 produced [10, 9, -1, -2, -3], which
+    # contradicts this function's own contract that a negative score is a bad
+    # candidate. So the cap is applied among the positives only.
+    # (Found in review of #169.)
+    positives = [i for i in ranked if i.get('score', 0.0) > 0]
+    remainder = [i for i in ranked if i.get('score', 0.0) <= 0]
+
+    # Pass 1: best-first among the positives, holding the gem cap.
     selected: List[Dict[str, Any]] = []
     gems = 0
-    for item in ranked:
+    for item in positives:
         if len(selected) >= limit:
             break
         if _is_gem(item['link']):
@@ -188,15 +216,26 @@ def select_candidates(ranked: List[Dict[str, Any]], limit: int) -> List[Dict[str
     # Pass 2: the cap limits gem REPRESENTATION, it does not shrink the
     # shortlist. If the pool is all research (an arXiv-only morning is the
     # normal case, not the edge case) pass 1 stops at MAX_GEM_CANDIDATES and
-    # would hand the model two candidates instead of five. Fill the remainder
-    # best-first, cap released, rather than offer a thinner menu.
-    if len(selected) < limit:
-        chosen = {id(i) for i in selected}
-        for item in ranked:
-            if len(selected) >= limit:
-                break
-            if id(item) not in chosen:
-                selected.append(item)
+    # would hand the model two candidates instead of five. Release the cap and
+    # fill from the remaining positives before considering anything weaker.
+    chosen = {id(i) for i in selected}
+    for item in positives:
+        if len(selected) >= limit:
+            break
+        if id(item) not in chosen:
+            selected.append(item)
+            chosen.add(id(item))
+
+    # Pass 3: only now, if the pool simply has nothing better, top up from the
+    # non-positive remainder. Returning a short list would change what callers
+    # downstream can assume, so this preserves "up to `limit`" — but a weak
+    # candidate can no longer outrank a good one.
+    for item in remainder:
+        if len(selected) >= limit:
+            break
+        if id(item) not in chosen:
+            selected.append(item)
+            chosen.add(id(item))
 
     def _promote(predicate, floor: int, event: str) -> None:
         """Top the shortlist up to `floor` items matching `predicate`."""
