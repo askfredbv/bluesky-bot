@@ -279,13 +279,51 @@ HIDDEN_GEM_SOURCES: List[str] = [
 ]
 CONSENSUS_SYNERGY_BONUS: float = 1.5
 
-# Flagship 2026 AI products — these get a dedicated scoring bonus because
-# a post about gpt-5 or claude 4 is categorically more consequential than
-# a generic "new feature" story. Review and update quarterly.
+# Topic repetition cooldown. The Curator should not post the same category of
+# story on consecutive days, but this used to be a flat -12.0 for any topic
+# present in `recent_topics` — larger than the entire source-tier spread (3.0
+# for an unknown blog to 10.0 for a primary source), so it outranked quality
+# outright. Combined with `recent_topics` only ever recording NON-"General"
+# topics, the list stopped turning over and became a standing blocklist: on
+# 2026-10-06 it held ['LLMs', 'Vision/Robot', 'Policy/Society', 'Compute/HW',
+# 'LLMs'] — four of the five categories permanently suppressed, leaving only
+# items that matched no topic keyword at all. That is why 101 of 105 candidates
+# offered to the model over three weeks were "General" arXiv preprints, and why
+# "Gemini 4 Argon" scored -0.50 against an arXiv batch at 13.50.
+#
+# Now: a cooldown that decays with recency, applied to the MOST RECENT
+# occurrence of the topic. Posted last run costs the full penalty; further back
+# costs geometrically less; outside the window costs nothing. "General" is
+# recorded like any other topic (see main.py), so the window actually turns
+# over — and because "General" dominates the candidate pool, recording it is
+# what puts the repeated arXiv flood on cooldown instead of the news.
+TOPIC_REPEAT_PENALTY: float = 6.0   # at distance 0 (the topic posted last run)
+TOPIC_REPEAT_DECAY: float = 0.55    # multiplier per run of additional distance
+RECENT_TOPICS_WINDOW: int = 5       # how many posted topics we remember
+
+# Flagship AI products — these get a dedicated scoring bonus because a post
+# about the current frontier model is categorically more consequential than a
+# generic "new feature" story. `scripts/refresh_momentum.py` rewrites this list
+# monthly and opens a PR; hand edits are the stopgap when it has not run.
+#
+# Refreshed by hand 2026-10-06. The previous list ("gemini 3", "claude 4",
+# "llama 4", "grok 3/4", "o3/o4", …) had gone a generation stale, so the bonus
+# did not fire on "Gemini 4 Argon: our next era of frontier intelligence" —
+# the launch scored 11.5 against an arXiv batch at 13.5 and was never offered
+# to the Curator. Names below are taken from headlines the bot's own tier-1
+# feeds carried in the 48h window, not from memory: entries must be evidenced.
+#
+# Matching is a lowercase SUBSTRING test over title+description, so every entry
+# stays version-qualified. Bare product words are not safe here — "beam" would
+# match Google Beam (video calling) as readily as Reflection's Beam, and "muse"
+# matches "museum". When in doubt, leave it out: a missing name costs 4 points,
+# a false positive boosts noise into the feed.
 MOMENTUM_PRODUCTS: List[str] = [
-    "gpt-5", "gpt 5", "claude 4", "claude opus 4", "claude sonnet 4",
-    "llama 4", "gemini 3", "gemma 4", "o3", "o4",
-    "grok 3", "grok 4", "deepseek v4", "mistral large 3",
+    "gpt-6", "gpt 6", "gpt-5.2", "gpt-oss",
+    "gemini 4", "gemini 3.8", "gemini robotics",
+    "claude opus 5", "claude sonnet 5",
+    "qwen3.8", "deepseek v3.2", "mistral medium 3.5",
+    "north 2", "rho-1",
 ]
 MOMENTUM_PRODUCT_BONUS: float = 4.0
 

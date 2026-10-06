@@ -1,5 +1,13 @@
 import pytest
 from datetime import datetime, timezone, timedelta
+from src.config import (
+    MOMENTUM_PRODUCTS,
+    MOMENTUM_PRODUCT_BONUS,
+    RECENT_TOPICS_WINDOW,
+    SOURCE_TIERS,
+    TOPIC_REPEAT_DECAY,
+    TOPIC_REPEAT_PENALTY,
+)
 from src.news import calculate_relevance_score
 
 def test_source_tier_ranking():
@@ -24,18 +32,95 @@ def test_groundbreaking_boost():
     
     assert score_frontier > score_normal # The groundbreaking boost (+7) should beat the product boost (+5)
 
-def test_topic_diversity_penalty():
-    """Verify that recently discussed topics (Topic Memory) get penalized."""
-    item = {'title': 'LLM Scaling', 'description': 'GPT news.', 'link': 'https://techcrunch.com/1'}
+LLM_ITEM = {'title': 'LLM Scaling', 'description': 'GPT news.',
+            'link': 'https://techcrunch.com/1'}
+
+
+def test_topic_repeat_cooldown_full_penalty_for_last_posted():
+    """A topic posted on the previous run costs the full cooldown."""
     now = datetime.now(timezone.utc)
-    
-    # 1. No penalty
-    score_fresh = calculate_relevance_score(item, now, [])
-    
-    # 2. Penalty (LLM is in recent topics)
-    score_penalized = calculate_relevance_score(item, now, ["LLMs"])
-    
-    assert score_penalized == pytest.approx(score_fresh - 12.0)
+    score_fresh = calculate_relevance_score(dict(LLM_ITEM), now, [])
+    score_penalised = calculate_relevance_score(dict(LLM_ITEM), now, ["LLMs"])
+
+    assert score_penalised == pytest.approx(score_fresh - TOPIC_REPEAT_PENALTY)
+
+
+def test_topic_repeat_cooldown_decays_with_distance():
+    """The further back the topic was posted, the smaller the penalty.
+
+    This is the behaviour the flat -12.0 lacked: a topic touched once sat in
+    `recent_topics` at full strength until five further non-General posts
+    pushed it out, which at the real posting rate meant months.
+    """
+    now = datetime.now(timezone.utc)
+    fresh = calculate_relevance_score(dict(LLM_ITEM), now, [])
+
+    # "LLMs" posted 1, 2 and 3 runs before the most recent post.
+    penalties = []
+    for distance in range(3):
+        window = ["LLMs"] + ["General"] * distance
+        scored = calculate_relevance_score(dict(LLM_ITEM), now, window)
+        penalties.append(fresh - scored)
+        assert penalties[-1] == pytest.approx(
+            TOPIC_REPEAT_PENALTY * (TOPIC_REPEAT_DECAY ** distance))
+
+    # Strictly decreasing — never flat, never growing.
+    assert penalties[0] > penalties[1] > penalties[2] > 0
+
+
+def test_topic_repeat_cooldown_counts_only_most_recent_occurrence():
+    """A topic repeated in the window is charged once, at its nearest distance.
+
+    Summing every occurrence would let a topic accrue a debt it can never pay
+    off, which is the trap the previous implementation fell into in production.
+    """
+    now = datetime.now(timezone.utc)
+    fresh = calculate_relevance_score(dict(LLM_ITEM), now, [])
+    # The live 2026-10-06 window shape: "LLMs" appears twice, most recently last.
+    window = ["LLMs", "Vision/Robot", "Policy/Society", "Compute/HW", "LLMs"]
+    scored = calculate_relevance_score(dict(LLM_ITEM), now, window)
+
+    assert fresh - scored == pytest.approx(TOPIC_REPEAT_PENALTY)
+
+
+def test_topic_repeat_cooldown_expires_outside_window():
+    """Beyond RECENT_TOPICS_WINDOW posts ago, a topic costs nothing at all."""
+    now = datetime.now(timezone.utc)
+    fresh = calculate_relevance_score(dict(LLM_ITEM), now, [])
+    aged_out = ["LLMs"] + ["General"] * RECENT_TOPICS_WINDOW
+
+    assert calculate_relevance_score(dict(LLM_ITEM), now, aged_out) == pytest.approx(fresh)
+
+
+def test_topic_repeat_cooldown_never_outweighs_the_source_tier_spread():
+    """The cooldown must not outrank source quality.
+
+    The tier spread is 3.0 (unknown blog) to 10.0 (primary source). The old
+    -12.0 exceeded it, so a repeated topic from a primary source lost to an
+    unknown blog on topic alone. A diversity signal may break a tie; it may not
+    overrule where the story came from.
+    """
+    assert TOPIC_REPEAT_PENALTY < max(SOURCE_TIERS.values()) - 3.0
+
+
+def test_general_topic_is_penalised_like_any_other():
+    """"General" is a topic on cooldown too, not an exempt catch-all.
+
+    75% of candidate slots over three weeks were "General" arXiv preprints. If
+    "General" were exempt the cooldown would penalise only the on-brand news
+    categories and leave the dominant flood untouched — which is exactly what
+    production did.
+    """
+    plain = {'title': 'Assorted updates', 'description': 'Notes.',
+             'link': 'https://example.com/1'}
+    now = datetime.now(timezone.utc)
+
+    probe = dict(plain)
+    fresh = calculate_relevance_score(probe, now, [])
+    assert probe['detected_topic'] == "General", "test premise: item matches no topic"
+
+    scored = calculate_relevance_score(dict(plain), now, ["General"])
+    assert fresh - scored == pytest.approx(TOPIC_REPEAT_PENALTY)
 
 def test_time_decay():
     """Verify that older articles lose points over time."""
@@ -87,12 +172,22 @@ def test_consensus_synergy_three_feeds_adds_double_bonus():
     assert score_three == pytest.approx(score_one + 2 * CONSENSUS_SYNERGY_BONUS)
 
 
-def test_momentum_product_bonus():
-    """Items mentioning flagship 2026 products score MOMENTUM_PRODUCT_BONUS higher."""
-    from src.config import MOMENTUM_PRODUCT_BONUS
-    # Identical items from same source and age — only difference is product name in title
-    base = {'title': 'New AI Model Released', 'description': 'Details', 'link': 'https://techcrunch.com/1'}
-    flagship = {'title': 'claude 4 Released by Anthropic', 'description': 'Details', 'link': 'https://techcrunch.com/2'}
+@pytest.mark.parametrize("product", MOMENTUM_PRODUCTS)
+def test_momentum_product_bonus(product):
+    """EVERY configured flagship name must earn MOMENTUM_PRODUCT_BONUS.
+
+    Parametrised over the live list rather than hardcoding a name: the two
+    tests this replaced asserted "claude 4" and "GPT-5", so they kept passing
+    while the list itself went a generation stale and the bonus stopped firing
+    on real launches (Gemini 4 Argon, 2026-09-30). A configured name that
+    cannot match is now a test failure, not a silent dead entry.
+    """
+    # Identical items from the same source and age — the only difference is the
+    # product name in the title.
+    base = {'title': 'New AI Model Released', 'description': 'Details',
+            'link': 'https://techcrunch.com/1'}
+    flagship = {'title': f'{product} Released by a Lab', 'description': 'Details',
+                'link': 'https://techcrunch.com/2'}
     now = datetime.now(timezone.utc)
 
     score_base = calculate_relevance_score(base, now, [])
@@ -101,17 +196,38 @@ def test_momentum_product_bonus():
     assert score_flagship == pytest.approx(score_base + MOMENTUM_PRODUCT_BONUS)
 
 
-def test_momentum_product_bonus_case_insensitive():
-    """Momentum matching is lowercase — title casing should not matter."""
-    from src.config import MOMENTUM_PRODUCT_BONUS
-    upper_case = {'title': 'GPT-5 Announced', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/1'}
-    no_match = {'title': 'New Model Announced', 'description': 'Breaking news.', 'link': 'https://techcrunch.com/2'}
+@pytest.mark.parametrize("product", MOMENTUM_PRODUCTS)
+def test_momentum_product_bonus_case_insensitive(product):
+    """Momentum matching is lowercase — title casing must not matter."""
+    upper_case = {'title': f'{product.upper()} Announced', 'description': 'Breaking news.',
+                  'link': 'https://techcrunch.com/1'}
+    no_match = {'title': 'New Model Announced', 'description': 'Breaking news.',
+                'link': 'https://techcrunch.com/2'}
     now = datetime.now(timezone.utc)
 
     score_match = calculate_relevance_score(upper_case, now, [])
     score_no_match = calculate_relevance_score(no_match, now, [])
 
     assert score_match == pytest.approx(score_no_match + MOMENTUM_PRODUCT_BONUS)
+
+
+def test_momentum_products_are_substring_safe():
+    """No flagship name may be a bare word that matches unrelated copy.
+
+    Matching is a substring test over title+description, so an unqualified
+    product word quietly boosts noise: "beam" hits Google Beam (video calling)
+    as readily as Reflection's Beam model, and "muse" hits "museum". Require
+    every entry to carry a version or qualifier: a digit ("gemini 4"), a second
+    word ("north 2"), or a hyphenated compound ("gpt-oss"). A single bare
+    dictionary word is rejected.
+    """
+    for product in MOMENTUM_PRODUCTS:
+        qualified = (any(c.isdigit() for c in product)
+                     or " " in product
+                     or "-" in product)
+        assert qualified, (
+            f"{product!r} is an unqualified bare word; add a version or qualifier"
+        )
 
 
 def test_fetch_news_merges_source_feeds_on_duplicate_link(monkeypatch):
