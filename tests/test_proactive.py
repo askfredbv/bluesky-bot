@@ -326,6 +326,45 @@ def test_validate_rejects_banned_hype():
     assert "hype" in reason.lower()
 
 
+@pytest.mark.parametrize("sentence", [
+    "Worth a delve into how the scheduler actually resolves this.",
+    "You can utilize the same cache for both paths without much work.",
+    "Teams utilise the same cache for both paths without much work.",
+    "This is the paradigm shift everyone keeps promising will arrive.",
+    "A transformative change to how the scheduler resolves contention.",
+    "It will empower teams to ship without waiting on a review queue.",
+    "The cutting-edge approach here is just a queue with better naming.",
+    "A cutting edge approach here is just a queue with better naming.",
+    "It will supercharge the build step without touching the test suite.",
+    "Leveraging the same cache for both paths is the cheap win here.",
+])
+def test_validate_rejects_the_corporate_llm_register(sentence):
+    """The flat LLM register is rejected too, not just carnival hype.
+
+    The original list caught a post shouting ("amazing", "game-changing") but
+    not one written in a language model's default voice, which is the more
+    likely failure mode here. Added 2026-10-06 from the no-ai-slop skill.
+    """
+    ok, reason = _validate_proactive_reply(sentence)
+    assert ok is False
+    assert "hype" in reason.lower()
+
+
+def test_leverage_the_noun_is_still_allowed():
+    """Only the verb form is slop.
+
+    Frederik is a management consultant: "operational leverage" and "leverage
+    in a negotiation" are the noun used correctly, so bare "leverage" is
+    deliberately NOT banned while "leveraging" is. The two do not overlap as
+    substrings, so banning one does not catch the other — this test pins that
+    distinction, which is easy to "tidy up" into a bug later.
+    """
+    ok, reason = _validate_proactive_reply(
+        "Their operational leverage is the part the filing does not spell out."
+    )
+    assert ok is True, reason
+
+
 def test_validate_rejects_banned_opener():
     """Source-summary openers ('Great point about X') burn credibility."""
     ok, reason = _validate_proactive_reply(
