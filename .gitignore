@@ -20,3 +20,8 @@ scripts/watchlist_candidates.py
 .coverage
 coverage.xml
 htmlcov/
+
+# Flattened copies of the repo made for pasting into an external LLM for review
+# (one <documents> blob of every source file). Regenerable, ~750 KB, and would
+# be a duplicate of the repo inside the repo if `git add -A` ever swept it up.
+repo-dump*.txt
