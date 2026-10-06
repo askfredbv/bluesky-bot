@@ -301,6 +301,48 @@ TOPIC_REPEAT_PENALTY: float = 6.0   # at distance 0 (the topic posted last run)
 TOPIC_REPEAT_DECAY: float = 0.55    # multiplier per run of additional distance
 RECENT_TOPICS_WINDOW: int = 5       # how many posted topics we remember
 
+# Time decay. The rate was 0.5/hour against a 48-hour eligibility window, so an
+# item could shed 24 points on age alone — more than three times the entire
+# source-tier spread (3.0 to 10.0). Recency therefore outranked provenance by
+# default, and it did so asymmetrically: the Curator only ever runs at 07:00 UTC
+# (main.py selects by hour), when arXiv's nightly batch is ~3 hours old and a
+# US-afternoon announcement is 9 to 15 hours old. "Gemini 4 Argon", announced at
+# 20:00 UTC, was 11 hours old at the next Curator run and paid 5.5 points for it
+# while the arXiv batch paid 1.5.
+#
+# 0.25/hour keeps fresher-is-better inside the window (12 points end to end)
+# without letting the clock overrule the source. TIME_DECAY_MAX bounds it in
+# case an item ever outlives the lookback filter.
+TIME_DECAY_PER_HOUR: float = 0.25
+TIME_DECAY_MAX: float = 12.0
+
+# Feeds sometimes carry a publication date in the future — a timezone bug, or a
+# scheduled post that leaks early. Age was used unclamped, so a negative age
+# SUBTRACTED a negative number: a item dated 72 hours ahead scored 42.0 against
+# a legitimate ceiling near 15, and it would win every run until its own
+# timestamp caught up. The lookback filter in fetch_single_feed does not catch
+# this (it only drops items that are too OLD). Treat anything not yet published
+# as brand new, never as better than new.
+TIME_DECAY_MIN_AGE_HOURS: float = 0.0
+
+# Candidate source mix. fetch_news hands the Curator a shortlist and the model
+# writes about ONE of them, so the shortlist's job is to be a representative
+# menu, not a winner. It was neither: across the 21 logged Curator runs from
+# 2026-09-13 to 2026-10-04, 79 of 105 candidate slots were arXiv preprints, 13
+# of 21 runs offered nothing BUT arXiv, and only 2 of 21 offered even one
+# primary source. The model had no choice to make.
+#
+# Hidden Gem Injection guaranteed arXiv a seat but nothing guaranteed one to a
+# primary source, so the asymmetry was built in. Now both ends are bounded: a
+# floor AND a cap for the research sources, and a floor for the primary sources.
+# A "tier-1" source is one scoring TIER1_SOURCE_SCORE in SOURCE_TIERS, which is
+# the AI labs' own blogs (OpenAI, Anthropic, DeepMind, Google, Mistral, Hugging
+# Face, Meta AI) rather than anything merely high-quality like LWN at 9.
+TIER1_SOURCE_SCORE: float = 10.0
+MIN_GEM_CANDIDATES: int = 1    # keep the original Hidden Gem floor
+MAX_GEM_CANDIDATES: int = 2    # ... but it is a floor, not a monopoly
+MIN_TIER1_CANDIDATES: int = 2  # best-effort: only if the pool holds that many
+
 # Flagship AI products — these get a dedicated scoring bonus because a post
 # about the current frontier model is categorically more consequential than a
 # generic "new feature" story. `scripts/refresh_momentum.py` rewrites this list

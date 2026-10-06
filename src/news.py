@@ -31,10 +31,17 @@ from src.config import (
     HIDDEN_GEM_SOURCES,
     MOMENTUM_PRODUCTS,
     MOMENTUM_PRODUCT_BONUS,
+    MAX_GEM_CANDIDATES,
+    MIN_GEM_CANDIDATES,
+    MIN_TIER1_CANDIDATES,
     PRODUCT_KEYWORDS,
     RECENT_TOPICS_WINDOW,
     RSS_FEEDS,
     SOURCE_TIERS,
+    TIER1_SOURCE_SCORE,
+    TIME_DECAY_MAX,
+    TIME_DECAY_MIN_AGE_HOURS,
+    TIME_DECAY_PER_HOUR,
     TOPIC_MAP,
     TOPIC_REPEAT_DECAY,
     TOPIC_REPEAT_PENALTY,
@@ -119,18 +126,195 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
                 if _titles_cluster(tokens_i, tokens_j):
                     domains.add(domain_j)
         item["cross_publisher_domains"] = max(1, len(domains))
+DEFAULT_SOURCE_TIER = 3.0
+
+
+def _host_of(link: str) -> str:
+    """The lowercased hostname of a link, or "" if it has none.
+
+    .hostname rather than .netloc on purpose: it drops userinfo and port, so
+    `https://openai.com@attacker.example/x` reports `attacker.example` instead
+    of a string that merely contains a trusted domain.
+    """
+    try:
+        return (urlparse(link).hostname or "").lower().rstrip(".")
+    except Exception:
+        return ""
+
+
+def _host_matches(host: str, domain: str) -> bool:
+    """True if `host` IS `domain` or is a subdomain of it.
+
+    The single place that decides whether a link belongs to a configured
+    domain, so the tier table and the research-source list cannot drift apart.
+    Anchored at a label boundary, which is what separates `developers.openai.com`
+    (a real subdomain, must match) from `notopenai.com` and
+    `openai.com.evil.example` (must not).
+    """
+    return bool(host) and (host == domain or host.endswith("." + domain))
+
+
+def source_tier(link: str) -> float:
+    """The SOURCE_TIERS score for a link's host, or DEFAULT_SOURCE_TIER.
+
+    Extracted so scoring and candidate selection cannot disagree about what a
+    link's tier is — selection has to recognise a primary source by exactly the
+    rule that scored it.
+
+    Matching is on the parsed HOSTNAME, requiring either an exact match or a
+    "<something>.<configured domain>" suffix. It used to be a substring test
+    against the netloc, which handed OpenAI's tier-10 to `notopenai.com`,
+    `openai.com.evil.example` and `openai.com@attacker.example` alike. That was
+    always wrong but merely inflated a score; once _is_tier1 began guaranteeing
+    shortlist seats it became a way to force a spoofed host into the Curator's
+    candidates as an AI lab's own announcement — and items DO arrive from
+    arbitrary third-party domains via the Hacker News and Lobsters feeds.
+    Using .hostname rather than .netloc also drops userinfo and port, which is
+    what defeats the `@attacker.example` form. (Found in review of #169.)
+
+    The suffix rule preserves the documented intent that "openai.com" also
+    covers "developers.openai.com". Where several entries match, the most
+    specific (longest) wins, so the result no longer depends on dict order.
+    """
+    host = _host_of(link)
+    if not host:
+        return DEFAULT_SOURCE_TIER
+    matches = [(len(domain), val) for domain, val in SOURCE_TIERS.items()
+               if _host_matches(host, domain)]
+    if not matches:
+        return DEFAULT_SOURCE_TIER
+    return float(max(matches)[1])
+
+
+def _is_gem(link: str) -> bool:
+    """True for the research/academic sources that get a reserved slot.
+
+    Host-anchored for the same reason source_tier is: `gem in link` was a
+    substring test over the whole URL, so `https://arxiv.org.evil.example/x`
+    counted as a research paper and could claim the reserved gem slot — and the
+    Hacker News and Lobsters feeds carry arbitrary submitted URLs. Worse than
+    the tier case in one way: a substring test over the URL matches anywhere,
+    including the path, so `https://evil.example/?u=arxiv.org` qualified too.
+    (CodeQL py/incomplete-url-substring-sanitization, on PR #173.)
+    """
+    host = _host_of(link)
+    return any(_host_matches(host, gem) for gem in HIDDEN_GEM_SOURCES)
+
+
+def _is_tier1(link: str) -> bool:
+    """True for a primary source: an AI lab's own blog (see TIER1_SOURCE_SCORE)."""
+    return source_tier(link) >= TIER1_SOURCE_SCORE
+
+
+def select_candidates(ranked: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Pick the shortlist handed to the Curator: best-first, but source-mixed.
+
+    Three rules, applied to an already-ranked list:
+
+    * at most MAX_GEM_CANDIDATES research items (arXiv et al), so a nightly
+      preprint batch cannot take every slot;
+    * at least MIN_GEM_CANDIDATES research item, the original Hidden Gem floor;
+    * at least MIN_TIER1_CANDIDATES primary sources when the pool holds them.
+
+    Floors are best-effort and never fabricate: if the pool has no primary
+    source, the shortlist simply has none. Promotions evict the lowest-scoring
+    item that is not itself needed to satisfy a floor, so the two floors cannot
+    starve each other. A promoted item must still out-score nothing-at-all —
+    negative scores stay out, since a floor is a diversity guarantee, not a
+    licence to ship a bad candidate.
+    """
+    # The cap may only ever displace a gem in favour of a candidate that is
+    # itself worth offering. Applying it across the whole ranked list let a
+    # NEGATIVE-scoring non-gem take a slot from a positive gem: gems at
+    # 10/9/8/7 plus non-gems at -1/-2/-3 produced [10, 9, -1, -2, -3], which
+    # contradicts this function's own contract that a negative score is a bad
+    # candidate. So the cap is applied among the positives only.
+    # (Found in review of #169.)
+    positives = [i for i in ranked if i.get('score', 0.0) > 0]
+    remainder = [i for i in ranked if i.get('score', 0.0) <= 0]
+
+    # Pass 1: best-first among the positives, holding the gem cap.
+    selected: List[Dict[str, Any]] = []
+    gems = 0
+    for item in positives:
+        if len(selected) >= limit:
+            break
+        if _is_gem(item['link']):
+            if gems >= MAX_GEM_CANDIDATES:
+                continue
+            gems += 1
+        selected.append(item)
+
+    # Pass 2: the cap limits gem REPRESENTATION, it does not shrink the
+    # shortlist. If the pool is all research (an arXiv-only morning is the
+    # normal case, not the edge case) pass 1 stops at MAX_GEM_CANDIDATES and
+    # would hand the model two candidates instead of five. Release the cap and
+    # fill from the remaining positives before considering anything weaker.
+    chosen = {id(i) for i in selected}
+    for item in positives:
+        if len(selected) >= limit:
+            break
+        if id(item) not in chosen:
+            selected.append(item)
+            chosen.add(id(item))
+
+    # Pass 3: only now, if the pool simply has nothing better, top up from the
+    # non-positive remainder. Returning a short list would change what callers
+    # downstream can assume, so this preserves "up to `limit`" — but a weak
+    # candidate can no longer outrank a good one.
+    for item in remainder:
+        if len(selected) >= limit:
+            break
+        if id(item) not in chosen:
+            selected.append(item)
+            chosen.add(id(item))
+
+    def _promote(predicate, floor: int, event: str) -> None:
+        """Top the shortlist up to `floor` items matching `predicate`."""
+        chosen_links = {i['link'] for i in selected}
+        while sum(1 for i in selected if predicate(i['link'])) < floor:
+            candidate = next(
+                (i for i in ranked
+                 if predicate(i['link'])
+                 and i['link'] not in chosen_links
+                 and i.get('score', 0.0) > 0),
+                None)
+            if candidate is None:
+                return
+            # Evict the weakest item that is not itself holding up a floor.
+            evictable = [
+                i for i in selected
+                if not predicate(i['link'])
+                and not (_is_gem(i['link'])
+                         and sum(1 for s in selected if _is_gem(s['link'])) <= MIN_GEM_CANDIDATES)
+                and not (_is_tier1(i['link'])
+                         and sum(1 for s in selected if _is_tier1(s['link'])) <= MIN_TIER1_CANDIDATES)
+            ]
+            if not evictable:
+                return
+            victim = min(evictable, key=lambda i: i.get('score', 0.0))
+            selected[selected.index(victim)] = candidate
+            chosen_links.discard(victim['link'])
+            chosen_links.add(candidate['link'])
+            SafeLogger.info(event, "Promoted a candidate to balance the shortlist",
+                            title_preview=candidate['title'][:40],
+                            dropped_preview=victim['title'][:40])
+
+    # Gem floor first: it is the older contract and the narrower pool.
+    _promote(_is_gem, MIN_GEM_CANDIDATES, "hidden_gem_injected")
+    _promote(_is_tier1, MIN_TIER1_CANDIDATES, "tier1_source_promoted")
+
+    selected.sort(key=lambda i: i.get('score', 0.0), reverse=True)
+    return selected
+
+
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
     score = 0.0
     text = f"{item['title']} {item['description']}".lower()
     
     # 1. Source Tier — guard against relative or malformed links
-    try:
-        parsed = urlparse(item['link'])
-        source_domain = parsed.netloc if parsed.netloc else ""
-        score += next((val for domain, val in SOURCE_TIERS.items() if domain in source_domain), 3.0)
-    except Exception:
-        score += 3.0  # Default tier score if link is unparseable
+    score += source_tier(item['link'])
     
     # 2. Product Boost
     if any(kw in text for kw in PRODUCT_KEYWORDS): score += 5.0
@@ -141,9 +325,16 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # 3. Groundbreaking Tech Boost
     if any(kw in text for kw in GROUNDBREAKING_KEYWORDS): score += 7.0
     
-    # 4. Time Decay (Lose 0.5 point per hour)
+    # 4. Time Decay — bounded, and never a bonus.
+    # max(..., 0.0) is load-bearing: a feed carrying a future publication date
+    # (timezone bug, scheduled post leaking early) produced a NEGATIVE age, and
+    # subtracting a negative number awarded the item points. An entry dated 72h
+    # ahead scored 42.0 against a legitimate ceiling near 15 and would have won
+    # every run until its timestamp caught up. The lookback filter in
+    # fetch_single_feed does not catch it — that only drops items too old.
     age_hours = (datetime.now(timezone.utc) - pub_date).total_seconds() / 3600
-    score -= (age_hours * 0.5)
+    age_hours = max(age_hours, TIME_DECAY_MIN_AGE_HOURS)
+    score -= min(age_hours * TIME_DECAY_PER_HOUR, TIME_DECAY_MAX)
     
     # 5. Topic Repetition Cooldown
     item_topic = "General"
@@ -358,16 +549,9 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
         item['score'] = calculate_relevance_score(item, item['pub_date'], recent_topics)
     
     ranked = sorted(unique_unseen, key=lambda x: x['score'], reverse=True)
-    
-    # Hidden Gem Injection (Force at least one arXiv paper if none in top)
-    top_candidates = ranked[:limit]
-    has_gem = any(any(gem in i['link'] for gem in HIDDEN_GEM_SOURCES) for i in top_candidates)
-    
-    if not has_gem and len(ranked) > limit:
-        for i in range(limit, len(ranked)):
-            if any(gem in ranked[i]['link'] for gem in HIDDEN_GEM_SOURCES):
-                SafeLogger.info("hidden_gem_injected", "Injecting hidden gem into top candidates", title_preview=ranked[i]['title'][:40])
-                top_candidates[-1] = ranked[i]  # Swap last spot for the Gem
-                break
-                
-    return top_candidates
+
+    # Source-mixed shortlist: gem floor AND cap, plus a primary-source floor.
+    # See select_candidates — this replaced a bare ranked[:limit] whose only
+    # correction was to guarantee arXiv a seat, with nothing guaranteeing one to
+    # a primary source.
+    return select_candidates(ranked, limit)
