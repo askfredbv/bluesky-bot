@@ -32,7 +32,8 @@ Two runs a day, anchored to Belgian local time (UTC shifts with DST: summer 07:0
 
 **Under the hood:**
 
-- **Scoring** — source tier, product-launch signals, a momentum bonus for flagship models, technical-depth keywords, time decay, a topic-diversity penalty, and a consensus bonus for cross-source stories. arXiv papers get priority injection.
+- **Scoring** — source tier (matched on the link's hostname, exact or subdomain), product-launch signals, a momentum bonus for flagship models, technical-depth keywords, bounded time decay, a topic-repetition cooldown that decays with recency, and a consensus bonus for cross-source stories. Keyword signals match whole words, not substrings.
+- **Candidate mix** — the shortlist handed to the model is source-mixed, not just top-scored: research sources (arXiv et al) have both a reserved floor and a cap, and primary sources (an AI lab's own blog) have a best-effort floor. The model writes about one item from that shortlist, so the shortlist's job is to be a representative menu rather than a winner.
 - **Voice** — anchored to Frederik Van Hecke's writing in two registers (strategic-advisory / casual-narrative); verbatim anchors live in `src/config.py`, and `docs/VOICE_AUDIT.md` documents the independent voice-critique process. English only.
 - **Curator: a take, not a summary** — three-part shape (hook → concrete specific → link); paper-summary phrasings and editorial-filler endings are banned.
 - **No broken promises** — the bot has no follow-up mechanism, so teasers ("more soon", 🧵) are banned and stripped; every post lands complete on its own.
@@ -42,7 +43,7 @@ Two runs a day, anchored to Belgian local time (UTC shifts with DST: summer 07:0
 - **Mastodon source link** — Curator posts carry their source URL in the Mastodon text whenever the generated text does not already include it. Bluesky shows the same link as a card built from the article's metadata; Mastodon can only show a link that is in the text, and without this most Curator posts reached Mastodon with no source at all.
 - **Models** — a `GEMINI_MODEL_PRIORITY` chain (gemini-3.7-flash primary; gemini-3.5-flash the immediate fallback); an API failure advances to the next model, and the list is pruned to what the key can actually reach at startup. Thinking budget is pinned per model so it doesn't eat the output budget.
 - **Reliability** — concurrent delivery (one platform failing doesn't block the other); per-thread shared retry budgets for rate-limit + transient errors with partial-delivery semantics (no re-sending posts already on the wire); Gist-backed state with local-file fallback; a cached Bluesky session string to skip warm-run logins; a fully exhausted model chain skips the run cleanly (no placeholder posts).
-- **Telemetry** — three Gist JSON files: `post_metrics.json` (per-post engagement + formatting features, refreshed ~daily), `feed_health.json` (per-feed fetch health, rolling window), `growth.json` (follower snapshots — the success metric for building an audience). A configured feed flagged as broken or stale opens a GitHub issue labelled `feed-health`, which closes itself once every feed is healthy again.
+- **Telemetry** — three Gist JSON files: `post_metrics.json` (per-post engagement + formatting features, refreshed ~daily), `feed_health.json` (per-feed fetch health, rolling window), `growth.json` (follower snapshots). All three are recorded for observability, not as optimisation targets: audience growth is deprioritised (see `AGENTS.md`, "What this project is"), and at this scale the engagement numbers are noise rather than signal — nothing in the pipeline reads them back into a decision. A configured feed flagged as broken or stale opens a GitHub issue labelled `feed-health`, which closes itself once every feed is healthy again.
 
 ---
 
@@ -106,7 +107,7 @@ The main levers are in `src/config.py`:
 - **`IMAGE_MODEL`** — image model (default `gemini-3.1-flash-image`)
 - **`IMAGE_GENERATION_PROBABILITY`** — chance of a *generated* image (default `0.85`). Applies to the Mentor/Strategist post image and to the Curator fallback card image used when an article has no usable OG thumbnail; it never strips an article's own thumbnail.
 - **`GEMINI_MODEL_PRIORITY`** — ordered model failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
-- **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; edited quarterly
+- **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; refreshed monthly by `refresh_momentum.yml`, which opens a PR rather than pushing
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed covering the same story
 
 Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_JITTER_MAX_SECONDS` (pre-post delay; `30`/`300` in Actions).

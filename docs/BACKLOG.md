@@ -8,16 +8,98 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.27.1** (20
 
 ## Priority order
 
-1. **Voice: measure the em-dash rule.** On `main` since 2026-09-12 (unreleased): a "never use an em-dash" rule in `STYLE_GUIDELINES`, which both system instructions include; the prompt prose de-dashed (two of Frederik's samples and two BAD example posts keep theirs, as quotes); and an `em_dash_detected` warning when one still slips through. Before: 3 of the 50 posts up to 2026-09-11. Count the warnings over ~2 weeks, and add reject-and-regenerate only if they do not drop to ~0.
-2. **Remaining open issues** — fix when convenient (see §2)
-3. **Observational items** — wait for more runs, then decide (see §3)
-4. **The plan** — `PLAN_engagement.md` covers everything else (see §4). Phase 2 and 3 stay data-gated; Phase 4b is code-complete and dormant (see §1).
+Updated 2026-10-06, after the scoring work below merged. Items 1 and 2 block each other:
+nothing can be released until a production run has executed the new code and been read
+(`RELEASING.md` §0).
+
+1. **[BLOCKING] Live-verify the 2026-10-06 scoring changes.** Thirteen commits sit on `main`
+   unreleased and **none has run in production**. Read `curator_candidates` for two
+   consecutive 07:00 UTC runs:
+   - **Day one will still look arXiv-heavy and that is expected.** The stored
+     `recent_topics` is `['LLMs','Vision/Robot','Policy/Society','Compute/HW','LLMs']` with
+     no `General` in it, so the new cooldown needs one run to write one and wash through.
+     Do not judge the change on day one.
+   - **Day two is the signal.** Baselines to beat, measured over the 21 logged runs from
+     2026-09-13 to 10-04: a primary source appeared in the shortlist in **2 of 21** runs;
+     **13 of 21** runs offered exactly **one** distinct publisher; 79 of 105 candidate
+     slots were arXiv.
+   - Also read the new `keyword_substring_only_matches` line: how often the old loose
+     keyword matching was paying out across the whole pool, not just in titles.
+2. **[BLOCKED on 1] Cut the release.** Thirteen commits since v4.27.1: #159, #160, #161,
+   #162, #163, #165, #167, #168, #170, #171, #172, #173, #174. Minor, not patch — a reader
+   of the feed can see the difference (which story gets picked). Follow `RELEASING.md`:
+   version in four places, BACKLOG header + changelog line, annotated tag, GitHub release
+   separating **live-verified** from **test-covered only**, then the wiki.
+3. **[BLOCKED on 2] Wiki debt**, now three releases deep and the thing `RELEASING.md` §3
+   exists to stop:
+   - `Configuration.md`: `TOPIC_REPEAT_PENALTY`, `TOPIC_REPEAT_DECAY`,
+     `RECENT_TOPICS_WINDOW`, `TIME_DECAY_PER_HOUR`, `TIME_DECAY_MAX`,
+     `TIME_DECAY_MIN_AGE_HOURS`, `TIER1_SOURCE_SCORE`, `MIN_GEM_CANDIDATES`,
+     `MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`; `MOMENTUM_PRODUCTS` is refreshed
+     monthly now, not "quarterly by hand".
+   - `Troubleshooting.md`: `curator_candidates`, `em_dash_detected`,
+     `keyword_substring_only_matches`, `tier1_source_promoted`.
+   - `Architecture.md`: `select_candidates` (the shortlist is source-mixed, not
+     top-5-by-score) and `source_tier` / `_host_matches`.
+   - `Home.md`: version line and test count (**980**).
+4. **De-bias phase 2 — bound the keyword magnitudes.** `PRODUCT` (+5) and `GROUNDBREAKING`
+   (+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
+   provenance. **Deliberately gated on a week of item 1's
+   `keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
+   which is what the abandoned landmark gate (§3) teaches against doing without data.
+5. **Re-run the Curator judgement test, ~2026-10-20.** Position entropy cannot tell a wise
+   choice from an arbitrary one; tier capture when candidate quality *varies within a
+   batch* can (framing from an outside review, 2026-10-06). Currently unanswerable: only
+   **5 of 21** batches posed a real test at all, and the model captured the top-tier item
+   in 1 of those 5 — n too small to mean anything. Item 1's fix is what makes the metric
+   meaningful.
+6. **Explicit `--mode`.** `main.py` picks the mode from `current_hour < 11`, so a dispatch
+   delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
+   observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it
+   needs a four-hour delay, so this is cheap insurance, not a live defect. The workflow
+   already has a `force_mode` input; the cron dispatches just do not pass it.
+7. **Remaining open issues** — fix when convenient (see §2)
+8. **Observational items** — wait for more runs, then decide (see §3)
+9. **The plan** — `PLAN_engagement.md` covers everything else (see §4). Phase 2 and 3 stay
+   data-gated. Phase 4b is code-complete and **parked by decision**, not merely dormant
+   (see §1).
+
+**CLOSED 2026-10-06 — voice: the em-dash rule works, no follow-up needed.** The 2026-09-12
+rule said to add reject-and-regenerate only if `em_dash_detected` did not fall to ~0. Across
+44 production runs from 2026-09-13 to 10-06: **`em_dash_detected` 0, `hype_words_detected`
+0.** Both detectors stay as measurement; neither needs escalating to a hard reject.
 
 Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for the retro.
 
 ---
 
-## §1 — Goal change executed: Option 1 (build a following)
+## §1 — Goal change executed: Option 1 (build a following) — **SUPERSEDED 2026-10-06**
+
+> **SUPERSEDED 2026-10-06.** Option 1 is no longer the operating goal. The goal is now:
+> **run reliably, cost no recurring human time, never embarrass its author.** Audience
+> growth is deprioritised — not abandoned, but not the thing to optimise for. The record
+> below stays as written, because it is what was decided on 2026-05-08 and the phases it
+> drove were really shipped; it is history, not current intent. `AGENTS.md` carries the
+> current goal and what it means for a reviewer.
+>
+> **Why it changed.** Option 1 needs interaction, and interaction here means replies. The
+> lever for that is Phase 4b (§2.1 below), which is code-complete but human-gated by
+> design — every reply needs a person to approve it. Asked on 2026-10-06, Frederik declined
+> to staff that queue ("I don't want to spend time to the bot, so phase 4b is a no go
+> (yet)"). Without it the bot is a pure broadcaster, which is the thing that does not grow
+> on these networks.
+>
+> **The numbers behind that call**, measured 2026-10-06: Bluesky 26 → 78 followers in five
+> months across 392 posts (~+7/month); Mastodon 7 → 9 across 397. Phase 4b has run **once
+> ever** (2026-05-21), produced one draft, and that draft was rejected for inventing a CVE
+> number and missing that the parent post was a joke — `posted: []`, `replied_to: []`. Over
+> the 30 days to 2026-10-06, 68 Bluesky posts drew 42 interactions with 41 of them at zero,
+> so engagement is noise at this n and cannot support a feedback loop. An independent read
+> (Gemini, 2026-10-06) reached the same conclusion unprompted.
+>
+> **Reopening this** means staffing the Phase 4b approval queue, in which case start at
+> §2.1. Nothing is deleted; it is dormant and the kill-switch separation (AGENTS.md §6)
+> still holds.
 
 **2026-05-08:** explicit commitment to Option 1 over Options 2 (representation) or 3 (craft). See `RETRO_2026-05-08.md` for the framing decision and `PLAN_engagement.md`'s GOAL CHANGE block for the phase re-ordering.
 
