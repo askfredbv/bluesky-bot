@@ -32,9 +32,12 @@ from src.config import (
     MOMENTUM_PRODUCTS,
     MOMENTUM_PRODUCT_BONUS,
     PRODUCT_KEYWORDS,
+    RECENT_TOPICS_WINDOW,
     RSS_FEEDS,
     SOURCE_TIERS,
     TOPIC_MAP,
+    TOPIC_REPEAT_DECAY,
+    TOPIC_REPEAT_PENALTY,
 )
 from src.logger import SafeLogger
 from src.metrics import (
@@ -142,15 +145,26 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     age_hours = (datetime.now(timezone.utc) - pub_date).total_seconds() / 3600
     score -= (age_hours * 0.5)
     
-    # 5. Topic Diversity Penalty
+    # 5. Topic Repetition Cooldown
     item_topic = "General"
     for topic, kws in TOPIC_MAP.items():
         if any(kw in text for kw in kws):
             item_topic = topic
             break
-    
-    if item_topic in recent_topics:
-        score -= 12.0 # Heavy "Discernment" penalty for repetition
+
+    # `recent_topics` is ordered oldest -> newest (main.py appends and slices
+    # the tail), so the distance of the MOST RECENT occurrence is measured from
+    # the end. Distance 0 = posted on the previous run, which costs the full
+    # penalty; each run further back costs TOPIC_REPEAT_DECAY as much. Only the
+    # most recent occurrence counts: a topic posted three times should go on
+    # cooldown once, not accumulate an unpayable debt (the flat -12.0 this
+    # replaced effectively did the latter, because the topic never left the
+    # list). See TOPIC_REPEAT_PENALTY in config.py for the full history.
+    window = recent_topics[-RECENT_TOPICS_WINDOW:] if recent_topics else []
+    for distance, topic in enumerate(reversed(window)):
+        if topic == item_topic:
+            score -= TOPIC_REPEAT_PENALTY * (TOPIC_REPEAT_DECAY ** distance)
+            break
 
     # 6. Consensus Synergy: reward stories covered by multiple independent
     # sources. feed_count = the same URL across feeds; cross_publisher_domains =
