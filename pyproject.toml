@@ -22,6 +22,15 @@ dependencies = [
     "anyio>=4.14.1,<5",
     "httpcore>=1.0.5,<2",
     "pydantic>=2.7,<3",
+    # Security floor, not a feature need. urllib3 arrives via requests; 2.7.0
+    # carries PYSEC-2026-4175/4176/4177 (HTTPS-proxy TLS settings leaking
+    # between proxy and target, an infinite loop decoding a chunked Deflate
+    # response, and unbounded buffering of a chunk-size field). All three are
+    # reachable only through a malicious server or proxy, which is exactly what
+    # this bot talks to: it fetches arbitrary RSS feeds and scrapes article
+    # metadata from third-party domains. Fixed in 2.8.0. pip-audit has failed
+    # on every PR and on main since 2026-10-05 because of this.
+    "urllib3>=2.8.0,<3",
 ]
 
 [project.optional-dependencies]
