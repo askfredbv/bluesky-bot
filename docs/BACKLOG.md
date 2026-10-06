@@ -107,196 +107,36 @@ Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated i
 
 ---
 
-## §2 — Open issues (fix when convenient)
-
-### ~~Freeze-audit leftovers~~ [opened 2026-09-09, **all resolved 2026-09-10**]
-
-The 2026-09-09 whole-system audit (freeze tag `audit-freeze-2026-09-09`, PRs #121–#130) fixed ten findings. Six were confirmed by trace and deliberately left, and ARG001 was added the same evening. They were recorded here so they would not evaporate with the session that found them. All seven were fixed on 2026-09-10, in #133–#139.
-
-Full evidence, including the five findings that were **refuted** under cross-examination and should not be re-filed, is in the audit ledger: `C:\claude\bluesky-bot\scratch\AUDIT_2026-09-09_ledger.md`.
-
-**~~X6 — a Curator post can reach Mastodon with no source link.~~** [**resolved 2026-09-10** — `ensure_mastodon_source_link`] `post_to_mastodon` received `content_list` and never the card link, so Mastodon only got the source if the model inlined it. **Measured 2026-09-10: 4 of the last 5 Curator posts reached Mastodon with no link to the source at all** (2026-09-06 to 09-09; only 09-10 inlined it), while Bluesky showed each one as a link card. The audit had downgraded this to medium on the strength of the prompt's "THE LINK at the end" instruction — reasoning from the prompt instead of reading the feed. Codex's original High was right. The broadcaster now appends the card URL to the Mastodon root when no part of the thread already carries it, compared canonically so http/https, tracking parameters and arXiv abs/pdf forms count as the same link.
-
-**~~X7 — the proactive scan and approval can clobber each other.~~** [**resolved 2026-09-10** — shared concurrency group `pending-replies-state`] Both workflows read `pending_replies.json` and PATCH it back whole with no compare-and-swap, and they sat in different concurrency groups (`proactive-scan-<ref>` / `proactive-approve-<ref>`), so GitHub would run them concurrently. They now share one group, deliberately not scoped per ref because the Gist file is global, with `cancel-in-progress: false` so a running write is never cut off. Residual, documented in both workflow files: GitHub keeps at most one pending run per group, so a third trigger while one runs and one waits cancels the waiting run. That shows as cancelled in the Actions UI and leaves state untouched. Phase 4b is still dormant, so this race was latent; it is closed before activation rather than after. `tests/test_proactive_concurrency.py` guards it, including a check that no third script starts writing the file outside the group.
-
-**~~F2b — `scripts/` is not in the mypy gate.~~** [**resolved 2026-09-10**] `scripts/` is now in `[tool.mypy] files`, so the CI gate and a bare local `mypy` both check it. None of the five errors was a runtime bug. The two union-attr hits in `run_proactive_approve.py` sat behind an `isinstance(result, dict)` guard one line up that mypy could not carry through a second variable; it is now narrowed once, visibly. `audit_watchlist.py` reused a `str` loop variable for a nullable value and set an unannotated client to `None`. `refresh_momentum.py` passed a bare `dict` where the SDK expects its own config TypedDict; it is still a plain dict at runtime.
-
-**~~C2 — the `utils.py` split (#81–#84) moved the definitions and never moved the callers.~~** [**resolved 2026-09-10**] Every caller now imports from the real home (`src.news`, `src.retry`, `src.net_safety`, `src.state_store`) and the ~40-name re-export shim is gone; `src/utils.py` keeps only the four `net_safety` names its own `get_link_metadata` uses. Removed rather than left behind on purpose: with the re-exports gone, a stale `from src.utils import fetch_news` or a monkeypatch aimed at a re-export fails loudly instead of silently patching a name nothing reads. An AST map before the change confirmed no existing patch targeted a shim name except those four, which `get_link_metadata` genuinely reads from `utils`. AGENTS.md principle 5 updated: shared pieces go in a shared module such as `src/state_store.py`, not `src/utils.py`.
-
-**~~C3 — two image compressors, and the weaker one is on the live path.~~** [**resolved 2026-09-10**] There is now one: `compress_image_to_fit` in `src/utils.py`, moved from `broadcasters._compress_image_to_fit`, with `compress_image` a thin wrapper over it, so the Curator fallback image and publisher og:images get the same treatment as the Bluesky image embed. Measured before fixing, and narrower than first filed: the old `compress_image` never downscaled, but crushing JPEG quality toward 10 met every budget tested on ordinary RGB images, so "hands back an image still over budget" did not hold. What did: it met budgets by degrading quality rather than size, re-encoded images that were already small, and converted only RGBA/P, so an LA image could not be encoded at all (a 300x300 LA PNG came back as the original 180 KB; the shared compressor returns 58 KB). Deliberate behaviour change: an image already under budget now passes through untouched.
-
-**~~C6 — the publisher og:image path is not size-validated.~~** [**resolved 2026-09-10**] The thumbnail fetched in `get_link_metadata` is now checked with `is_usable_image` (decodable, and under Bluesky's ~976 KB blob limit) before it can reach `upload_blob`, the same check the generated fallback image already had. Filed as consistency only, but tracing it turned up a real consequence: an unusable thumbnail was non-empty, so it also stopped the Curator's generated fallback image from firing (`main.py` skips the fallback whenever `image_data` is set), and the card shipped with no picture. `test_logo_filter.py` used a placeholder byte string as the thumbnail; it now uses a real PNG, since that test is about fetching a real-looking image URL, not about undecodable bytes reaching Bluesky.
-
-**~~ARG001 — `bsky_username` is threaded into `handle_interactions` and never used.~~** [**resolved 2026-09-10**, #135] Removed from the signature in `agents.py` and from the call in `main.py`. `git log -S` shows the name never had a reader: since it was added in v4.2.0 (`8a74b53`), the signature was its only occurrence. Dead weight, not a lost behaviour.
-
-
-### ~~Post-dependent state is recorded even when nothing was posted — and Curator records the wrong topic~~ [**resolved 2026-09-04, v4.25.1**]
-
-`persistence_stage` appends `news_items[0]['detected_topic']` to `recent_topics` (`main.py`, Curator branch). But the Curator is explicitly allowed to write about a *non-top* item — that is the whole point of the `chosen_link` contract added in #51, and `broadcasting_stage` already realigns the link card and `source_domain` to the chosen item. Persistence was never updated to match.
-
-Consequences, both wrong and in opposite directions:
-- The topic actually **posted** is not recorded, so it is not penalised on the next run — the diversity memory under-counts what we really published.
-- A topic that was merely **offered** is recorded, so an unrelated later story in that bucket eats the −12 penalty for a post that never happened. This is a *false* penalty, and it is one of the mechanisms behind "an obvious launch got buried" — the symptom that prompted the v4.25.0 coverage work.
-
-**Second, independent half — post-dependent state is written even when no post went live, across ALL three cooldowns.** `main()` calls `persistence_stage` unconditionally and `AutomationPayload` drops the `bsky_sent_uris` / `mastodon_sent_ids` that `BroadcastPayload` carries, so a run where the model chain exhausted (`broadcast_skipped_no_content`) or where both broadcasts failed still writes:
-
-| State | Consequence of a phantom write |
-| :--- | :--- |
-| `recent_topics` (Curator) | a later story eats −12 for a post that never happened |
-| `recent_mode_topics` (Mentor/Strategist) | a topic is suppressed from the next runs' picker though it never ran |
-| `pioneer_recent` | a Pioneer entry burns its multi-week cooldown without ever being posted |
-
-The Pioneer case is the clearest tell: the block is commented *"only when a pioneer post actually fired"* and does not check that it fired. Pioneer is the scarcest content the bot has (~2–3/week from a curated corpus), so silently retiring entries is the most costly of the three.
-
-Fix, one change covering both halves: thread `chosen_link` **and** delivery status into `AutomationPayload` / `persistence_stage`; persist the *chosen* item's `detected_topic`, and gate **every** post-dependent update — `recent_topics`, `recent_mode_topics`, `pioneer_recent` — on at least one platform having delivered. Regression tests: a non-top pick records the chosen topic, and a no-delivery run records nothing in any of the three.
-
-Open question while in there: `seen_data["links"]` is updated on the same unconditional path, so a failed run also marks its articles as seen and they are never reconsidered. That may be deliberate (avoid re-offering stale items) or the same bug in a second place — decide explicitly rather than by accident.
-
-Worth doing before any larger scoring rework — it is cheap, and it changes what the data says.
-
-### ~~Duplicate-source-posts follow-ups~~ (surfaced 2026-05-13) [**resolved**: all three shipped, and the open follow-up below is moot]
-
-Three issues surfaced by the user's "duplicate-source posts" observation. The root cause (a Gist write 403 from a PAT missing `Gists: write` scope) was fixed end-to-end 2026-05-13 ~19:24 UTC — validated by `gh workflow run` showing zero `gist_state_save_failed` events. Items below are the follow-on work to prevent recurrence and clean up adjacent debt. **All three shipped:** #1 and #3 in `2be1148` (2026-05-14), #2 in `76f1287` (2026-05-15).
-
-#### ~~1. Promote `gist_state_save_failed` from WARN to noisy / surfaced~~ [the retro callback] [**shipped 2026-05-14, `2be1148`**]
-
-The 2026-04-22 retro flagged that silent state-persistence failures degrade duplicate-detection for days. The mitigation was never shipped, and the exact anti-pattern recurred 2026-05-11 → 2026-05-13: PAT regenerated without `Gists: write` → `_save_gist_state` returned 403 silently → state vanished between runs → duplicate-source posts on consecutive days. Found from the live feed, not from any alarm.
-
-Shipped: log level promoted WARN → ERROR in `_save_gist_state` (surfaces in Actions UI same as `feed_health_record_failed`), and a new "Gist write smoke test" step in `daily_post.yml` does a real PATCH round-trip with `raise_for_status()` — fails the workflow loudly before the broadcast attempt if the PAT loses Gists:Write again. The original retro plan of surfacing `gist_state_save_failed` count in a weekly digest still follows from Phase 2 whenever that lands.
-
-**Lesson worth keeping:** the same silent-degradation pattern recurred 3 weeks after the retro that documented it. Writing the retro is not the same as shipping the mitigation.
-
-#### ~~2. `bluesky_session_stale` — token revocation loop, not expiry~~ [diagnosed 2026-05-13] [**shipped 2026-05-15, `76f1287`**]
-
-The diagnostic shipped 2026-05-12 (`error_msg=str(e)[:200]` on the session_stale catch) surfaced: `error_type=BadRequestError`, `error_msg=Response(..., content=XrpcError(error='ExpiredToken', message='Token has been revoked'), ...)`.
-
-Three hypotheses were on the table (password-login revokes prior, parallel manual logins, short refresh-JWT TTL). The real cause was none of them: **atproto's HTTP layer auto-rotates the JWT pair during the run** when the access token nears expiry. Each rotation invalidates the previous refresh_jwt server-side. Pre-fix, we only called `export_session_string()` once after password login — so the cache went stale *during* the run, and next run loaded the now-revoked refresh token. Not server-side revocation; **self-inflicted** by the bot's own normal API calls.
-
-The atproto SDK has `Client.on_session_change` exactly for this, with the docstring tip: *"save the session string to persistent storage on SessionEvent.CREATE and SessionEvent.REFRESH event."* Pre-fix we handled CREATE (via the manual export after login) but not REFRESH. Now both fire through the same callback path; IMPORT is intentionally skipped (rewriting the same value would just noise the Gist patch history).
-
-**Lesson worth keeping:** "revoked" in the error message was a red herring. From Bluesky's perspective, the previous JWT pair *was* revoked — but by the bot itself, via the SDK's normal refresh cycle. Three hypotheses on the table were all about external causes; the actual cause was the bot's own API traffic. The diagnostic message correctly named the symptom; reading the SDK source named the cause.
-
-#### ~~3. `post_metrics_refreshed: errors=11` per run~~ [observed 2026-05-13] [**shipped 2026-05-14, `2be1148`**]
-
-Validation run showed `bluesky=2, mastodon=0, skipped=2, errors=11` on the metrics refresh pass. 11 rows failing per run was noisy and — if the rows were genuinely unfixable — should prune rather than retry forever.
-
-Shipped: Mastodon 404s now mark the row `orphaned=True` (upstream deletion) instead of counting as errors. `should_refresh` skips orphaned rows so the loop terminates. Detection uses exception type name or "404"/"Not Found" substring to avoid importing Mastodon.py classes into the metrics layer. Non-404 errors still count as errors. Four tests cover orphan-skip, 404→orphaned, non-404 counter, and no-repoll.
-
-**Open follow-up:** the Bluesky-side hypothesis (URI format drift from older SDK versions) isn't addressed here. If `errors` stays >0 on next run after Mastodon 404s are filtered out, the remainder belongs to Bluesky and warrants its own diagnostic pass. **Closed 2026-09-11:** `post_metrics_refreshed` reported `errors: 0` on each of the last six runs (2026-09-08 to 2026-09-11), so there is no Bluesky-side remainder to diagnose.
-
----
-
-### ~~Profile bios drift from what the bot actually does~~ [**resolved 2026-04-29**]
-
-Both bios manually pasted into the platform UIs. Config holds the canonical text in `APPROVED_BIO_BSKY` / `APPROVED_BIO_MASTODON` as reference for the next change. Voice now matches the bot's own posts: dry, statement-led, "house rules" line earns the dryness with a position rather than just enacting brevity.
-
-The half-implemented automation (broadcaster fns + cooldown helpers) was removed in the same commit — bios change ~quarterly, manual paste is the right shape for that frequency.
-
-Original issues:
-- Wrong time (08:00 → 07:00 UTC) — fixed
-- Strategist mode invisible — replaced with "house rules" framing that covers all three modes implicitly
-- Slogan voice clashing with dry posts — replaced with `askfred.be in feed form. … LLM-written, house rules: no hype, no reader-bait.`
-
-### ~~Snapshot Gist state step 404s~~ [**resolved 2026-04-22**]
-
-Root cause was *not* a urllib quirk: `GIST_TOKEN` and `GIST_ID` were simply missing from the repo secrets. The main bot silently degraded (`_save_gist_state` catches all exceptions with just a warn log); the snapshot step failed loudly because it called `raise_for_status()` — which was actually the better signal.
-
-Lessons:
-- **Silent state-persistence failures are a worse outcome than noisy ones.** The warn-only path in `_save_gist_state` meant the bot ran for a week+ writing to `/tmp` with no one noticing. Phase 1's metrics capture should avoid repeating this pattern — surface `gist_state_save_failed` count in the weekly digest.
-- Fine-grained PATs DO work for Gists — Account-scope permission, not Repository-scope.
-
-Fixes landed: `67bf81f` (UA header, cargo-culted but harmless), `8a9e07a` (urllib→httpx, keeps the codepath aligned with the bot's own Gist access).
-
-### ~~Post length is a hard requirement~~ [**shipped v4.15.3, 2026-04-22**]
-
-Retro kept for reference — the anti-pattern is worth remembering.
-
-A Mastodon post ended *mid-sentence* with "De uitdaging blijft echter om" — conclusion missing. That's a bot tell. A post that ends mid-thought halves the credibility of every post that ends well.
-
-**Root cause:**
-- No `max_output_tokens` in `_build_generate_kwargs` — Gemini defaults applied
-- `_safe_truncate_post` in `agents.py` word-boundary-trimmed before validation
-- `_split_and_constrain_posts` in `broadcasters.py` word-boundary-split anything still over-length
-
-**Fix (shipped):**
-1. Cap generation at `max_output_tokens=600` — the model physically cannot emit more than a 5-post × 300-char thread plus JSON overhead.
-2. `_validate_thread_shape` hard-rejects overshoot (was warn-only) → triggers retry/fallback.
-3. Broadcasters enforce the invariant at send time; over-length content → skip the platform, log `broadcast_invariant_violated`. Missing one run beats posting a bot tell.
-4. Deleted `_safe_truncate_post` and `_split_and_constrain_posts` — if content arrives over-length, surface the upstream bug, don't paper over it.
-
-**Explicit non-goal:** auto-splitting into threads as length recovery. Threading is an editorial choice by the model; genuine 2-post content should arrive as two complete-sentence posts from Gemini, not one blob chopped by us.
-
-### ~~Broken promises — "more to follow", "more soon", "stay tuned"~~ [**resolved 2026-05-05**]
-
-Shipped same-day as observation. New `BANNED_TEASER_PATTERNS` list in `src/config.py` covers `more to follow / more soon / more to come / stay tuned / to be continued / watch this space / follow for more / details coming / i'll dig deeper / i'll write more / i'll share more / thread incoming / 🧵`. Defensive trim in `agents.py` (`_ends_with_teaser`, `_strip_trailing_teaser`) handles both sentence-boundary and em-dash-fragment shapes — the live observation was "Notes on X — more soon." which is the em-dash fragment case. Prompt rules updated in `STYLE_GUIDELINES`. 10 new tests in `test_voice_trim.py`. Tonight's afternoon Mentor run is the first natural validator.
-
-### ~~Extend `post_metrics.json` schema with formatting features~~ [observed 2026-05-05] [**shipped, `1e40ab8`**: `emoji_count`, `hashtag_count`, `question_count`, `length_chars`, `time_of_day_bucket`. `thread_length_posts` was not added; as the item says, it is implicit via `thread_position`]
-
-Phase 1 telemetry currently captures `had_image` and `had_link_card`, plus the raw `content_preview`. To answer formatting questions with data ("does length matter?", "do hashtags help?", "do questions in posts hurt?"), the schema needs a few cheap derived fields. Compute once at record time, no API calls:
-
-- `emoji_count` — `re.findall` against a unicode emoji range, or use `emoji` package (already in deps? check)
-- `hashtag_count` — `len(re.findall(r"#\w+", text))`
-- `question_count` — count of `?` characters
-- `length_chars` — `len(content_preview)` (or full post text — preview is currently capped at 80)
-- `thread_length_posts` — already implicit via `thread_position`, but a denormalised count per row makes per-thread aggregation cheaper
-- `time_of_day_bucket` — `"morning" | "afternoon"` derived from `posted_at` UTC hour
-
-This is a Track A move per the formatting-→-engagement roadmap (see §3 "Voice formatting A/B"). Pure measurement enrichment — does NOT change what the bot writes. Goal: when Phase 2's digest design starts, the data already has the breakdowns it needs.
-
-Effort: ~30 min in `record_post_metric` + `tests/test_metrics.py`. Risk: none (additive fields, ignored by older readers). Trigger: any time. Recommended to ship before Phase 2 starts so the digest doesn't have to backfill.
-
-### ~~Bluesky session cache misses every run~~ [observed 2026-05-05] [**resolved v4.20.1, `76f1287`**: atproto rotates the JWT pair mid-run and only the first pair was saved; see item 2 of the duplicate-source follow-ups above. The 2026-09-11 run logged `bluesky_session_reused`]
-
-`bluesky_session_stale` (with `error_type: BadRequestError`) fires on basically every natural run, immediately followed by `bluesky_session_cached` after the password-fallback succeeds. The caching path in `src/bluesky_session.py` is wired correctly — load from Gist → try session-string login → fall back to password → save new string back. So the writes happen; the reads happen; but the *next* read produces a string atproto rejects.
-
-Leading hypothesis: only the access JWT is in the cached string, and atproto access JWTs expire in ~2h. The 12h gap between runs guarantees the cache is dead by the time the next run reads it. The refresh-token piece needed to renew is missing or being dropped during export. `atproto.AsyncClient.export_session_string()` may return a bundle that needs to be deserialised into the matching `client.login(session_string=...)` shape — worth a 10-min check that the round-trip is symmetric.
-
-Other less-likely candidates: the Gist write is succeeding but truncating; atproto's session-string format changed across SDK versions (we're on 0.0.65); some race between save and the next run's GIST sync.
-
-Cost in steady state: a few seconds extra per run + one extra password-login round-trip. Minor — but the cache exists *to* avoid that, and right now the cache is decorative.
-
-Effort: ~30 min — print the exported session string locally, verify it round-trips through `client.login(session_string=...)`, check whether atproto's docs note an export/import mismatch in this version. Risk: low (existing fallback chain catches any breakage). Trigger: any time — pure efficiency, no user-facing impact, can sit indefinitely.
-
-### ~~Wire `ruff` into CI to catch dead imports + style drift~~ [**resolved 2026-05-08**]
-
-Shipped same-day as the first scan. `ruff==0.15.12` added to `requirements.txt`; `ruff.toml` codifies the project-style decisions (E701 single-line guards allowed; tests get F401/E402/E702 ignored since test files cluster imports near related blocks and use setup-and-patch one-liners idiomatically); `.github/workflows/tests.yml` runs `ruff check src/ main.py scripts/ tests/` as a step before pytest. Both E402 violations in `src/agents.py` fixed by consolidating the two stray imports into the existing `from src.utils` line at the top of the file. CI now fails on new unused imports / undefined names; the same 8 unused imports won't accumulate again silently.
-
-### ~~Type-check foothold → whole-codebase mypy gate~~ [**resolved 2026-08-29**]
-
-The 2026-08-29 audit added a mypy "foothold" (#87): the CI type-check step gated only the 7 already-clean modules (`config`, `retry`, `metrics`, `proactive`, `settings`, `logger`, `bluesky_session`), with `mypy` pinned in `requirements.in` (`>=2.3,<3`) so the gate can't silently drift on an unmanaged version bump. The remaining 8 modules carried 32 known mypy errors. Cleared incrementally, one small PR per module group, each verified (mypy clean + full pytest green + ruff) and squash-merged: #88 `state_store`/`net_safety`/`news`, #89 `utils`/`broadcasters`, #90 `agents`, #92 `main`/`file_lock`. The step is now the whole-codebase gate `mypy src/ main.py --ignore-missing-imports` — every module is clean, so any new type error fails the build.
-
-Most of the 32 were over-narrow annotations: `seen_data` is heterogeneous → `Dict[str, Any]`; `PIL.Image.open` returns `ImageFile` but `.convert()`/`.resize()` return `Image.Image`; `get_with_safe_redirects`' `timeout` widened to httpx's `float | Timeout | None`. **Two were real bugs worth fixing properly:** (1) `main.py` unpacked `asyncio.gather(return_exceptions=True)` results with `isinstance(x, Exception)`, which misses `CancelledError` (a `BaseException`, not an `Exception`) — a cancelled broadcast task would slip the filter and crash on the `.client`/`.sent_uris` access; now guarded on `BaseException`. (2) `agents._sync_generate` / `_sync_generate_text` declared `-> str`, but the Gemini SDK types `.text` as `Optional[str]` (None on a content-filter refusal); normalised to the `""` sentinel callers already handle. `file_lock` switched its backend guard from `os.name` to `sys.platform` so mypy statically prunes the non-active platform's backend (it can't type `msvcrt` on POSIX or `fcntl` on Windows) — verified clean under both `--platform linux` and `--platform win32`. Behaviour-preserving except the `BaseException` guard, a strict safety improvement for the cancelled-task edge.
-
-### ~~Model priority chain is one model deep in practice~~ [**partially shipped 2026-05-08**]
-
-Re-framed under Option 1 as a quality question, not a reliability one (see strategy turn in the 2026-05-08 session). Commit `8c99378`:
-
-1. ✅ **Added `gemini-2.5-pro` as the new primary**, demoted `gemini-2.5-flash` to fallback. Quality + resilience combined move. If 2.5-pro isn't available for the API key, `filter_available_models()` prunes it and the chain falls through cleanly.
-2. ✅ **Added `response_text=response_text[:300]` + `error_msg=str(e)[:200]`** to the `content_generation_attempt_failed` log on JSON errors. Next failure tells us what flash is actually returning (commentary wrap? unwrapped object? partial JSON?).
-
-Awaiting 2–3 production runs to evaluate whether the model was the constraint vs prompts.
-
-### ~~Image reliability — Imagen 3 keeps failing~~ [**resolved 2026-05-08**]
-
-Diagnosed and fixed same-day. Diagnostic surface from v4.17.1 caught the actual error message on the 2026-05-07 14:30 Mentor run: `"404 NOT_FOUND. models/imagen-3.0-generate-002 is not found for API version v1beta"`. Imagen 3 was shut down per Google's deprecation notice; the standard drop-in is `imagen-4.0-generate-001`. Config bumped, README updated.
-
-The diagnostic discipline ("never log error_type alone, always include error_msg") paid for itself again — same lesson as 2026-04-29's Step 2 KeyError. Worth keeping as the project default.
+## §2 — Closed issues
+
+Nothing here is open. Every item this section tracked was resolved, and the detail
+lives where it belongs: the commit that fixed it, its PR, and the release notes.
+
+The two lessons that were worth keeping are promoted into `AGENTS.md` review
+priorities §3 (capture the error message, not just its type) and §4 (state-persistence
+failures log at ERROR, not WARN) — binding rules rather than stories.
+
+Resolved here, newest first: the 2026-09-09 freeze-audit leftovers (#133–#139); phantom
+writes to post-dependent state (v4.25.1); the duplicate-source-posts follow-ups
+(`2be1148`, `76f1287`); the whole-codebase mypy gate; `ruff` in CI; post-length hard
+enforcement (v4.15.3); broken-promise teasers; the `post_metrics.json` formatting-feature
+schema; the Bluesky session cache; the model-priority chain; and the Imagen 3 image path.
+Full evidence for the freeze audit is in its ledger at
+`C:/claude/bluesky-bot/scratch/AUDIT_2026-09-09_ledger.md` (local, not in the repo).
 
 ---
 
 ## §3 — Observational (wait for data)
 
-- **Semantic scoring pass — replaces the abandoned "landmark" gate.** The −12 topic-diversity penalty in `calculate_relevance_score` is magnitude-blind: it demotes a flagship launch simply because we posted on its topic the run before, which is how a real Gemini launch got buried. v4.25.0 fixed that from the *coverage* side (primary vendor feeds, so launches arrive first-hand at tier 10), but the penalty itself is untouched. **Note the diagnosis is two-part:** the penalty is magnitude-blind *and* it is currently fed the wrong topic (see the §2 entry "Curator records the top item's topic, not the one it posted"). That second half is a plain bug and much cheaper to fix — do it first, and re-measure before assuming the scoring model needs replacing at all.
+- **Cheap-LLM scoring pass — the half of this that is still open.** Most of what this entry described shipped on 2026-10-06: the magnitude-blind −12 topic penalty is now a recency-decayed cooldown below the tier spread, the Curator records the topic it actually posted, time decay is bounded, keyword matching is word-anchored, and the shortlist is source-mixed rather than `ranked[:limit]`. The trigger ("launches still being missed after v4.25.0's feeds have had a few weeks") fired on Gemini 4 Argon, 2026-09-30, and that is what prompted the work.
 
-  **Do not rebuild an exemption gate.** Two attempts, ~11 review rounds, neither converged: (1) detect "this is a launch" from the headline with a regex — leaked on word order ("Acme launches a tool for migrating from GPT-5"), punctuation ("Introducing: GPT-5"), decimal versions ("Gemini 3.8" split on the dot), mid-word stems ("Unreleased GPT-5"), title/description bleed, short names ("o3" inside "o365"); (2) count distinct publishers covering the same flagship — leaked on headline variance (punchy titles don't cluster), alias/variant splitting ("GPT-5" vs "GPT 5"; Claude 4 / Opus 4 / Sonnet 4), and same-org domains (`openai.com` + `developers.openai.com`). Both are proxies for "importance" inferred from text, which is an unbounded problem: every fix revealed a new leak of the same kind. A second opinion (Gemini, 2026-09-04) reached the same conclusion independently, and also shot down the obvious "fix" of moving diversity to a selection-time score margin — that swaps one magic number for another on an uncalibrated scale, and removing the penalty from scoring lets the top-5 fill with variants of one story.
+  **What is left is the instrument question**, and it is parked pending data. A hand-weighted linear sum on an uncalibrated scale is arguably the wrong tool for "which story matters most today": keyword density tracks genre, not importance, so a terse tier-10 launch ("Argon is live.") still loses to a mediocre preprint that happens to say "benchmark". Measured 2026-10-06: 6.50 against 14.75.
 
-  **The direction instead**, when this is worth doing:
-  - **Refuse** any regex for model names or importance keywords, and keyword-based consensus clustering. Dead ends, evidenced.
-  - **Build the shortlist from a penalty-free first-pass score.** `calculate_relevance_score` applies the −12 *before* `ranked[:limit]` (`src/news.py`), so a shortlist taken from the current ranked slice sits downstream of the very defect the pass exists to correct — a penalised flagship launch can fall outside it and never be scored at all. Rank the shortlist on merit only, or explicitly re-include penalised candidates, before any diversity is applied.
-  - **Build** a cheap-LLM pass over the top ~15–20 candidates: classify topic, detect genuine launches, assign a 1–10 impact score. Fractions of a cent per run. The bot already calls Gemini to *write* posts; it just never calls anything to *judge* them. This deletes the regex/alias/domain-matching surface rather than patching it.
-  - **Selection is probably the real lever, not scoring.** Only the top 5 reach the Curator, which is told to pick "the most interesting so-what" and can skip a top-ranked launch entirely. Consider handing it 7–10 items deduplicated across topics (MMR / slotting) and letting it choose — that also removes the need for a diversity penalty in the score at all.
+  **Do not rebuild an exemption gate.** Two attempts, ~11 review rounds, neither converged: (1) detect "this is a launch" from the headline with a regex — leaked on word order, punctuation, decimal versions, mid-word stems, title/description bleed, short names ("o3" inside "o365"); (2) count distinct publishers covering the same flagship — leaked on headline variance, alias splitting ("GPT-5" vs "GPT 5"), and same-org domains. Both infer importance from text, which is unbounded. A second opinion (Gemini, 2026-09-04) agreed independently, and also shot down moving diversity to a selection-time score margin.
 
-  **Trigger:** worth doing if the live feed shows launches still being missed *after* v4.25.0's feed additions have had a few weeks. If coverage alone fixed it, this stays parked — it was always an optimisation, not the fix.
+  **The direction, when it is worth doing:** a cheap-LLM pass over the top 15–20 candidates — classify topic, detect genuine launches, assign a 1–10 impact score. Fractions of a cent per run, and it deletes the regex surface rather than patching it. **Validate it in shadow mode first:** log its top 3 beside the heuristic's top 3 for two weeks and compare, wiring nothing to the posting path. Parked 2026-10-06 because the shadow run ends in a decision someone has to read, and that is a recurring human cost (`AGENTS.md`, operating goal).
+
+  **Before any of that, read the data already being collected:** `keyword_substring_only_matches` (how much the old loose matching was paying out) and the de-bias phase 2 question in the priority list.
 
 - **Mastodon discovery tags — three things the probe cannot prove (live 2026-09-09).** Tags ship on every Mastodon post. `Mastodon Tag Probe (diagnostic)` is the standing check; re-run it after any prompt or model change and read BOTH numbers, because retention alone cannot validate a reviewer.
 
@@ -307,30 +147,20 @@ The diagnostic discipline ("never log error_type alone, always include error_msg
   **3. Tag quality is a brand judgement, and the output is not deterministic.** The same post produced `#OOP` on one run and `#ObjectOrientedProgramming` on another, `#AIObservability` then `#Observability`. Read a week of the live Mastodon feed rather than the probe. If tags read off-topic more than occasionally the fix is the prompt (`agents._MASTODON_TAG_PROMPT`), never a bigger keyword map — that is the same text-inference dead end the landmark gate died on twice.
 
   **Watch the logs too:** `mastodon_tags_invalid_verdict` means the reviewer stopped returning usable decision sets (a model regression, distinct from a genuine all-DROP), and `mastodon_tags_no_reviewer` means discovery pruned the chain to one model and tagging correctly switched itself off.
-- **The Register main feed drift.** `https://www.theregister.com/headlines.atom` added in v4.13 alongside the software-specific feed. If Curator runs start surfacing space/security-humour content that isn't AI/tech dev-relevant, remove it from `RSS_FEEDS`. The `/software/headlines.atom` feed stays either way.
-- **`CONSENSUS_SYNERGY_BONUS` retune.** Currently `1.5` per additional feed. With 28 feeds, a viral story covered by 5+ sources gets `+6.0` on top of its base score — could start dominating every Curator run. Drop to `1.2` if the Curator starts repeatedly picking the same wire-story everyone covers over genuinely distinctive items.
+- **The Register main feed drift — TRIGGER FIRED 2026-10-06, decide.** `https://www.theregister.com/headlines.atom` was added in v4.13 alongside the software-specific feed, with the condition: remove it if Curator runs start surfacing space/security-humour that is not AI/tech dev-relevant. They do. A live pool on 2026-10-06 carried "Only the finest Swedish Bork will do for Stockholm station", "Scientists find planet made on new matter recipe" and "BepiColombo sheds its ride" from that feed, all scoring into the top 12. Drop `headlines.atom` and keep `/software/headlines.atom`, or decide explicitly that the broad-IT diet is worth the noise.
+- **`CONSENSUS_SYNERGY_BONUS` retune.** Currently `1.5` per additional feed. Across 27 feeds, a viral story covered by 5+ sources gets `+6.0` on top of its base score — could start dominating every Curator run. Drop to `1.2` if the Curator starts repeatedly picking the same wire-story everyone covers over genuinely distinctive items.
 - **`google-genai` 2.x migration.** Currently pinned at `1.75.0` and shipping fine — `gemini-3.5-flash` is producing sharp content. Latest is `2.2.0`, but 1.x is still receiving releases (`1.75.0` exists alongside `2.2.0`), no Dependabot alerts open against the package, and no 2.x capability is on the immediate roadmap. Migrating now is the exact "infrastructure-over-output" trap the 2026-05-08 retro named. Triggers to revisit: (a) a run fails with a 1.x-specific SDK bug (diagnostic surface will catch it), (b) Dependabot files a CVE, (c) Phase 4b or another planned feature needs a 2.x-only capability. Until one fires, the pin stays.
-- **Primary-model upgrade evaluation — RESOLVED 2026-08-19: KEEP `gemini-3.7-flash` as primary (promoted #68, validated on the live feed — the 08-19 Curator run read tight/first-person/on-brand). `gemini-3.5-flash` is the immediate fallback. Prior state — 2026-06-12: KEEP `gemini-3.5-flash` (superseded by this trial).** The Friday checkpoint pulled the live feed and read the 5 posts since the 2026-06-10 14:34 UTC cutover (2 Curator + 3 Mentor) against the two-register voice anchor. Verdict: 3.5-flash holds the voice — as sharp, terse, and first-person as 2.5-pro (e.g. Mentor "…It is a slow way to fail.", Curator "I keep seeing teams celebrate the speed of AI-generated code, but the structural bill is coming due"). The earlier n=1 "more florid" first sample (the 14:34 Mentor post) was an outlier, not a pattern. Strict win confirmed: faster + cheaper + a generation newer, voice intact, and `_thinking_budget_for()` already pins it to 0 so there is no empty-output risk. `GEMINI_MODEL_PRIORITY` comment in `config.py` updated to record the decision. **3.5-pro was explicitly NOT a target** (Pro-tier is overkill for this light twice-daily task — Frederik's call 2026-06-10); it would only have entered as a fallback-UP had flash read consistently flat. Historical evaluation record below for reference. **(finding 2026-06-09)** Prompted by comparing against a peer bot (`strike007-3000/BluBot`) that runs Gemini 3.1 Flash Lite primary. **Key insight — generation ≠ tier:** 3.1 Flash Lite is a *newer generation* but a *lower tier* than our `gemini-2.5-pro` (Flash Lite < Flash < Pro on writing quality within any generation). The peer optimised for speed + free-tier cost; we optimise for voice quality. So adopting his model would likely make our output *worse* on the axis we care about. The real question is whether a newer **Pro/Flash-tier** model beats 2.5 Pro on *writing* — and as of 2026-06-09 the lineup is known (Google's Gemini 3.5 announcement 2026-05-19 + deepmind.google benchmark table): **Gemini 3.5 Flash is GA via the Gemini API and beats 3.1 Pro on most agentic/coding/multimodal benchmarks; 3.5 Pro was rolling out "next month."** This UPGRADES the earlier "probably stay on 2.5-pro" lean — there is now a newer, generally-available model a full generation ahead of our 2.5-pro, and it is faster + cheaper (Flash tier). BUT the published benchmarks measure coding/agentic/reasoning/long-context — **none measure short-form writing or voice fidelity**, which is the only axis that matters here. So 3.5 Flash is "very capable", not proven "writes Frederik's voice better." **Must be evaluated empirically: run it once and read the feed, don't trust the benchmark.** Note: the `GEMINI_API_KEY` is **application-restricted** (IP/referrer) — from a laptop every call 403s "blocked" including 2.5-pro, but from the GitHub runners (allow-listed) everything works. So discovery must run via the `Model Discovery (diagnostic)` workflow (`.github/workflows/model-discovery.yml`, manual `workflow_dispatch`), NOT locally. **Authoritative result from that workflow (run 2026-06-09):** the key reaches 32 text models. **`gemini-3.5-flash` is GA (not preview), out=64k — the recommended test candidate** (newest generation, GA-stable, faster + cheaper than 2.5-pro, beats 3.1 Pro on Google's benchmarks). Pro-tier options are **preview-only** (`gemini-3-pro-preview`, `gemini-3.1-pro-preview`) — not ideal for an unattended daily bot; `gemini-3.5-pro` is **not yet reachable** by this key. **Switch procedure when ready:** (1) add `gemini-3.5-flash` handling to `_thinking_budget_for()` — return 0 (disable thinking, like 2.5-flash) so it doesn't hit the 2026-05-11 empty-output bug; (2) put it first in `GEMINI_MODEL_PRIORITY` for one Curator + one Mentor run; (3) READ the feed output vs 2.5-pro before keeping it. Rollback = one-line chain revert. (Minor: discover_models.py's `_generation()` only parses `X.Y`, so bare `gemini-3-pro-preview` (no minor) isn't auto-flagged as a candidate — cosmetic; the headline `gemini-3.5-flash` is flagged correctly.) Disciplined approach: (1) run `scripts/discover_models.py` with the live key to see what the account can actually reach today; (2) test the best Pro/Flash-tier 3.x candidate by putting it first in `GEMINI_MODEL_PRIORITY` for ONE run and *reading the feed output* (not benchmarks); (3) keep it only if it reads sharper than 2.5 Pro. **Two gotchas before switching:** (a) `_thinking_budget_for()` in `agents.py` only recognises `2.5-pro`/`2.5-flash` patterns — a 3.x model falls through to `return None`, sends no thinking_config, may use the default thinking budget and consume the whole output budget → the exact `AttributeError` bug from 2026-05-11; any new model needs its thinking-range pinned explicitly. (b) If a 3.x model requires the 2.x SDK, this couples to the parked **`google-genai` 2.x migration** item above — they become one task. **Free field data:** the peer runs 3.x in production and is doing the reverse comparison — ask him whether the 3.x *generation* reads sharper or flatter than what he ran before (his tier differs from ours, but the generational impression is useful). **Trigger:** when you feel like evaluating, or when a clearly-better Pro-tier 3.x model is confirmed available. No urgency — 2.5 Pro is producing sharp content today.
-- **v4.16 slim refactor.** When `src/utils.py` (923 lines) or `src/config.py` (525 lines) grows another ~100 lines, do the split-into-focused-modules refactor before the next feature. Target layout: `state_io.py`, `feeds.py`, `scoring.py`, `url_safety.py`, `retry.py`, `image_io.py`; `config.py` keeps tunable constants only, prompt text moves to `prompts.py`, curated data to `src/data/{pioneer,feeds,topics}.py`. Mechanical; ~3h with tests. No plan doc needed — when the trigger fires, the layout above is the plan.
+- **`config.py` split — trigger long since passed.** The `utils.py` half of this item is **done**: #81–#84 split it into `state_store` / `net_safety` / `retry` / `news`, and it is 196 lines now, not the 923 this item was written against. `config.py` went the other way — 525 lines then, **1007 now**. The remaining plan: constants stay, prompt text moves to `prompts.py`, curated data to `src/data/`. Mechanical, ~3h with tests. Not urgent, but stop citing a trigger that already fired.
 - **Mentor estimation-topic over-saturation — revisit if it recurs.** A snapshot on 2026-05-21 showed 4 estimation-variant posts in 25, suggesting the seed "estimating your own time vs estimating someone else's" was over-firing. On re-check 2026-05-24, post-rewrite data showed 1 estimation post in 2 Mentor runs — within expected range for a 12-seed pool with 5-slot dedup (`main.py:553`). The earlier saturation likely came from the pre-2026-05-15 pool where broad anchors like "Career" pulled toward estimation under multiple seeds. **Revisit if Mentor shows >25% estimation rate over a 2-week window.** Fix options when triggered: widen dedup window from 5 to 8, or split the estimation seed into two narrower seeds, or drop it temporarily. Don't act prophylactically — let the validators run.
-- **~~`pyproject.toml` migration trigger~~ — DONE 2026-08-29.** Fired when the audit added `pytest-cov` + `mypy` alongside ruff/pytest/pytest-asyncio in `requirements.in`, mixing dev tooling with runtime deps that the daily production workflow then installed wholesale. **Resolved:** `requirements.in` replaced by `pyproject.toml` (runtime under `[project.dependencies]`, tooling under the `dev` optional-dependency group). Pinned reproducibility kept (Frederik's call over the "just `pip install .`" shape): two generated lockfiles — `requirements.txt` (runtime only, `pip-compile pyproject.toml`) and `requirements-dev.txt` (runtime + dev, `--extra dev`). Production workflows install `requirements.txt` (dev tools no longer land in production runs); CI installs `requirements-dev.txt`; `lockfile-check.yml` regenerates + diffs both. No behaviour change, no runtime-dep version change.
 - **Lockfile-check vs Dependabot `--strip-extras` friction — durable fix when it gets annoying.** The `.github/workflows/lockfile-check.yml` workflow runs `pip-compile --strip-extras` and diffs the result against committed `requirements.txt`. Dependabot regenerates *without* `--strip-extras`, so it keeps proposing `google-auth[requests]` (with the extra) while the canonical CI output is `google-auth` (no extra) — every Dependabot PR's lockfile check fails until hand-corrected. This bit us 3 times (#46, #47, #49→#50); #50 (2026-06-09) fixed main itself (it had been red for 3+ weeks on this exact line) but did not fix the recurring friction. **Durable fix when the manual-correction tax gets annoying:** drop `--strip-extras` from the workflow so CI matches Dependabot's output. Needs a careful Linux `pip-compile` (NOT Windows — it injects win32-only `colorama`) to confirm no other extras leak in once stripping is off, then commit the regenerated lockfile. ~20 min on a Linux box or via a throwaway CI run. Until then: each Dependabot deps PR needs the `google-auth[requests]` → `google-auth` hand-edit (or supersede with a manual bump branch like #50). Not urgent — main is green; this is about reducing per-PR toil.
 - **Audit script Mastodon path.** `scripts/audit_watchlist.py` returns opaque HTML errors when the Mastodon side fails. **2026-05-05**: added a `account_verify_credentials` preflight that runs once before iterating candidates and surfaces a clear message ("token belongs to @user" on success; "MASTODON_API_BASE_URL is wrong / token under-scoped" on failure with the curl command to verify). Root-cause fix is still in `.env` — the user has `MASTODON_API_BASE_URL=https://mastodon.social/@askfred` (a profile URL) where `https://mastodon.social` (the API base) is needed. Bot's posting still works in Actions because the GitHub secret has the right value; only local audit runs are affected. Revisit when adding new Mastodon-only candidates would benefit from automated scoring.
-- **Voice formatting A/B — emojis, hashtags, length, questions.** Observation 2026-04-27 (re-raised 2026-05-05 as a roadmap question): scrolling the live feed, posts feel flat. The user's instinct is that occasional emojis, a topical hashtag, or other formatting touches might lift engagement. The strategic question is real; the implementation has to be careful because **voice is a brand decision, not a metric decision** (`PLAN_engagement.md` plan-wide non-goal). A reader returning to a feed that suddenly starts using emojis after 137 dry posts would notice the inconsistency.
+- **Voice formatting A/B — Track C is moot under the current goal.** Observation 2026-04-27: the feed feels flat, so maybe occasional emojis or a topical hashtag would lift engagement. Track A (instrumentation) and Track B (image reliability) both shipped. **Track C never will in this form:** it was gated on "4+ weeks of engagement data" plus brand approval, and engagement data at this scale is noise (68 posts, 42 interactions, 41 of them zero), so it cannot decide anything. `AGENTS.md` now says not to tune on it.
 
-  Three-track roadmap:
+  What survives is the brand question, which never needed the data: **voice is a brand decision, not a metric decision.** If emojis or question hooks are ever wanted, it is Frederik's call on how the feed should read, made once and applied consistently — not an experiment. A reader returning to a feed that starts using emojis after 137 dry posts notices the inconsistency either way.
 
-  - **Track A — instrumentation** (see §2 entry "Extend post_metrics.json schema with formatting features"). Cheap, no voice change. Captures emoji_count, hashtag_count, length, etc. so the data can actually answer "does X help" instead of guessing.
-  - **Track B — image reliability** (see §2 entry "Image reliability — Imagen 3 keeps failing"). Highest-leverage structural fix that needs no voice change and no data — Imagen failures are a pure drag on the existing image-attach plan.
-  - **Track C — voice formatting A/B** (this entry). Gated on (1) Track A having 4+ weeks of data, AND (2) explicit brand-direction approval that "we would use emojis even if data said they help." If both green: ship as A/B (50% of posts get format X, 50% don't), measure delta over 2+ weeks per format, ship the changes that survive the brand-coherence test as well as the engagement test.
+  **Not precedent:** v4.26.0 shipped Mastodon discovery tags outside this gate, on a *mechanism* argument (a followed tag is Mastodon's discovery engine, the tags sit at the broadcaster, generation is unchanged). That says nothing about emojis, question hooks, or hashtags on the Bluesky copy.
 
-  Levers to consider when Track C is in play: (a) ≤1 hashtag per thread when topic-anchored (no `#AI #tech #thoughts` listicle endings); (b) emoji policy "rare and load-bearing" — measurable at any non-zero rate currently means the rule isn't firing; (c) optional question hook on Mentor (different from the banned reader-bait patterns).
-
-  **Partially superseded 2026-09-09 by v4.26.0, for Mastodon only.** The hashtag lever shipped outside this A/B gate, on a *mechanism* argument rather than a metrics one: Mastodon's followed-tag timeline is its discovery engine, the tags sit at the broadcaster rather than in the voice, and generation is unchanged. The gate still binds everything it was written for — emoji policy, question hooks, and any hashtag change to the **generated** content or to the **Bluesky** copy. Do not read the Mastodon tags as precedent for those.
-
-  **Do not skip ahead to Track C.** A blanket emoji change without instrumentation or A/B measurement is exactly the gut-feel "make it less dull" move the BACKLOG warned against on 2026-04-27 — and which the bio rewrite (2026-04-29) deliberately moved away from. The fact that the bios were de-emojified makes the question of "should posts get emojis" a coordinated brand decision, not an isolated experiment.
-
-All three decisions get trivial once §1 (engagement metrics) is running — no more guessing at "is the Register feed hurting?"; look at the engagement data.
+These are judgement calls, not data questions. Engagement at this scale cannot settle any of them — decide by reading the feed.
 
 ---
 
