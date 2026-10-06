@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
+    RECENT_TOPICS_WINDOW,
 )
 from src.utils import get_link_metadata, compress_image, is_usable_image
 from src.state_store import load_seen_articles, update_seen_articles, prune_pioneer_recent
@@ -838,9 +839,20 @@ async def persistence_stage(automation: AutomationPayload) -> None:
             # Record the category of the item actually written about, resolved in
             # broadcasting_stage alongside the link card. Falls back to the top item
             # only if that resolution produced nothing.
+            # "General" is recorded like any other topic. It used to be skipped,
+            # which looked harmless but broke the cooldown: "General" is the
+            # label for an item that matched no topic keyword, and it is by far
+            # the most common one (101 of 105 candidates over three weeks), so
+            # skipping it meant the window almost never advanced. Whatever
+            # non-General topics happened to land in it stayed for months,
+            # applying a standing penalty to exactly the on-brand AI categories
+            # — the live list on 2026-10-06 suppressed four of the five. Writing
+            # "General" both lets the window turn over and puts the repeated
+            # arXiv flood on cooldown, which is the point of the signal.
             topic_cat = automation.posted_topic_category or news_items[0].get('detected_topic', 'General')
-            if topic_cat != 'General':
-                current["recent_topics"] = (current["recent_topics"] + [topic_cat])[-5:]
+            current["recent_topics"] = (
+                current["recent_topics"] + [topic_cat]
+            )[-RECENT_TOPICS_WINDOW:]
 
         # v4.16: track the LLM-chosen topic for Mentor/Strategist runs so the
         # next run's topic picker can avoid repeating it. Curator already has

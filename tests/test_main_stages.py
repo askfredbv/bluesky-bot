@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import main
+from src.config import RECENT_TOPICS_WINDOW
 
 
 @pytest.mark.asyncio
@@ -754,6 +755,53 @@ async def test_persistence_stage_records_the_posted_item_not_the_top_one(monkeyp
 
     assert updated["value"]["recent_topics"] == ["Compute/HW"]
     assert "LLMs" not in updated["value"]["recent_topics"]
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_records_general_so_the_window_turns_over(monkeypatch):
+    """"General" must be recorded like any other topic.
+
+    It used to be skipped. "General" is the label for an item matching no topic
+    keyword and it dominates the pool (101 of 105 candidate slots over three
+    weeks), so skipping it froze the window: whatever non-General topics landed
+    there stayed for months and applied a standing penalty to the on-brand AI
+    categories. Recording it both advances the window and puts the repeated
+    arXiv flood on cooldown.
+    """
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": ["LLMs"]},
+        news_items=[{"link": "https://a", "detected_topic": "General"}],
+        delivered=True,
+        posted_topic_category="General",
+    )
+    await main.persistence_stage(payload)
+
+    assert updated["value"]["recent_topics"] == ["General"]
+
+
+@pytest.mark.asyncio
+async def test_persistence_stage_caps_recent_topics_at_the_window(monkeypatch):
+    """The stored window never grows past RECENT_TOPICS_WINDOW entries."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(
+        value=t({"links": [], "recent_topics": ["General"] * (RECENT_TOPICS_WINDOW + 3)})))
+
+    payload = main.AutomationPayload(
+        mode="curator",
+        seen_data={"links": [], "recent_topics": []},
+        news_items=[{"link": "https://a", "detected_topic": "LLMs"}],
+        delivered=True,
+        posted_topic_category="LLMs",
+    )
+    await main.persistence_stage(payload)
+
+    window = updated["value"]["recent_topics"]
+    assert len(window) == RECENT_TOPICS_WINDOW
+    assert window[-1] == "LLMs"
 
 
 @pytest.mark.asyncio

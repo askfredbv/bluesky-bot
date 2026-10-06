@@ -58,8 +58,29 @@ def test_each_scoring_factor_adds_its_exact_weight(frozen, title, link, expected
     assert _score(title, link)[0] == pytest.approx(expected)
 
 
-def test_a_story_loses_half_a_point_per_hour(frozen):
-    assert _score("Quiet weekly roundup", age_hours=10)[0] == pytest.approx(3.0 - 5.0)
+def test_a_story_decays_at_the_configured_rate(frozen):
+    expected = 3.0 - 10 * news.TIME_DECAY_PER_HOUR
+    assert _score("Quiet weekly roundup", age_hours=10)[0] == pytest.approx(expected)
+
+
+def test_time_decay_is_capped(frozen):
+    """Decay saturates, so age alone can never erase an arbitrary amount."""
+    very_old = _score("Quiet weekly roundup", age_hours=10_000)[0]
+    assert very_old == pytest.approx(3.0 - news.TIME_DECAY_MAX)
+
+
+def test_a_future_dated_item_is_never_awarded_points(frozen):
+    """A negative age must not become a BONUS.
+
+    Age was used unclamped, so `score -= age * rate` added points for a feed
+    carrying a publication date in the future (timezone bug, scheduled post
+    leaking early). An item dated 72h ahead scored 42.0 against a legitimate
+    ceiling near 15 and would have won every run until its timestamp caught up.
+    fetch_single_feed's lookback does not catch it — that only drops old items.
+    """
+    fresh = _score("Quiet weekly roundup", age_hours=0)[0]
+    for ahead in (1, 12, 72, 10_000):
+        assert _score("Quiet weekly roundup", age_hours=-ahead)[0] == pytest.approx(fresh)
 
 
 # ---------------------------------------------------------------------------
@@ -251,3 +272,172 @@ def test_no_gem_is_forced_in_when_one_already_made_the_top(monkeypatch):
     result, _calls, _health = _run_news(monkeypatch, items, limit=3)
     assert [i["link"] for i in result] == ["https://example.com/1", "https://arxiv.org/2",
                                            "https://example.com/3"]
+
+
+# ---------------------------------------------------------------------------
+# Candidate source mix (select_candidates). The shortlist is a MENU the Curator
+# picks one item from, so its job is representativeness. In production it was
+# 75% arXiv, with 13 of 21 runs offering nothing else at all.
+# ---------------------------------------------------------------------------
+
+def _cand(n, score, host="example.com"):
+    return {"title": f"story {n}", "link": f"https://{host}/{n}", "score": score}
+
+
+def test_research_sources_cannot_take_every_slot():
+    """A nightly preprint batch is capped, even when it sweeps the ranking."""
+    ranked = [_cand(n, 20.0 - n, "arxiv.org") for n in range(6)]
+    ranked += [_cand(10 + n, 5.0 - n) for n in range(4)]
+    result = news.select_candidates(ranked, 5)
+
+    assert len(result) == 5
+    # news._is_gem, not a substring check on the URL: asserting through the real
+    # predicate is both more faithful and avoids re-teaching the loose pattern.
+    assert sum(1 for i in result if news._is_gem(i["link"])) == news.MAX_GEM_CANDIDATES
+
+
+def test_the_gem_cap_does_not_shrink_the_shortlist():
+    """The cap limits representation, not list length.
+
+    An arXiv-only morning is the normal case here, not an edge case. Holding the
+    cap hard would hand the model two candidates instead of five — a thinner
+    menu, which is the opposite of the point.
+    """
+    ranked = [_cand(n, 20.0 - n, "arxiv.org") for n in range(8)]
+    result = news.select_candidates(ranked, 5)
+
+    assert len(result) == 5
+    assert [i["score"] for i in result] == sorted((i["score"] for i in result), reverse=True)
+
+
+def test_a_primary_source_is_promoted_into_the_shortlist():
+    """Hidden Gem Injection guaranteed arXiv a seat; nothing guaranteed one to a
+    primary source, so the asymmetry was built in. Both ends are bounded now."""
+    ranked = [_cand(n, 20.0 - n, "arxiv.org") for n in range(3)]
+    ranked += [_cand(10 + n, 10.0 - n, "lwn.net") for n in range(4)]
+    ranked += [_cand(20, 1.0, "openai.com"), _cand(21, 0.5, "blog.google")]
+    result = news.select_candidates(ranked, 5)
+
+    assert sum(1 for i in result if news._is_tier1(i["link"])) >= news.MIN_TIER1_CANDIDATES
+
+
+def test_the_primary_source_floor_never_fabricates():
+    """No primary source in the pool means none in the shortlist — not an error,
+    and not a lower-tier item relabelled."""
+    ranked = [_cand(n, 10.0 - n, "lwn.net") for n in range(8)]
+    result = news.select_candidates(ranked, 5)
+
+    assert len(result) == 5
+    assert not any(news._is_tier1(i["link"]) for i in result)
+
+
+def test_a_floor_never_promotes_a_negative_scoring_item():
+    """A floor is a diversity guarantee, not a licence to ship a bad candidate."""
+    ranked = [_cand(n, 10.0 - n, "lwn.net") for n in range(6)]
+    ranked += [_cand(20, -4.0, "openai.com"), _cand(21, -9.0, "blog.google")]
+    result = news.select_candidates(ranked, 5)
+
+    assert not any(news._is_tier1(i["link"]) for i in result)
+    assert all(i["score"] > 0 for i in result)
+
+
+def test_the_two_floors_do_not_starve_each_other():
+    """Promoting primary sources must not evict the last research item, nor the
+    reverse — the gem floor and the tier-1 floor have to coexist in 5 slots."""
+    ranked = [_cand(n, 10.0 - n, "lwn.net") for n in range(5)]
+    ranked += [_cand(10, 4.0, "arxiv.org")]
+    ranked += [_cand(20, 3.0, "openai.com"), _cand(21, 2.0, "deepmind.google")]
+    result = news.select_candidates(ranked, 5)
+
+    assert len(result) == 5
+    assert sum(1 for i in result if news._is_gem(i["link"])) >= news.MIN_GEM_CANDIDATES
+    assert sum(1 for i in result if news._is_tier1(i["link"])) >= news.MIN_TIER1_CANDIDATES
+
+
+@pytest.mark.parametrize("link", [
+    "https://arxiv.org.evil.example/paper",   # trusted domain as a prefix label
+    "https://notarxiv.org/paper",             # trusted domain as a substring
+    "https://evil.example/?u=arxiv.org",      # trusted domain in the query
+    "https://evil.example/arxiv.org/paper",   # trusted domain in the path
+    "https://arxiv.org@attacker.example/p",   # trusted domain as userinfo
+])
+def test_a_lookalike_host_is_not_a_research_source(link):
+    """The reserved research slot is host-anchored too.
+
+    `gem in link` was a substring test over the WHOLE URL, so a trusted domain
+    anywhere in it -- path, query, userinfo -- claimed the reserved gem slot,
+    and the Hacker News and Lobsters feeds carry arbitrary submitted URLs.
+    (CodeQL py/incomplete-url-substring-sanitization, on PR #173.)
+    """
+    assert not news._is_gem(link)
+
+
+@pytest.mark.parametrize("link", [
+    "https://arxiv.org/abs/2609.40027",
+    "https://export.arxiv.org/abs/2609.40027",
+    "https://bair.berkeley.edu/blog/x",
+])
+def test_real_research_sources_are_still_recognised(link):
+    """Anchoring must not cost the matches HIDDEN_GEM_SOURCES is for."""
+    assert news._is_gem(link)
+
+
+@pytest.mark.parametrize("link", [
+    "https://notopenai.com/x",
+    "https://openai.com.evil.example/x",
+    "https://openai.com@attacker.example/x",
+    "https://fakeopenai.com/x",
+    "https://deepmind.google.phish.example/x",
+])
+def test_a_lookalike_host_does_not_get_a_primary_source_tier(link):
+    """Tier matching is hostname-anchored, not a substring test.
+
+    The substring form handed OpenAI's tier-10 to any host merely CONTAINING
+    "openai.com". That was always wrong but only inflated a score; once
+    _is_tier1 began guaranteeing shortlist seats it became a way to force a
+    spoofed host in as an AI lab's own announcement -- and items do arrive from
+    arbitrary third-party domains through the Hacker News and Lobsters feeds.
+    """
+    assert news.source_tier(link) == news.DEFAULT_SOURCE_TIER
+    assert not news._is_tier1(link)
+
+
+@pytest.mark.parametrize("link, expected", [
+    ("https://openai.com/index/x", 10.0),            # exact
+    ("https://developers.openai.com/rss.xml", 10.0),  # documented subdomain
+    ("https://www.theregister.com/a/b", 7.0),         # www. prefix
+    ("https://blog.google/innovation-and-ai/x", 10.0),
+    ("https://lwn.net/Articles/1", 9.0),
+])
+def test_real_hosts_keep_their_configured_tier(link, expected):
+    """The suffix rule must not break the intended matches it replaced."""
+    assert news.source_tier(link) == expected
+
+
+def test_the_gem_cap_never_prefers_a_negative_item_to_a_positive_gem():
+    """A capped gem may only lose its slot to a candidate worth offering.
+
+    Applying the cap across the whole ranked list let a negative non-gem take a
+    slot from a positive gem -- gems at 10/9/8/7 with non-gems at -1/-2/-3
+    produced [10, 9, -1, -2, -3], contradicting this function's own rule that a
+    negative score is a bad candidate. (Found in review of #169.)
+    """
+    ranked = [_cand(n, s, "arxiv.org") for n, s in enumerate([10.0, 9.0, 8.0, 7.0])]
+    ranked += [_cand(10 + n, s) for n, s in enumerate([-1.0, -2.0, -3.0])]
+    result = news.select_candidates(ranked, 5)
+
+    scores = [i["score"] for i in result]
+    assert scores[:4] == [10.0, 9.0, 8.0, 7.0]
+    assert all(s > 0 for s in scores[:4])
+    # Still fills to `limit`, so downstream callers keep their assumption.
+    assert len(result) == 5
+
+
+def test_the_shortlist_comes_back_best_first_after_promotion():
+    """Downstream reads news_items[0] as the top item, so order must hold."""
+    ranked = [_cand(n, 20.0 - n, "arxiv.org") for n in range(4)]
+    ranked += [_cand(20, 6.0, "openai.com"), _cand(21, 5.0, "deepmind.google")]
+    ranked += [_cand(30 + n, 3.0 - n) for n in range(3)]
+    result = news.select_candidates(ranked, 5)
+
+    assert [i["score"] for i in result] == sorted((i["score"] for i in result), reverse=True)
