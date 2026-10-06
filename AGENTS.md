@@ -9,9 +9,34 @@ holds before asserting it (a reviewer can be wrong too).
 
 A bot that posts AI/tech-mentorship content to **Bluesky** (@askfred.be) and **Mastodon**,
 twice daily via GitHub Actions (triggered by cron-job.org). Python 3.11, Gemini for
-generation, a private GitHub Gist for state. **Explicit goal: build a following** (real
-audience). The voice is the product. Read `docs/RETRO_2026-05-08.md` and `docs/BACKLOG.md`
-for the hard-won context before proposing structural changes.
+generation, a private GitHub Gist for state. **The voice is the product.** Read
+`docs/RETRO_2026-05-08.md` and `docs/BACKLOG.md` for the hard-won context before proposing
+structural changes.
+
+**Operating goal (set 2026-10-06): run reliably, cost no recurring human time, and never
+embarrass its author. Audience growth is deprioritised — not abandoned, but not the thing
+to optimise for.** This replaces an earlier "explicit goal: build a following", which had
+stopped describing reality. Growing these networks takes interaction; the proactive-reply
+pipeline that would supply it is code-complete but human-gated by design (§6), and the
+owner has decided not to staff that approval queue for now. The bot has consequently never
+posted a reply or a mention response: 551 posts, pure broadcast, roughly +7 followers a
+month. See `docs/BACKLOG.md` §1.
+
+**What this means when you review or propose work here:**
+
+- **Do not propose follower-growth, engagement-optimisation or reply-automation work**, and
+  do not justify a change by its presumed effect on reach. If you think the strategy is
+  wrong, say so once, in a sentence, and move on.
+- **"This will get more engagement" is not an argument.** At this scale the data is noise:
+  over the 30 days to 2026-10-06, 68 Bluesky posts drew 42 total interactions and 41 of
+  them drew zero. Do not tune anything against those numbers, and be sceptical of anyone
+  who does — including a previous version of yourself reading `post_metrics.json`.
+- **Prefer changes with no recurring human cost.** Be sceptical of any that end in a
+  decision someone has to make twice a week; an experiment nobody reads is worse than no
+  experiment.
+- **Voice and correctness still matter in full** — more, if anything. The voice is the only
+  part of this that is not a commodity, which is what §1 below means by "a brand decision,
+  not a metric decision".
 
 ## Review priorities — the things a generic reviewer misses
 
