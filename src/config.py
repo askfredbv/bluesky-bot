@@ -697,10 +697,27 @@ PROACTIVE_REPLY_FEW_SHOT_EXAMPLES: str = (
 
 # v4.14 voice rules — banned patterns enforced via prompt + defensive trim in agents.py
 BANNED_HYPE_WORDS: List[str] = [
+    # Carnival hype — the original family (v4.x).
     "amazing", "fantastic", "incredible", "huge", "massive",
     "game-changing", "game changer", "revolutionary", "mind-blowing",
     "stunning", "groundbreaking", "epic", "insane", "next-level",
     "unprecedented", "pivotal moment",
+    # 2026-10-06: the flat corporate-LLM register. A second family, and the
+    # more likely failure mode for this bot — the list above catches a post
+    # shouting, but not one written in the default voice of a language model.
+    # Taken from the no-ai-slop skill (petergyang/no-ai-slop). Same treatment
+    # as the rest of the list: named in the prompt, log-only on daily posts
+    # (see _apply_voice_trim — rewriting stays the model's job), a hard reject
+    # on proactive replies, and barred from Mastodon discovery tags via
+    # _BANNED_TAG_FRAGMENTS.
+    "delve", "utilize", "utilise", "paradigm shift", "transformative",
+    "empower", "cutting-edge", "cutting edge", "supercharge",
+    # "leveraging", NOT bare "leverage": Frederik is a management consultant
+    # and "operational leverage" / "leverage in a negotiation" are the noun
+    # used correctly. Only the verb form is slop. Note these do not overlap as
+    # substrings — "leveraging" does not contain "leverage" — so banning one
+    # does not catch the other, which is the point here.
+    "leveraging",
 ]
 
 # Reader-bait question patterns — bot ends ~80% of posts with one; Frederik ~0%.
