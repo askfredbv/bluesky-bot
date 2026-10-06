@@ -291,7 +291,9 @@ def test_research_sources_cannot_take_every_slot():
     result = news.select_candidates(ranked, 5)
 
     assert len(result) == 5
-    assert sum(1 for i in result if "arxiv.org" in i["link"]) == news.MAX_GEM_CANDIDATES
+    # news._is_gem, not a substring check on the URL: asserting through the real
+    # predicate is both more faithful and avoids re-teaching the loose pattern.
+    assert sum(1 for i in result if news._is_gem(i["link"])) == news.MAX_GEM_CANDIDATES
 
 
 def test_the_gem_cap_does_not_shrink_the_shortlist():
@@ -350,6 +352,34 @@ def test_the_two_floors_do_not_starve_each_other():
     assert len(result) == 5
     assert sum(1 for i in result if news._is_gem(i["link"])) >= news.MIN_GEM_CANDIDATES
     assert sum(1 for i in result if news._is_tier1(i["link"])) >= news.MIN_TIER1_CANDIDATES
+
+
+@pytest.mark.parametrize("link", [
+    "https://arxiv.org.evil.example/paper",   # trusted domain as a prefix label
+    "https://notarxiv.org/paper",             # trusted domain as a substring
+    "https://evil.example/?u=arxiv.org",      # trusted domain in the query
+    "https://evil.example/arxiv.org/paper",   # trusted domain in the path
+    "https://arxiv.org@attacker.example/p",   # trusted domain as userinfo
+])
+def test_a_lookalike_host_is_not_a_research_source(link):
+    """The reserved research slot is host-anchored too.
+
+    `gem in link` was a substring test over the WHOLE URL, so a trusted domain
+    anywhere in it -- path, query, userinfo -- claimed the reserved gem slot,
+    and the Hacker News and Lobsters feeds carry arbitrary submitted URLs.
+    (CodeQL py/incomplete-url-substring-sanitization, on PR #173.)
+    """
+    assert not news._is_gem(link)
+
+
+@pytest.mark.parametrize("link", [
+    "https://arxiv.org/abs/2609.40027",
+    "https://export.arxiv.org/abs/2609.40027",
+    "https://bair.berkeley.edu/blog/x",
+])
+def test_real_research_sources_are_still_recognised(link):
+    """Anchoring must not cost the matches HIDDEN_GEM_SOURCES is for."""
+    assert news._is_gem(link)
 
 
 @pytest.mark.parametrize("link", [

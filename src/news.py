@@ -129,6 +129,31 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
 DEFAULT_SOURCE_TIER = 3.0
 
 
+def _host_of(link: str) -> str:
+    """The lowercased hostname of a link, or "" if it has none.
+
+    .hostname rather than .netloc on purpose: it drops userinfo and port, so
+    `https://openai.com@attacker.example/x` reports `attacker.example` instead
+    of a string that merely contains a trusted domain.
+    """
+    try:
+        return (urlparse(link).hostname or "").lower().rstrip(".")
+    except Exception:
+        return ""
+
+
+def _host_matches(host: str, domain: str) -> bool:
+    """True if `host` IS `domain` or is a subdomain of it.
+
+    The single place that decides whether a link belongs to a configured
+    domain, so the tier table and the research-source list cannot drift apart.
+    Anchored at a label boundary, which is what separates `developers.openai.com`
+    (a real subdomain, must match) from `notopenai.com` and
+    `openai.com.evil.example` (must not).
+    """
+    return bool(host) and (host == domain or host.endswith("." + domain))
+
+
 def source_tier(link: str) -> float:
     """The SOURCE_TIERS score for a link's host, or DEFAULT_SOURCE_TIER.
 
@@ -151,22 +176,29 @@ def source_tier(link: str) -> float:
     covers "developers.openai.com". Where several entries match, the most
     specific (longest) wins, so the result no longer depends on dict order.
     """
-    try:
-        host = (urlparse(link).hostname or "").lower().rstrip(".")
-    except Exception:
-        return DEFAULT_SOURCE_TIER  # unparseable link
+    host = _host_of(link)
     if not host:
         return DEFAULT_SOURCE_TIER
     matches = [(len(domain), val) for domain, val in SOURCE_TIERS.items()
-               if host == domain or host.endswith("." + domain)]
+               if _host_matches(host, domain)]
     if not matches:
         return DEFAULT_SOURCE_TIER
     return float(max(matches)[1])
 
 
 def _is_gem(link: str) -> bool:
-    """True for the research/academic sources that get a reserved slot."""
-    return any(gem in link for gem in HIDDEN_GEM_SOURCES)
+    """True for the research/academic sources that get a reserved slot.
+
+    Host-anchored for the same reason source_tier is: `gem in link` was a
+    substring test over the whole URL, so `https://arxiv.org.evil.example/x`
+    counted as a research paper and could claim the reserved gem slot — and the
+    Hacker News and Lobsters feeds carry arbitrary submitted URLs. Worse than
+    the tier case in one way: a substring test over the URL matches anywhere,
+    including the path, so `https://evil.example/?u=arxiv.org` qualified too.
+    (CodeQL py/incomplete-url-substring-sanitization, on PR #173.)
+    """
+    host = _host_of(link)
+    return any(_host_matches(host, gem) for gem in HIDDEN_GEM_SOURCES)
 
 
 def _is_tier1(link: str) -> bool:
