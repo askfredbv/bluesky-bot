@@ -279,87 +279,51 @@ HIDDEN_GEM_SOURCES: List[str] = [
 ]
 CONSENSUS_SYNERGY_BONUS: float = 1.5
 
-# Topic repetition cooldown. The Curator should not post the same category of
-# story on consecutive days, but this used to be a flat -12.0 for any topic
-# present in `recent_topics` — larger than the entire source-tier spread (3.0
-# for an unknown blog to 10.0 for a primary source), so it outranked quality
-# outright. Combined with `recent_topics` only ever recording NON-"General"
-# topics, the list stopped turning over and became a standing blocklist: on
-# 2026-10-06 it held ['LLMs', 'Vision/Robot', 'Policy/Society', 'Compute/HW',
-# 'LLMs'] — four of the five categories permanently suppressed, leaving only
-# items that matched no topic keyword at all. That is why 101 of 105 candidates
-# offered to the model over three weeks were "General" arXiv preprints, and why
-# "Gemini 4 Argon" scored -0.50 against an arXiv batch at 13.50.
-#
-# Now: a cooldown that decays with recency, applied to the MOST RECENT
-# occurrence of the topic. Posted last run costs the full penalty; further back
-# costs geometrically less; outside the window costs nothing. "General" is
-# recorded like any other topic (see main.py), so the window actually turns
-# over — and because "General" dominates the candidate pool, recording it is
-# what puts the repeated arXiv flood on cooldown instead of the news.
+# Topic repetition cooldown. Charged once, at the distance of the topic's most
+# recent appearance in `recent_topics`: full penalty if it was the previous
+# run's topic, TOPIC_REPEAT_DECAY as much per run further back, nothing outside
+# the window. The base sits below the 7-point source-tier spread on purpose — a
+# diversity signal may break a tie, it may not overrule where a story came from.
+# Replaced a flat -12.0 that, with "General" never being recorded, had become a
+# standing blocklist on four of the five categories (2026-10-06, see BACKLOG).
 TOPIC_REPEAT_PENALTY: float = 6.0   # at distance 0 (the topic posted last run)
 TOPIC_REPEAT_DECAY: float = 0.55    # multiplier per run of additional distance
 RECENT_TOPICS_WINDOW: int = 5       # how many posted topics we remember
 
-# Time decay. The rate was 0.5/hour against a 48-hour eligibility window, so an
-# item could shed 24 points on age alone — more than three times the entire
-# source-tier spread (3.0 to 10.0). Recency therefore outranked provenance by
-# default, and it did so asymmetrically: the Curator only ever runs at 07:00 UTC
-# (main.py selects by hour), when arXiv's nightly batch is ~3 hours old and a
-# US-afternoon announcement is 9 to 15 hours old. "Gemini 4 Argon", announced at
-# 20:00 UTC, was 11 hours old at the next Curator run and paid 5.5 points for it
-# while the arXiv batch paid 1.5.
-#
-# 0.25/hour keeps fresher-is-better inside the window (12 points end to end)
-# without letting the clock overrule the source. TIME_DECAY_MAX bounds it in
-# case an item ever outlives the lookback filter.
+# Time decay, bounded. Was 0.5/hour over a 48-hour window: 24 points on age
+# alone, three times the tier spread, so the clock outranked provenance.
 TIME_DECAY_PER_HOUR: float = 0.25
 TIME_DECAY_MAX: float = 12.0
 
-# Feeds sometimes carry a publication date in the future — a timezone bug, or a
-# scheduled post that leaks early. Age was used unclamped, so a negative age
-# SUBTRACTED a negative number: a item dated 72 hours ahead scored 42.0 against
-# a legitimate ceiling near 15, and it would win every run until its own
-# timestamp caught up. The lookback filter in fetch_single_feed does not catch
-# this (it only drops items that are too OLD). Treat anything not yet published
-# as brand new, never as better than new.
+# Age floor. A feed carrying a FUTURE publication date (timezone bug, scheduled
+# post leaking early) gave a negative age, and subtracting a negative number
+# awarded points — 72 hours ahead scored 42.0 against a ceiling near 15, and
+# would win every run until its timestamp caught up. fetch_single_feed's
+# lookback does not catch this: it only drops items that are too old.
 TIME_DECAY_MIN_AGE_HOURS: float = 0.0
 
 # Candidate source mix. fetch_news hands the Curator a shortlist and the model
-# writes about ONE of them, so the shortlist's job is to be a representative
-# menu, not a winner. It was neither: across the 21 logged Curator runs from
-# 2026-09-13 to 2026-10-04, 79 of 105 candidate slots were arXiv preprints, 13
-# of 21 runs offered nothing BUT arXiv, and only 2 of 21 offered even one
-# primary source. The model had no choice to make.
-#
-# Hidden Gem Injection guaranteed arXiv a seat but nothing guaranteed one to a
-# primary source, so the asymmetry was built in. Now both ends are bounded: a
-# floor AND a cap for the research sources, and a floor for the primary sources.
-# A "tier-1" source is one scoring TIER1_SOURCE_SCORE in SOURCE_TIERS, which is
-# the AI labs' own blogs (OpenAI, Anthropic, DeepMind, Google, Mistral, Hugging
-# Face, Meta AI) rather than anything merely high-quality like LWN at 9.
+# writes about ONE item, so the shortlist's job is to be a representative menu.
+# Hidden Gem Injection guaranteed arXiv a seat and guaranteed nothing to a
+# primary source, so the asymmetry was built in: 79 of 105 candidate slots were
+# arXiv over three weeks, and 2 of 21 runs offered any primary source. Both ends
+# are bounded now. Tier-1 means TIER1_SOURCE_SCORE in SOURCE_TIERS — an AI lab's
+# own blog, so LWN at 9 does not qualify.
 TIER1_SOURCE_SCORE: float = 10.0
 MIN_GEM_CANDIDATES: int = 1    # keep the original Hidden Gem floor
 MAX_GEM_CANDIDATES: int = 2    # ... but it is a floor, not a monopoly
 MIN_TIER1_CANDIDATES: int = 2  # best-effort: only if the pool holds that many
 
-# Flagship AI products — these get a dedicated scoring bonus because a post
-# about the current frontier model is categorically more consequential than a
-# generic "new feature" story. `scripts/refresh_momentum.py` rewrites this list
-# monthly and opens a PR; hand edits are the stopgap when it has not run.
+# Flagship AI products — a post about the current frontier model is categorically
+# more consequential than a generic "new feature" story. `refresh_momentum.py`
+# rewrites this list monthly and opens a PR; hand edits are the stopgap.
 #
-# Refreshed by hand 2026-10-06. The previous list ("gemini 3", "claude 4",
-# "llama 4", "grok 3/4", "o3/o4", …) had gone a generation stale, so the bonus
-# did not fire on "Gemini 4 Argon: our next era of frontier intelligence" —
-# the launch scored 11.5 against an arXiv batch at 13.5 and was never offered
-# to the Curator. Names below are taken from headlines the bot's own tier-1
-# feeds carried in the 48h window, not from memory: entries must be evidenced.
-#
-# Matching is a lowercase SUBSTRING test over title+description, so every entry
-# stays version-qualified. Bare product words are not safe here — "beam" would
-# match Google Beam (video calling) as readily as Reflection's Beam, and "muse"
-# matches "museum". When in doubt, leave it out: a missing name costs 4 points,
-# a false positive boosts noise into the feed.
+# Every entry must be EVIDENCED (seen in the bot's own tier-1 feeds), not
+# recalled, and VERSION-QUALIFIED. Matching is a lowercase substring test, so a
+# bare word is unsafe: "beam" hits Google Beam as readily as Reflection's Beam,
+# "muse" hits "museum". A missing name costs 4 points; a false positive puts
+# noise in the feed. Last hand refresh 2026-10-06, after the list had gone a
+# generation stale and missed the Gemini 4 Argon launch.
 MOMENTUM_PRODUCTS: List[str] = [
     "gpt-6", "gpt 6", "gpt-5.2", "gpt-oss",
     "gemini 4", "gemini 3.8", "gemini robotics",
