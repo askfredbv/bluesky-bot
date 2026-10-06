@@ -352,6 +352,57 @@ def test_the_two_floors_do_not_starve_each_other():
     assert sum(1 for i in result if news._is_tier1(i["link"])) >= news.MIN_TIER1_CANDIDATES
 
 
+@pytest.mark.parametrize("link", [
+    "https://notopenai.com/x",
+    "https://openai.com.evil.example/x",
+    "https://openai.com@attacker.example/x",
+    "https://fakeopenai.com/x",
+    "https://deepmind.google.phish.example/x",
+])
+def test_a_lookalike_host_does_not_get_a_primary_source_tier(link):
+    """Tier matching is hostname-anchored, not a substring test.
+
+    The substring form handed OpenAI's tier-10 to any host merely CONTAINING
+    "openai.com". That was always wrong but only inflated a score; once
+    _is_tier1 began guaranteeing shortlist seats it became a way to force a
+    spoofed host in as an AI lab's own announcement -- and items do arrive from
+    arbitrary third-party domains through the Hacker News and Lobsters feeds.
+    """
+    assert news.source_tier(link) == news.DEFAULT_SOURCE_TIER
+    assert not news._is_tier1(link)
+
+
+@pytest.mark.parametrize("link, expected", [
+    ("https://openai.com/index/x", 10.0),            # exact
+    ("https://developers.openai.com/rss.xml", 10.0),  # documented subdomain
+    ("https://www.theregister.com/a/b", 7.0),         # www. prefix
+    ("https://blog.google/innovation-and-ai/x", 10.0),
+    ("https://lwn.net/Articles/1", 9.0),
+])
+def test_real_hosts_keep_their_configured_tier(link, expected):
+    """The suffix rule must not break the intended matches it replaced."""
+    assert news.source_tier(link) == expected
+
+
+def test_the_gem_cap_never_prefers_a_negative_item_to_a_positive_gem():
+    """A capped gem may only lose its slot to a candidate worth offering.
+
+    Applying the cap across the whole ranked list let a negative non-gem take a
+    slot from a positive gem -- gems at 10/9/8/7 with non-gems at -1/-2/-3
+    produced [10, 9, -1, -2, -3], contradicting this function's own rule that a
+    negative score is a bad candidate. (Found in review of #169.)
+    """
+    ranked = [_cand(n, s, "arxiv.org") for n, s in enumerate([10.0, 9.0, 8.0, 7.0])]
+    ranked += [_cand(10 + n, s) for n, s in enumerate([-1.0, -2.0, -3.0])]
+    result = news.select_candidates(ranked, 5)
+
+    scores = [i["score"] for i in result]
+    assert scores[:4] == [10.0, 9.0, 8.0, 7.0]
+    assert all(s > 0 for s in scores[:4])
+    # Still fills to `limit`, so downstream callers keep their assumption.
+    assert len(result) == 5
+
+
 def test_the_shortlist_comes_back_best_first_after_promotion():
     """Downstream reads news_items[0] as the top item, so order must hold."""
     ranked = [_cand(n, 20.0 - n, "arxiv.org") for n in range(4)]
