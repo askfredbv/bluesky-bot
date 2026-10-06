@@ -58,6 +58,59 @@ def test_each_scoring_factor_adds_its_exact_weight(frozen, title, link, expected
     assert _score(title, link)[0] == pytest.approx(expected)
 
 
+@pytest.mark.parametrize("title", [
+    "Token Efficient Task Execution via Application Behavior Modeling",
+    "Grounding Agent Decisions by Mapping Design Constraints",
+    "A Manifold-Aware Topic Modeling Approach via Rank-Based Prototypes",
+    "Teacher-Guided Fitness Approximation for Expensive Evolution",
+    'Apparently, OpenAI isn\'t trying to build "magic intelligence in the sky"',
+])
+def test_a_word_merely_containing_a_keyword_earns_nothing(frozen, title):
+    """"app" is three letters and was matched as a substring, worth +5.0.
+
+    It fired on application, mapping, approach, approximation and apparently --
+    "mapping" earned five points. Roughly 9 of the 79 arXiv candidates logged
+    between 2026-09-13 and 10-04 took the product bonus from that one token.
+    All five titles here are real, taken from those logs.
+    """
+    # 3.0 default tier, no decay, no other keyword: the bare floor.
+    assert _score(title)[0] == pytest.approx(3.0)
+
+
+@pytest.mark.parametrize("title, bonus", [
+    ("A new app for the desk", 5.0),            # the word itself
+    ("Two apps for the desk", 5.0),             # plural
+    ("Launched the thing today", 5.0),          # launch + ed
+    ("Launches the thing today", 5.0),          # launch + es
+    ("Released the thing today", 5.0),          # release + d, NOT release + ed
+    ("A quiet benchmark", 7.0),                 # groundbreaking, bare
+    ("Benchmarking the thing", 7.0),            # benchmark + ing
+    ("Several benchmarks today", 7.0),          # benchmark + s
+    ("Notes on Architecture-0 design", 7.0),    # hyphen is a word boundary
+])
+def test_keywords_and_their_inflections_still_score(frozen, title, bonus):
+    """Anchoring must not cost the matches the lists are actually for.
+
+    "released" is the case worth pinning: it is "release" + "d", not
+    "release" + "ed", so an inflection set without a bare "d" would silently
+    stop scoring the commonest word in a launch announcement.
+    """
+    assert _score(title)[0] == pytest.approx(3.0 + bonus)
+
+
+def test_loose_matches_are_recorded_for_measurement(frozen):
+    """The old rule's false matches are counted, not silently dropped.
+
+    One sample ("app") motivated this change; the recorded list is how the week
+    after it lands answers how often the loose rule was paying out.
+    """
+    _score_value, item = _score("A Manifold-Aware Topic Modeling Approach")
+    assert item["keyword_substring_only"] == ["app"]
+
+    _score_value, clean = _score("A quiet benchmark for tool use")
+    assert clean["keyword_substring_only"] == []
+
+
 def test_a_story_decays_at_the_configured_rate(frozen):
     expected = 3.0 - 10 * news.TIME_DECAY_PER_HOUR
     assert _score("Quiet weekly roundup", age_hours=10)[0] == pytest.approx(expected)

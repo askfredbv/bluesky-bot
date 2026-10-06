@@ -128,6 +128,61 @@ def annotate_cross_publisher_consensus(items: List[Dict[str, Any]]) -> None:
         item["cross_publisher_domains"] = max(1, len(domains))
 DEFAULT_SOURCE_TIER = 3.0
 
+# ── Keyword matching: word-anchored, not substring ──────────────────────────
+# PRODUCT_KEYWORDS and GROUNDBREAKING_KEYWORDS were matched with `kw in text`,
+# which awards points for words that merely CONTAIN a keyword. The worst
+# offender is the three-letter "app" (worth +5.0), which fired on:
+#
+#   application · mapping · approach · approximation · apparently
+#
+# "mapping" earned five points. Roughly 9 of the 79 arXiv candidates logged
+# between 2026-09-13 and 10-04 took the product bonus from that one token.
+#
+# Each keyword is now anchored with \b on both sides, plus an optional
+# inflection suffix so the useful variants still count. The suffix set includes
+# a bare "d" on purpose: "released" is "release" + "d", not "release" + "ed",
+# and a launch announcement says "released" far more often than "release".
+#
+#   launch     -> launch, launches, launching, launched
+#   release    -> release, releases, released
+#   benchmark  -> benchmark, benchmarks, benchmarking, benchmarked
+#   app        -> app, apps  ... and NOT application / approach / mapping
+#
+# Known and accepted losses: "featuring" (not "feature"+ing), "toolkit" (not
+# "tool"+suffix), "efficiencies". Each is either rare or arguably not the
+# signal the list is reaching for.
+_KEYWORD_INFLECTIONS = r"(?:s|es|d|ed|ing)?"
+
+
+def _compile_keywords(keywords: List[str]) -> "re.Pattern[str]":
+    """One alternation of word-anchored, inflection-tolerant keyword patterns."""
+    body = "|".join(re.escape(kw) + _KEYWORD_INFLECTIONS for kw in keywords)
+    return re.compile(rf"\b(?:{body})\b", re.IGNORECASE)
+
+
+_PRODUCT_KEYWORD_RE = _compile_keywords(PRODUCT_KEYWORDS)
+_GROUNDBREAKING_KEYWORD_RE = _compile_keywords(GROUNDBREAKING_KEYWORDS)
+
+
+def _keyword_hit(text: str, pattern: "re.Pattern[str]") -> bool:
+    """True if any keyword appears as a whole word (or inflected form)."""
+    return pattern.search(text) is not None
+
+
+def _substring_only_hits(text: str) -> List[str]:
+    """Keywords the OLD substring rule would have matched but the new one does not.
+
+    Pure measurement, no effect on the score. Lets the week after this lands
+    answer how often the loose rule was paying out on a false match, instead of
+    relying on the single sample ("app") that motivated the change.
+    """
+    hits = []
+    for kw in (*PRODUCT_KEYWORDS, *GROUNDBREAKING_KEYWORDS):
+        if kw in text and not re.search(
+                rf"\b{re.escape(kw)}{_KEYWORD_INFLECTIONS}\b", text, re.IGNORECASE):
+            hits.append(kw)
+    return hits
+
 
 def _host_of(link: str) -> str:
     """The lowercased hostname of a link, or "" if it has none.
@@ -317,13 +372,23 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     score += source_tier(item['link'])
     
     # 2. Product Boost
-    if any(kw in text for kw in PRODUCT_KEYWORDS): score += 5.0
+    if _keyword_hit(text, _PRODUCT_KEYWORD_RE): score += 5.0
 
-    # 2b. Momentum Product Boost — flagship 2026 models score higher than generic product news
+    # 2b. Momentum Product Boost — flagship 2026 models score higher than generic
+    # product news. Still a plain substring test, deliberately: a momentum entry
+    # is a version-qualified name ("gemini 4", "gpt-6") where matching inside a
+    # longer string is the intent, and a separate test forbids bare words there.
     if any(p in text for p in MOMENTUM_PRODUCTS): score += MOMENTUM_PRODUCT_BONUS
 
     # 3. Groundbreaking Tech Boost
-    if any(kw in text for kw in GROUNDBREAKING_KEYWORDS): score += 7.0
+    if _keyword_hit(text, _GROUNDBREAKING_KEYWORD_RE): score += 7.0
+
+    # Measurement for the week after this lands: which keywords WOULD have
+    # fired under the old substring rule but no longer do. Recorded on the item
+    # (like detected_topic) rather than logged here, because scoring runs over
+    # ~130 items per run and a log line each would drown the run. fetch_news
+    # logs one aggregate.
+    item['keyword_substring_only'] = _substring_only_hits(text)
     
     # 4. Time Decay — bounded, and never a bonus.
     # max(..., 0.0) is load-bearing: a feed carrying a future publication date
@@ -548,6 +613,22 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
     for item in unique_unseen:
         item['score'] = calculate_relevance_score(item, item['pub_date'], recent_topics)
     
+    # One aggregate line for the loose-match measurement set by scoring. Tells
+    # us, over the week after this lands, how much the old substring rule was
+    # paying out on words that merely contained a keyword.
+    substring_only: Dict[str, int] = {}
+    for item in unique_unseen:
+        for kw in item.get('keyword_substring_only') or []:
+            substring_only[kw] = substring_only.get(kw, 0) + 1
+    if substring_only:
+        SafeLogger.info(
+            "keyword_substring_only_matches",
+            "Keywords the old substring rule would have scored",
+            items_scored=len(unique_unseen),
+            affected_items=sum(1 for i in unique_unseen if i.get('keyword_substring_only')),
+            by_keyword=dict(sorted(substring_only.items(), key=lambda kv: -kv[1])),
+        )
+
     ranked = sorted(unique_unseen, key=lambda x: x['score'], reverse=True)
 
     # Source-mixed shortlist: gem floor AND cap, plus a primary-source floor.
