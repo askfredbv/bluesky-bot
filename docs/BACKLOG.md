@@ -1,6 +1,6 @@
 # Backlog
 
-Living list of pending work and parked ideas. Bot is shipping at **v4.27.1** (2026-09-12). Release notes for every version live on the [GitHub releases page](https://github.com/askfredbv/bluesky-bot/releases) — this file does not duplicate them.
+Living list of pending work and parked ideas. Bot is shipping at **v4.28.0** (2026-10-08). Release notes for every version live on the [GitHub releases page](https://github.com/askfredbv/bluesky-bot/releases) — this file does not duplicate them.
 
 > **Before working on this project, read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md).** Six weeks of infrastructure landed on top of a hardcoded fallback that was shipping placeholder posts to production the whole time. The retro names the pattern (metrics-as-substitute-for-reading) and the corrective (open the live feed first). Don't repeat it.
 
@@ -8,29 +8,19 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.27.1** (20
 
 ## Priority order
 
-Updated 2026-10-06, after the scoring work below merged. Items 1 and 2 block each other:
-nothing can be released until a production run has executed the new code and been read
-(`RELEASING.md` §0).
+Updated 2026-10-08. Items 1 and 2 are closed by v4.28.0; item 3 is now the next action.
 
-1. **[BLOCKING] Live-verify the 2026-10-06 scoring changes.** Thirteen commits sit on `main`
-   unreleased and **none has run in production**. Read `curator_candidates` for two
-   consecutive 07:00 UTC runs:
-   - **Day one will still look arXiv-heavy and that is expected.** The stored
-     `recent_topics` is `['LLMs','Vision/Robot','Policy/Society','Compute/HW','LLMs']` with
-     no `General` in it, so the new cooldown needs one run to write one and wash through.
-     Do not judge the change on day one.
-   - **Day two is the signal.** Baselines to beat, measured over the 21 logged runs from
-     2026-09-13 to 10-04: a primary source appeared in the shortlist in **2 of 21** runs;
-     **13 of 21** runs offered exactly **one** distinct publisher; 79 of 105 candidate
-     slots were arXiv.
-   - Also read the new `keyword_substring_only_matches` line: how often the old loose
-     keyword matching was paying out across the whole pool, not just in titles.
-2. **[BLOCKED on 1] Cut the release.** Thirteen commits since v4.27.1: #159, #160, #161,
-   #162, #163, #165, #167, #168, #170, #171, #172, #173, #174. Minor, not patch — a reader
-   of the feed can see the difference (which story gets picked). Follow `RELEASING.md`:
-   version in four places, BACKLOG header + changelog line, annotated tag, GitHub release
-   separating **live-verified** from **test-covered only**, then the wiki.
-3. **[BLOCKED on 2] Wiki debt**, now three releases deep and the thing `RELEASING.md` §3
+1. **[DONE 2026-10-08] Live-verify the 2026-10-06 scoring changes.** Read on the 07:00 UTC
+   runs of 10-07 and 10-08. Both beat the baselines (a primary source in the shortlist in
+   2 of 21 runs before; 13 of 21 runs offering one publisher; 79 of 105 slots arXiv):
+   10-07 offered four distinct publishers including two tier-1, 10-08 three including two
+   tier-1, and `tier1_source_promoted` fired on 10-08. `recent_topics` now records
+   `General`, so the cooldown washes through as designed.
+   `keyword_substring_only_matches` put a number on the loose matching across the whole
+   pool, not just titles: 311 of 1165 items on 10-07 and 338 of 1328 on 10-08, almost all
+   of it the three-letter `app`. That is the data item 4 is gated on.
+2. **[DONE 2026-10-08] Cut the release.** v4.28.0, seventeen commits since v4.27.1.
+3. **Wiki debt**, now three releases deep and the thing `RELEASING.md` §3
    exists to stop:
    - `Configuration.md`: `TOPIC_REPEAT_PENALTY`, `TOPIC_REPEAT_DECAY`,
      `RECENT_TOPICS_WINDOW`, `TIME_DECAY_PER_HOUR`, `TIME_DECAY_MAX`,
@@ -213,3 +203,4 @@ Total path-to-finish: ~14.5h spread over 2–3 months of calendar time, gated by
 - 2026-09-10: **Audit leftovers, #132–#140.** Mastodon thread parts are numbered "1/2", "2/2", because Mastodon lists a self-thread newest-first (#132). Curator posts carry their source link in the Mastodon text (#133): the audit had rated this medium, and the live feed showed 4 of the last 5 Curator posts reaching Mastodon with no source. The proactive scan and the approval share one concurrency group, closing a write race before Phase 4b is activated (#134). Cleanups: an unused `handle_interactions` parameter (#135), `scripts/` in the mypy gate (#136), one image compressor for every path (#137), the publisher thumbnail validated so the Curator's fallback image can run (#138), the `src.utils` re-export shim retired (#139), and three dead items removed, including the `retry_with_backoff` decorator that #85 had kept (#140). Verified in production the same day, from the state Gist's revision history: a Curator run now adds one seen link instead of five (#121), and state is written six seconds after the post, before the metrics stages (#128). #132 and #133 wait on the next Curator run for their live check.
 - 2026-09-11: **v4.27.0 — Mastodon parity and the freeze-audit fixes.** Release of #121–#148, the first cut with `docs/RELEASING.md` (#149). Since the two entries above came the repo-quality pass (#142–#147): required CI on `main`, `check_untyped_defs`, mention replies fitted to a whole sentence, feeds 33 → 28 with Hacker News on its own feed, and a mutation run whose gaps in the posting, retry and state code are now pinned. Then #148 stopped a stray local `.bak` from making an empty state look trusted. Live-verified on the 2026-09-11 09:00 CEST run: the Mastodon source link and thread numbering, the official HN feed, and a clean run on the real entry point. Test-covered only: the reply fitting (no mentions yet), the `.bak` path (never reached on Actions), the Mastodon idempotency key, and the Phase 4b concurrency group.
 - 2026-09-12: **v4.27.1 — Feed-health issues and a second mutation run.** Release of #151–#157. A dead feed opens a `feed-health` GitHub issue after the run that notices it, and closes it once every feed is healthy (#153): its first two runs logged `0 flagged, action=nothing`. `pip-audit` replaces the Snyk check (#151). A second mutation run covered `net_safety.py`, `news.py` and `agents.py`: 213 survivors, 156 killed by new tests, the rest equivalent and listed in each test file (#155, #156). Small fixes: whole-link source-link match and the dead `hnrss.org` tier (#154), a 75-second test sleep (#152), the Mastodon bio copy (#157). 728 → 861 tests, coverage 92% → 95%. Nothing in the feed changed.
+- 2026-10-08: **v4.28.0 — The Curator picks better news.** Release of #159–#178. The topic-diversity signal had inverted: `recent_topics` only ever recorded a non-"General" topic, and "General" is the label for an item matching no topic keyword — by far the commonest one — so the window almost never advanced and whatever landed in it stayed for months, permanently penalising four of the five on-brand AI categories at a flat -12.0, more than the entire source-tier spread. The penalty is now a cooldown that decays with recency, and "General" is recorded like any other topic (#168), which also unstuck the monthly `MOMENTUM_PRODUCTS` refresh: it had failed on both of its runs with exit 127, because it installed `requirements.txt` and then validated with `ruff` and `pytest`, which live in `requirements-dev.txt`, so the +4.0 flagship-launch bonus never fired on "Gemini 4 Argon". The shortlist is now mixed by source rather than top-5-by-score, with a floor and a cap for research sources and a best-effort floor of primary ones (#173) — floors never fabricate a candidate and never promote a negative-scoring one. Time decay was 0.5/hour over 48 hours, 24 points on age alone against a tier spread of 7; it is now 0.25/hour and bounded, and age is clamped at zero (#173). Keywords match as whole words instead of substrings (#172): "app", worth +5.0, had been firing on "mapping", "approach" and "apparently", and the loose rule took ten times more points off arXiv than off everything else. Voice: no em-dashes in posts (#159, #161), and the flat corporate-LLM register is banned alongside carnival hype (#171). Mastodon's later thread parts open with their position marker, since Mastodon lists a self-thread newest-first (#160). Feed health exempts Microsoft Research, FB AI research and Raschka from the stale signal and drops Stability (#165, #167). `urllib3` to 2.8.0 for PYSEC-2026-4175/4176/4177 (#170). Every Curator run now logs the five items it offered the model (#162) and what the old keyword rule would have matched (#172) — that second line is what phase 2 is gated on. 861 → 980 tests. Live-verified on the 07:00 UTC runs of 10-07 and 10-08: both beat all three baselines from the 21 runs of 2026-09-13 to 10-04.
