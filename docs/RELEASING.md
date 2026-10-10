@@ -76,6 +76,32 @@ The wiki is a separate repository, `askfredbv/bluesky-bot.wiki`. It has no PR fl
 
 ## 4. After
 
-- [ ] **`main`'s own CI passed** on the release commit.
+The first two are done at merge time. The third cannot be — production has to run
+first — which is exactly why it strands. v4.28.0's sat open for two days with the
+evidence already sitting in a run log nobody opened. **Arm the check before you
+close the laptop**, or this step depends on remembering.
+
+- [ ] **`main`'s own CI passed** on the release commit:
+  `gh api repos/askfredbv/bluesky-bot/commits/$(git rev-parse origin/main)/check-runs --jq '.check_runs[] | "\(.conclusion)\t\(.name)"'`
 - [ ] **The release is listed as Latest:** `gh release list --limit 1`
-- [ ] **The next scheduled run logs `AskFred Engine vX.Y.Z`** in its `run_started` line. That is the proof that production runs the release.
+- [ ] **Schedule the post-release check** for ~09:30 local the next morning, before
+  you stop. A one-time scheduled task is what has worked (`bot-scoring-verify-day1`,
+  `bot-fallback-armed-check`). Each run starts with no memory of the session that
+  created it, so the prompt must name the version, the repo, and the exact commands.
+  Two things to put in it:
+  - it must **stop and say so** if no run has happened yet, rather than reading the
+    previous day's run as if it were today's;
+  - it is **read-only** — report, change nothing.
+- [ ] **The next scheduled run logs `AskFred Engine vX.Y.Z`** in its `run_started`
+  line. That is the proof that production runs the release, as opposed to a deploy
+  that silently did not take:
+  `gh run list --workflow="Daily Bluesky Post" --limit 5 --json databaseId,createdAt,conclusion`
+  then `gh run view <id> --log | grep run_started`
+- [ ] **Record the result in the release's BACKLOG changelog entry**, naming the run
+  id. Do not tick the boxes above: this section is a reusable template, and a ticked
+  template is wrong for the next release. The changelog entry is the per-release
+  record, and a bare "verified" with no run id cannot be re-checked later.
+
+Anything this release shipped that the daily path does not exercise needs its own
+proof and will not appear in that run log — a manual probe workflow, for instance.
+Say which in the notes rather than letting a green run imply it.
