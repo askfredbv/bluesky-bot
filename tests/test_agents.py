@@ -36,7 +36,7 @@ async def test_generate_content_returns_empty_when_all_models_fail(monkeypatch):
 async def test_generate_content_includes_style_memory_constraints(monkeypatch):
     captured = {"prompt": ""}
 
-    def _capture_prompt(_api_key, system_instr, task, _model):
+    def _capture_prompt(_api_key, system_instr, task, _model, anthropic_api_key=None):
         captured["prompt"] = f"{system_instr}\n\n{task}"
         return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
 
@@ -62,7 +62,7 @@ async def test_generate_content_includes_style_memory_constraints(monkeypatch):
 async def test_generate_content_includes_persona_variant(monkeypatch):
     captured = {"prompt": ""}
 
-    def _capture_prompt(_api_key, system_instr, task, _model):
+    def _capture_prompt(_api_key, system_instr, task, _model, anthropic_api_key=None):
         captured["prompt"] = f"{system_instr}\n\n{task}"
         return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
 
@@ -91,7 +91,7 @@ async def test_curator_link_follows_chosen_item(monkeypatch):
         {"title": "The One I Wrote About", "description": "d1", "link": "https://example.com/chosen"},
     ]
 
-    def _pick_second(_api_key, _system_instr, _task, _model):
+    def _pick_second(_api_key, _system_instr, _task, _model, anthropic_api_key=None):
         return (
             '{"url": "https://example.com/chosen", '
             '"posts": ["I keep seeing this exact failure mode in production and the '
@@ -122,7 +122,7 @@ async def test_curator_unmatched_url_falls_back_to_top_item(monkeypatch):
         {"title": "Second", "description": "d1", "link": "https://example.com/second"},
     ]
 
-    def _hallucinate_url(_api_key, _system_instr, _task, _model):
+    def _hallucinate_url(_api_key, _system_instr, _task, _model, anthropic_api_key=None):
         return (
             '{"url": "https://example.com/not-in-the-list", '
             '"posts": ["I keep seeing this exact failure mode in production and the '
@@ -158,7 +158,7 @@ async def test_curator_missing_url_retries_does_not_fall_back(monkeypatch):
         {"title": "Second", "description": "d1", "link": "https://example.com/second"},
     ]
 
-    def _posts_without_url(_api_key, _system_instr, _task, _model):
+    def _posts_without_url(_api_key, _system_instr, _task, _model, anthropic_api_key=None):
         return (
             '{"posts": ["I keep seeing this exact failure mode in production and '
             'the #AI tooling still does not catch it before it ships."]}'
@@ -189,7 +189,7 @@ async def test_curator_recovers_when_retry_supplies_url(monkeypatch):
     ]
     calls = {"n": 0}
 
-    def _no_url_then_url(_api_key, _system_instr, _task, _model):
+    def _no_url_then_url(_api_key, _system_instr, _task, _model, anthropic_api_key=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return (
@@ -505,7 +505,7 @@ async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
     after the re-ordering."""
     models_tried = []
 
-    def _track_and_fail_primary(api_key, system_instr, task, model):
+    def _track_and_fail_primary(api_key, system_instr, task, model, anthropic_api_key=None):
         models_tried.append(model)
         if model == "gemini-3.7-flash":
             raise ConnectionError("quota exceeded")
@@ -552,7 +552,7 @@ async def test_model_failover_does_not_advance_on_json_error(monkeypatch):
     models_tried = []
     attempt_count = [0]
 
-    def _track_and_return_bad_json(api_key, system_instr, task, model):
+    def _track_and_return_bad_json(api_key, system_instr, task, model, anthropic_api_key=None):
         models_tried.append(model)
         attempt_count[0] += 1
         return "not valid json at all"
@@ -576,7 +576,7 @@ async def test_model_used_event_logged_on_success(monkeypatch):
     """A successful generation should log the model_used event."""
     log_events = []
 
-    def _ok_generate(api_key, system_instr, task, model):
+    def _ok_generate(api_key, system_instr, task, model, anthropic_api_key=None):
         return '["Long enough post with #AI and enough detail to pass all validation checks here."]'
 
     def _capture_info(event, message="", **fields):
@@ -598,7 +598,7 @@ async def test_generate_content_injects_language_directive(monkeypatch):
     """LANGUAGE directive is present in the prompt sent to Gemini."""
     captured = {}
 
-    def fake_sync_generate(api_key, system_instr, task, model):
+    def fake_sync_generate(api_key, system_instr, task, model, anthropic_api_key=None):
         captured["prompt"] = f"{system_instr}\n\n{task}"
         return '["Long enough post with #AI and enough detail to pass all validation checks here."]'
 
@@ -990,7 +990,7 @@ async def test_generate_content_avoids_recent_mode_topics_in_mentor(monkeypatch)
     must force the picker to land on the remaining one."""
     captured = {"task": ""}
 
-    def _capture_prompt(_api_key, _system_instr, task, _model):
+    def _capture_prompt(_api_key, _system_instr, task, _model, anthropic_api_key=None):
         captured["task"] = task
         return '["A real Mentor post that meets the validator length floor with no banned hype."]'
 
@@ -1026,7 +1026,7 @@ async def test_pioneer_post_missing_required_url_is_rejected(monkeypatch):
     required_url = "https://example.com/canonical-source"
     attempts = []
 
-    def _model_omits_url(_api_key, _system_instr, task, _model):
+    def _model_omits_url(_api_key, _system_instr, task, _model, anthropic_api_key=None):
         attempts.append(task)
         # Realistic-length post that passes shape + voice validators but
         # deliberately omits the URL the entry requires.
@@ -1063,7 +1063,7 @@ async def test_pioneer_post_with_required_url_is_accepted(monkeypatch):
     """Counter-test: same setup but the model includes the URL → accepted."""
     required_url = "https://example.com/canonical-source"
 
-    def _model_includes_url(_api_key, _system_instr, _task, _model):
+    def _model_includes_url(_api_key, _system_instr, _task, _model, anthropic_api_key=None):
         return (
             '["A perfectly reasonable observation about the historical event '
             'in question that lands on a statement and meets the minimum-length '
@@ -1098,7 +1098,7 @@ async def test_pioneer_post_without_link_field_skips_url_check(monkeypatch):
     """Entries without a `link` field are exempt — the validator only fires
     when the entry actually has a URL. A post without a URL should pass."""
 
-    def _model_returns_plain_post(_api_key, _system_instr, _task, _model):
+    def _model_returns_plain_post(_api_key, _system_instr, _task, _model, anthropic_api_key=None):
         return '["A perfectly reasonable observation about the historical event in question that lands on a statement and meets the minimum-length floor."]'
 
     monkeypatch.setattr("src.agents._sync_generate", _model_returns_plain_post)

@@ -14,7 +14,7 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
     creds = SimpleNamespace(
         bluesky_username="bsky-user",
         bluesky_password="bsky-pass",
-        gemini_api_key="gemini-key",
+        gemini_api_key="gemini-key", anthropic_api_key=None,
         mastodon_access_token="mastodon-token",
         mastodon_api_base_url="https://mastodon.example",
     )
@@ -79,7 +79,7 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_err
     creds = SimpleNamespace(
         bluesky_username="bsky-user",
         bluesky_password="bsky-pass",
-        gemini_api_key="gemini-key",
+        gemini_api_key="gemini-key", anthropic_api_key=None,
         mastodon_access_token="mastodon-token",
         mastodon_api_base_url="https://mastodon.example",
     )
@@ -168,7 +168,7 @@ async def test_curator_switches_to_strategist_when_feed_volume_is_low(monkeypatc
 async def test_partial_broadcast_failure_keeps_successful_bluesky_client(monkeypatch):
     calls = {"errors": []}
     creds = SimpleNamespace(
-        gemini_api_key="gemini-key",
+        gemini_api_key="gemini-key", anthropic_api_key=None,
         bluesky_username="bsky-user",
         bluesky_password="bsky-pass",
         mastodon_access_token="mastodon-token",

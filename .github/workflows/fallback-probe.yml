@@ -1,0 +1,49 @@
+name: Fallback Probe (diagnostic)
+
+# Manual, read-only diagnostic. Simulates a total Gemini outage so the model
+# chain falls through to the Anthropic fallback, runs the real Curator prompt
+# against it, and applies the production validators to the result.
+# Posts nothing, changes nothing.
+#
+# Why it exists: the fallback sits BELOW all four Gemini models, so in normal
+# operation it never runs. Nothing in a daily run tells you whether it still
+# works, and unit tests mock the SDK — they prove the dispatch is wired, not
+# that the key is live, the model id still exists, the request shape is still
+# accepted, or the output still satisfies the Curator's JSON contract. Those
+# are the failures that matter for an insurance path. Run this occasionally so
+# the answer arrives on a good day rather than during an outage.
+#
+# Trigger from the Actions UI → "Run workflow".
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: 'How many generations to attempt'
+        required: false
+        default: '3'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Probe the cross-provider fallback
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PROBE_RUNS: ${{ inputs.runs }}
+        run: python -m scripts.probe_fallback

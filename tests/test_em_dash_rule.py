@@ -76,7 +76,7 @@ async def test_the_prompt_generate_content_sends_carries_no_em_dash(monkeypatch,
     """Covers the task and format strings built in agents.py, not just config."""
     sent = []
 
-    def fake(api_key, system_instr, task, model):
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None):
         sent.append(f"{system_instr}\n{task}")
         raise RuntimeError("stop here")
 

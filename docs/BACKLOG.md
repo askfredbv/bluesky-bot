@@ -28,10 +28,15 @@ Updated 2026-10-08. Items 1 and 2 are closed by v4.28.0; item 3 is now the next 
      `MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`; `MOMENTUM_PRODUCTS` is refreshed
      monthly now, not "quarterly by hand".
    - `Troubleshooting.md`: `curator_candidates`, `em_dash_detected`,
-     `keyword_substring_only_matches`, `tier1_source_promoted`.
+     `keyword_substring_only_matches`, `tier1_source_promoted`,
+     `fallback_provider_armed`.
    - `Architecture.md`: `select_candidates` (the shortlist is source-mixed, not
-     top-5-by-score) and `source_tier` / `_host_matches`.
-   - `Home.md`: version line and test count (**980**).
+     top-5-by-score) and `source_tier` / `_host_matches`; the model chain is no
+     longer Gemini-only (`src/llm.py`, `ANTHROPIC_FALLBACK_MODELS`, appended
+     after `filter_available_models` and never passed into it).
+   - `Configuration.md` also needs `ANTHROPIC_FALLBACK_MODELS` and the optional
+     `ANTHROPIC_API_KEY` secret (workspace-scoped, never an org admin key).
+   - `Home.md`: version line and test count (**998**).
 4. **De-bias phase 2 — bound the keyword magnitudes.** `PRODUCT` (+5) and `GROUNDBREAKING`
    (+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
    provenance. **Deliberately gated on a week of item 1's
@@ -43,6 +48,16 @@ Updated 2026-10-08. Items 1 and 2 are closed by v4.28.0; item 3 is now the next 
    **5 of 21** batches posed a real test at all, and the model captured the top-tier item
    in 1 of those 5 — n too small to mean anything. Item 1's fix is what makes the metric
    meaningful.
+
+   **Data point, 2026-10-10 (n=1, human):** during the fallback model trial, `ttok 1.0`
+   scored **12.1**, second-highest of that day's pool, and Frederik — reading five models'
+   posts about it blind — reported he "didn't quite catch the second article as being
+   interesting" and could not judge voice on it. So a near-top score bought an item the
+   author found unpostable. That is the gap this item is about, observed from the human
+   side rather than from tier capture: the scorer ranks *provenance and keywords*, and
+   nothing in it ranks whether there is a "so what". One observation on one article
+   proves nothing on its own; it is recorded so the 10-20 re-run has something concrete
+   to look for, and because the same pool's top item (`Python 3.15`, 8.8) read fine.
 6. **Explicit `--mode`.** `main.py` picks the mode from `current_hour < 11`, so a dispatch
    delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
    observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it

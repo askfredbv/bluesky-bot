@@ -48,7 +48,7 @@ def _script_generate(monkeypatch, answer):
     """Replace _sync_generate with answer(model, call_number); record the models."""
     calls = []
 
-    def fake(api_key, system_instr, task, model):
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None):
         calls.append(model)
         result = answer(model, len(calls))
         if isinstance(result, Exception):
@@ -82,7 +82,7 @@ async def _handle(monkeypatch, notifications, *, replies=("A perfectly good repl
     async def send_post(text, reply_to):
         sent.append(reply_to["parent"]["uri"])
 
-    def generate(api_key, system_instr, task, model):
+    def generate(api_key, system_instr, task, model, anthropic_api_key=None):
         models.append(model)
         return replies.pop(0) if len(replies) > 1 else replies[0]
 
@@ -194,7 +194,7 @@ async def test_a_mentor_run_given_news_items_still_writes_a_mentor_post(monkeypa
 async def test_each_mode_is_told_its_own_output_format(monkeypatch, mode, news, expected):
     tasks = []
 
-    def fake(api_key, system_instr, task, model):
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None):
         tasks.append(task)
         raise RuntimeError("stop here")
 
@@ -388,7 +388,7 @@ async def test_the_reviewer_sees_candidates_numbered_from_one(monkeypatch):
     the reviewer's ids would never line up and every tag would be dropped."""
     tasks = []
 
-    async def fake_thread(fn, api_key, system_instr, task, model):
+    async def fake_thread(fn, api_key, system_instr, task, model, anthropic_api_key=None):
         tasks.append(task)
         return json.dumps([{"id": 1, "keep": True}, {"id": 2, "keep": False}])
 

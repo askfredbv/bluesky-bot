@@ -60,6 +60,7 @@ Add these as GitHub repo secrets (`Settings > Secrets and variables > Actions`):
 | `BLUESKY_APP_PASSWORD` | Yes | App-specific password from Bluesky settings |
 | `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance |
 | `MASTODON_API_BASE_URL` | Optional | Your Mastodon instance URL (the API base, e.g. `https://mastodon.social`) |
+| `ANTHROPIC_API_KEY` | Optional | Cross-provider fallback, used only if **every** Gemini model in the chain fails. Unset means the chain stays Gemini-only. Use a **workspace-scoped** key, never an org admin key. |
 | `GIST_TOKEN` | Yes | GitHub PAT with `gist` scope — for persistent state |
 | `GIST_ID` | Yes | ID of the private Gist holding the state files |
 

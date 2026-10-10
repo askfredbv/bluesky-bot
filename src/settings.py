@@ -18,6 +18,10 @@ class CredentialsSettings:
     bluesky_password: str
     mastodon_access_token: Optional[str]
     mastodon_api_base_url: str
+    # Optional on purpose. Unset means the cross-provider fallback is simply
+    # not appended to the model chain and the run behaves exactly as before;
+    # a missing key must never turn into a failed run.
+    anthropic_api_key: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,7 @@ class Settings:
                 "MASTODON_API_BASE_URL",
                 "https://mastodon.social",
             ),
+            anthropic_api_key=_get_nullable_str(source, "ANTHROPIC_API_KEY"),
         )
 
         platform = PlatformSettings(
