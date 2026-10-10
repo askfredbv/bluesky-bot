@@ -99,6 +99,10 @@ jobs:
           # Optional Mastodon support
           MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
           MASTODON_API_BASE_URL: ${{ secrets.MASTODON_API_BASE_URL }}
+          # Optional cross-provider fallback. Unset means the model chain stays
+          # Gemini-only and the run behaves exactly as before; it is never used
+          # unless every Gemini model has already failed.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # State persistence via private GitHub Gist
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}

@@ -382,6 +382,31 @@ GEMINI_MODEL_PRIORITY: List[str] = [
     # (The Gemma prompt-inlining path in agents.py stays — harmless if unused.)
 ]
 
+# Cross-provider fallback, appended BELOW the Gemini chain at runtime.
+#
+# Every entry above is Gemini on one key and one account, so a revoked key,
+# a quota decision or a surprise deprecation takes all four down together.
+# This fires only when all of them have failed, which turns a provider-wide
+# outage from a missed run into a posted one.
+#
+# Why this model: on 2026-10-10 the five candidates were run against the real
+# Curator prompt, 8 samples each. claude-haiku-5-5 produced valid, in-bounds
+# output 7/8 and was the fastest of the five (1.6s mean); gpt-6-luna ignored
+# the JSON output contract in 3 of 8 and was rejected on that alone. Haiku
+# also accepts thinking={"type": "disabled"}, so the whole MAX_OUTPUT_TOKENS
+# budget goes to visible text rather than to reasoning.
+#
+# Why it is LAST and not higher: two rounds of blind voice picks the same day
+# did not show a stable preference between Haiku and the Gemini line (round 1
+# favoured Haiku 3/4, round 2 reversed), so there is no evidence for promoting
+# it. This is insurance, not a second opinion.
+#
+# Empty when ANTHROPIC_API_KEY is unset — main.py only appends these when a
+# key is configured, so the bot's behaviour is byte-identical without one.
+ANTHROPIC_FALLBACK_MODELS: List[str] = [
+    "claude-haiku-5-5",
+]
+
 # Image generation
 # 2026-08-31: 0.5 -> 1.0, then 1.0 -> 0.85 (2026-09-04).
 #

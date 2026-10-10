@@ -26,6 +26,7 @@ from src.config import (
     MASTODON_TAGS_ENABLED, MASTODON_TAGS_EXCLUDED,
     MASTODON_TAGS_TIMEOUT_SECONDS, MAX_HASHTAGS_PER_POST,
 )
+from src.llm import generate_anthropic, is_anthropic_model
 from src.state_store import load_replied_to_strict, prune_pioneer_recent, update_replied_to
 from src.logger import SafeLogger
 
@@ -745,8 +746,26 @@ def _build_generate_kwargs(model_name: str, system_instr: str, task: str) -> dic
     }
 
 
-def _sync_generate(api_key: str, system_instr: str, task: str, model: str) -> str:
-    """Helper for synchronous Gemini call with separated system and user content."""
+def _sync_generate(
+    api_key: str,
+    system_instr: str,
+    task: str,
+    model: str,
+    anthropic_api_key: Optional[str] = None,
+) -> str:
+    """Helper for a synchronous completion with separated system and user content.
+
+    Dispatches on the model name: anything starting with ``claude-`` goes to
+    Anthropic (``src/llm.py``), everything else to Gemini. The default
+    ``anthropic_api_key=None`` means every existing caller keeps its current
+    behaviour — the Mastodon tag passes, the visual-prompt step and the
+    Phase 4b reply path all name Gemini models explicitly and stay Gemini-only.
+    """
+    if is_anthropic_model(model):
+        return generate_anthropic(
+            anthropic_api_key, system_instr, task, model, MAX_OUTPUT_TOKENS
+        )
+
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("Gemini API key is missing or empty.")
 
@@ -1390,6 +1409,7 @@ async def generate_content(
     model_priority: Optional[List[str]] = None,
     pioneer_entry: Optional[Dict[str, Any]] = None,
     recent_mode_topics: Optional[List[str]] = None,
+    anthropic_api_key: Optional[str] = None,
 ) -> Tuple[List[str], str, Optional[str]]:
     """Generates content asynchronously with Rescue logic and Temporal Context.
 
@@ -1542,7 +1562,9 @@ async def generate_content(
         for attempt in range(2):
             response_text = ""  # bound before try so the except can see it
             try:
-                response_text = await asyncio.to_thread(_sync_generate, api_key, instr, user_task, model)
+                response_text = await asyncio.to_thread(
+                    _sync_generate, api_key, instr, user_task, model, anthropic_api_key
+                )
                 clean_text = response_text.replace('```json', '').replace('```', '').strip()
                 parsed = json.loads(clean_text)
 

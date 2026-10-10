@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # Internal Imports
 from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
-    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
+    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, ANTHROPIC_FALLBACK_MODELS, Mode,
     RECENT_TOPICS_WINDOW,
 )
 from src.utils import get_link_metadata, compress_image, is_usable_image
@@ -280,6 +280,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         model_priority=active_models,
         pioneer_entry=content_prep.pioneer_entry,
         recent_mode_topics=content_prep.seen_data.get("recent_mode_topics", []),
+        anthropic_api_key=creds.anthropic_api_key,
     )
 
     # v4.18: if generate_content returned no content (all models exhausted),
@@ -887,6 +888,21 @@ async def main():
     # Prune the model priority list to what the Gemini API actually offers.
     # Non-fatal: if discovery fails the configured list is used unchanged.
     active_models = await filter_available_models(creds.gemini_api_key, GEMINI_MODEL_PRIORITY)
+
+    # Append the cross-provider fallback BELOW the Gemini chain, and only when
+    # a key is configured. Deliberately after filter_available_models: that
+    # call asks Gemini which models it serves, so a claude-* entry passed into
+    # it would be absent from the answer and silently pruned — the fallback
+    # would vanish at startup and nobody would notice until the day it was
+    # needed. Without a key the list is unchanged, byte for byte.
+    if creds.anthropic_api_key:
+        active_models = active_models + ANTHROPIC_FALLBACK_MODELS
+        SafeLogger.info(
+            "fallback_provider_armed",
+            "Cross-provider fallback appended below the Gemini chain",
+            fallback_models=ANTHROPIC_FALLBACK_MODELS,
+            chain_length=len(active_models),
+        )
 
     mode_payload = await mode_selection_stage()
     content_prep = await content_prep_stage(mode_payload, creds)

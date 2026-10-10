@@ -198,7 +198,7 @@ async def test_curator_fallback_rejects_unusable_image(monkeypatch):
 @pytest.mark.asyncio
 async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(monkeypatch):
     creds = SimpleNamespace(
-        gemini_api_key="g",
+        gemini_api_key="g", anthropic_api_key=None,
         bluesky_username="u",
         bluesky_password="p",
         mastodon_access_token="t",
@@ -245,7 +245,7 @@ async def test_post_run_automation_stage_runs_expected_tasks(monkeypatch):
     calls = {"handle": 0}
     creds = SimpleNamespace(
         bluesky_username="u",
-        gemini_api_key="g",
+        gemini_api_key="g", anthropic_api_key=None,
         mastodon_access_token="t",
         mastodon_api_base_url="https://masto",
     )
@@ -298,7 +298,7 @@ async def test_persistence_stage_updates_seen_articles(monkeypatch):
 @pytest.mark.asyncio
 async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     calls = []
-    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="test-key"), platform=SimpleNamespace())
+    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="test-key", anthropic_api_key=None), platform=SimpleNamespace())
 
     async def fake_mode():
         calls.append("mode")
@@ -483,7 +483,7 @@ async def test_broadcasting_stage_skips_post_when_generate_returns_empty(monkeyp
     monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
 
     creds = SimpleNamespace(
-        gemini_api_key="g",
+        gemini_api_key="g", anthropic_api_key=None,
         bluesky_username="u",
         bluesky_password="p",
         mastodon_access_token="t",
@@ -542,7 +542,7 @@ async def test_broadcasting_stage_curator_link_card_follows_chosen_item(monkeypa
     monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
 
     creds = SimpleNamespace(
-        gemini_api_key="g",
+        gemini_api_key="g", anthropic_api_key=None,
         bluesky_username="u",
         bluesky_password="p",
         mastodon_access_token="t",
@@ -601,7 +601,7 @@ async def test_broadcasting_stage_curator_fallback_image_is_recorded_and_reaches
     monkeypatch.setattr(main, "apply_humanized_post_delay", no_delay)
     monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
 
-    creds = SimpleNamespace(gemini_api_key="g", bluesky_username="u", bluesky_password="p",
+    creds = SimpleNamespace(gemini_api_key="g", anthropic_api_key=None, bluesky_username="u", bluesky_password="p",
                             mastodon_access_token="t", mastodon_api_base_url="https://masto")
     settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
     prep = main.ContentPrepPayload(
@@ -967,7 +967,7 @@ async def test_persistence_stage_partial_delivery_still_counts(monkeypatch):
         mastodon_sent_ids=[],        # Mastodon did not
     )
     automation = await main.post_run_automation_stage(broadcast, SimpleNamespace(
-        bluesky_username="u", gemini_api_key="g"))
+        bluesky_username="u", gemini_api_key="g", anthropic_api_key=None))
     assert automation.delivered is True
 
     await main.persistence_stage(automation)
@@ -1027,7 +1027,7 @@ async def test_broadcasting_stage_skips_tagging_without_a_mastodon_token(monkeyp
     )
 
     creds = SimpleNamespace(
-        gemini_api_key="g",
+        gemini_api_key="g", anthropic_api_key=None,
         bluesky_username="u",
         bluesky_password="p",
         mastodon_access_token="",          # not configured
@@ -1051,7 +1051,7 @@ async def test_state_is_persisted_even_if_a_later_stage_hangs(monkeypatch):
     is public; the record of it must already be on disk, or the next run picks the
     same story and posts it twice."""
     persisted = []
-    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="k"), platform=SimpleNamespace())
+    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="k", anthropic_api_key=None), platform=SimpleNamespace())
 
     async def fake_mode():
         return main.ModeSelectionPayload(mode="curator", current_hour_utc=8)
@@ -1130,7 +1130,7 @@ def test_build_automation_payload_is_pure(monkeypatch):
 
 def _x6_creds():
     return SimpleNamespace(
-        gemini_api_key="g", bluesky_username="u", bluesky_password="p",
+        gemini_api_key="g", anthropic_api_key=None, bluesky_username="u", bluesky_password="p",
         mastodon_access_token="t", mastodon_api_base_url="https://masto",
     )
 
