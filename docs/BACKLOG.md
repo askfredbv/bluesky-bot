@@ -171,9 +171,16 @@ These are judgement calls, not data questions. Engagement at this scale cannot s
 
 ---
 
-## §4 — The plan
+## §4 — The plans
 
-**`docs/PLAN_engagement.md`** is now the single plan covering everything that needs sequencing:
+**`docs/PLAN_provider_agnostic.md`** (added 2026-10-10) — the BHAG: choose which AI
+platform writes the bot, plus a failover, and have it report what that choice costs you.
+**Planning only; nothing built, nothing queued**, and deliberately *not* ahead of item 4
+in the priority order above. Stage 0 (native structured output for the Curator contract)
+is the one piece worth doing on its own merits regardless of the rest. Grew out of the
+single Anthropic fallback shipped in #180.
+
+**`docs/PLAN_engagement.md`** is the plan covering everything that needs sequencing:
 
 | Phase | What | Effort | Trigger |
 |---|---|---|---|
