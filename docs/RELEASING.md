@@ -71,8 +71,17 @@ The wiki is a separate repository, `askfredbv/bluesky-bot.wiki`. It has no PR fl
   - `Configuration.md`: constants and their defaults.
   - `Troubleshooting.md`: log events and failure behaviour.
   - `Content-Modes.md` and `Home.md`: the feed count.
-- [ ] **Commit, push, and check the published page**, not your clone:
-  `https://raw.githubusercontent.com/wiki/askfredbv/bluesky-bot/Home.md`
+- [ ] **Commit, push, and read the RENDERED page**, not your clone and not the raw
+  file: `https://github.com/askfredbv/bluesky-bot/wiki/Home`. The raw URL only
+  echoes what you pushed, so it confirms the push and nothing else. Check the value
+  you actually changed is on the page — a version line, a test count, a new row.
+
+**If a debt list is carried over from a previous release, re-read each page before
+working from it.** On 2026-10-10 item 3 of the BACKLOG had been carried for three
+releases and most of it was already written: only two of its dozen-odd entries were
+genuinely outstanding, and the whole job took about twenty minutes. A list that
+overstates what is left gets deferred as if it were large, which is how it survived
+three cuts. Check first, then size it.
 
 ## 4. After
 
