@@ -8,7 +8,9 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.28.0** (20
 
 ## Priority order
 
-Updated 2026-10-08. Items 1 and 2 are closed by v4.28.0; item 3 is now the next action.
+Updated 2026-10-10. Items 1 and 2 are closed by v4.28.0 and item 3 by the wiki push of
+2026-10-10; item 4 is now the next action, still gated on a week of
+`keyword_substring_only_matches` data.
 
 1. **[DONE 2026-10-08] Live-verify the 2026-10-06 scoring changes.** Read on the 07:00 UTC
    runs of 10-07 and 10-08. Both beat the baselines (a primary source in the shortlist in
@@ -20,23 +22,23 @@ Updated 2026-10-08. Items 1 and 2 are closed by v4.28.0; item 3 is now the next 
    pool, not just titles: 311 of 1165 items on 10-07 and 338 of 1328 on 10-08, almost all
    of it the three-letter `app`. That is the data item 4 is gated on.
 2. **[DONE 2026-10-08] Cut the release.** v4.28.0, seventeen commits since v4.27.1.
-3. **Wiki debt**, now three releases deep and the thing `RELEASING.md` §3
-   exists to stop:
-   - `Configuration.md`: `TOPIC_REPEAT_PENALTY`, `TOPIC_REPEAT_DECAY`,
-     `RECENT_TOPICS_WINDOW`, `TIME_DECAY_PER_HOUR`, `TIME_DECAY_MAX`,
-     `TIME_DECAY_MIN_AGE_HOURS`, `TIER1_SOURCE_SCORE`, `MIN_GEM_CANDIDATES`,
-     `MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`; `MOMENTUM_PRODUCTS` is refreshed
-     monthly now, not "quarterly by hand".
-   - `Troubleshooting.md`: `curator_candidates`, `em_dash_detected`,
-     `keyword_substring_only_matches`, `tier1_source_promoted`,
-     `fallback_provider_armed`.
-   - `Architecture.md`: `select_candidates` (the shortlist is source-mixed, not
-     top-5-by-score) and `source_tier` / `_host_matches`; the model chain is no
-     longer Gemini-only (`src/llm.py`, `ANTHROPIC_FALLBACK_MODELS`, appended
-     after `filter_available_models` and never passed into it).
-   - `Configuration.md` also needs `ANTHROPIC_FALLBACK_MODELS` and the optional
-     `ANTHROPIC_API_KEY` secret (workspace-scoped, never an org admin key).
-   - `Home.md`: version line and test count (**998**).
+3. **[DONE 2026-10-10] Wiki debt.** Wiki `bc7e2e6..f83dc21`, verified on the rendered
+   pages rather than the raw files: `Home.md` (tests 980 → 998, the model chain now
+   ending in `claude-haiku-5-5`), `Configuration.md` (the optional `ANTHROPIC_API_KEY`
+   secret and `ANTHROPIC_FALLBACK_MODELS`), `Troubleshooting.md`
+   (`fallback_provider_armed`), `Architecture.md` (`src/llm.py`, `fallback-probe.yml`,
+   the dispatch rule and the append-after-`filter_available_models` ordering).
+
+   **Most of this list was already written and the item was stale.** The scoring
+   constants (`TOPIC_REPEAT_*`, `TIME_DECAY_*`, `TIER1_SOURCE_SCORE`,
+   `MIN`/`MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`), the monthly `MOMENTUM_PRODUCTS`
+   note, the four v4.28.0 log events, source-mixed `select_candidates` and the host
+   matching were all present before today — only the fallback entries and the test
+   count were genuinely missing. The v4.28.0 release recorded itself as having updated
+   Home only, so the ledger over-reported the debt for two releases.
+   **Lesson for `RELEASING.md` §3: check each page before carrying a debt list forward.**
+   An item that overstates what is outstanding gets deferred as if it were large, which
+   is how this one survived three releases.
 4. **De-bias phase 2 — bound the keyword magnitudes.** `PRODUCT` (+5) and `GROUNDBREAKING`
    (+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
    provenance. **Deliberately gated on a week of item 1's
