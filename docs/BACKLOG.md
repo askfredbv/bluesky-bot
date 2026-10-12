@@ -85,6 +85,62 @@ decision is just an undocumented config change.
    nothing in it ranks whether there is a "so what". One observation on one article
    proves nothing on its own; it is recorded so the 10-20 re-run has something concrete
    to look for, and because the same pool's top item (`Python 3.15`, 8.8) read fine.
+
+   **Measured 2026-10-12, and it is bigger than this item.** See the cold-read finding
+   immediately below: the thing that predicts a postable Curator post is whether the
+   item carries a *contestable claim*, and no scoring signal rewards that. Tuning
+   keyword magnitudes (item 4) optimises a different axis.
+
+**FINDING 2026-10-12 — the prompt is the binding constraint, not the model. Mentor is 0/10.**
+
+Frederik read the last 20 live posts (2026-10-02 → 10-12) cold, stripped of dates,
+engagement and model labels, answering one question: *would I post this?* **He said yes
+to 2.** That 10% **replicates the 11%** (2 of 18) from the same day's blind model trial,
+which settles a confound: the side-by-side bar and the production bar are the same bar,
+so the trial figure was not an artefact of reading variants back to back. All 20 posts
+were Gemini-written; the Sonnet trial began at 14:30 that day.
+
+**Split: Curator 2/10, Mentor 0/10.** Mentor is half the output and produced nothing
+publishable in ten attempts.
+
+**The yeses contest; the misses relay.** Both picks name a specific party's specific
+claim and undercut it ("Sixteen million downloads … *sounds like adoption until you
+check what was tuned*"; "Odyssey-3 *claims* top physics scores … *Demos show capability.
+Production needs rigor.*"). That is the shape of Frederik's own canon line, *"Your
+sell-in numbers tell you what left your warehouse."* The 18 misses are competent and
+readable. They inform and take no position. **Useful negative result:** the two Pioneer
+posts in the window (Dartmouth 1955, Dijkstra's 1,318 manuscripts) are concrete, dated
+and specific, and were both rejected — so concreteness is *not* sufficient. Taking a
+position is the variable.
+
+**Why Mentor fails structurally.** The Curator receives an artefact: a named party, a
+number, a URL. The Mentor receives a category from `MENTOR_TOPICS`. There is nothing to
+push against, so it must invent both subject and opinion, and generality is the only
+available output. Three things in `SYSTEM_INSTRUCTIONS_MENTOR` then push it further that
+way: the line *"Observational is often stronger than prescriptive"* explicitly asks for
+an unattributed general pattern; the task line asks it to *"find the angle on this topic
+that most people don't articulate"*; and **its one worked example is itself an aphorism**
+("The first 10 minutes of a retro set the tone for the next six weeks"), which matters
+because models anchor hard on examples.
+
+**Candidate fixes, by expected effect:** replace "observational over prescriptive" with a
+requirement to name a belief and undercut it; swap the exemplar for two of Frederik's
+real lines; require a concrete anchor (a number, a named tool, a specific situation),
+which `STYLE_GUIDELINES` demands and the Mentor prompt never asks for; deepest and
+largest, feed Mentor an artefact rather than a topic.
+
+**Deliberately not acted on before 2026-10-26.** The Sonnet trial is running. Changing
+the Mentor prompt now moves two variables at once and neither result would mean
+anything — the failure mode `RETRO_2026-05-08.md` exists to warn about.
+
+**Engagement cannot adjudicate this, and was checked.** Across the same 20 posts: 10
+likes, 1 repost, **0 real replies**. The six `replyCount` hits were the bot replying to
+itself, the second part of two-part threads — verify with `getPostThread` before ever
+reporting replies as engagement. The whole range is 0–2 interactions per post and the
+newest pick was 2 hours old against 235 for the oldest, so there is no variance to
+explain and no age-fair comparison to make. One mildly encouraging number: 12 of 20 drew
+at least one interaction, against the historic 41-of-42-zero baseline in `AGENTS.md`.
+
 6. **Explicit `--mode`.** `main.py` picks the mode from `current_hour < 11`, so a dispatch
    delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
    observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it
