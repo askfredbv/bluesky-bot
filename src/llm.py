@@ -29,20 +29,42 @@ Deliberately narrow:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the runtime import lazy
-    from anthropic.types import ThinkingConfigDisabledParam
+from typing import Any, Dict, Optional
 
 ANTHROPIC_MODEL_PREFIX = "claude-"
 
 # Thinking is pinned OFF. Anthropic bills thinking tokens as output and counts
 # them against max_tokens, so leaving it on would spend the post's budget on
 # reasoning the reader never sees - the same failure that produced the
-# 2026-05-11 empty-output bug on gemini-2.5-pro. Verified 2026-10-10:
-# claude-haiku-5-5 accepts {"type": "disabled"} and returns stop_reason
-# "end_turn" with the full budget available for text.
-_THINKING_DISABLED: "ThinkingConfigDisabledParam" = {"type": "disabled"}
+# 2026-05-11 empty-output bug on gemini-2.5-pro.
+#
+# The way to turn it off DIFFERS BETWEEN MODELS OF THE SAME PROVIDER, which is
+# why this is a lookup rather than one constant:
+#   claude-haiku-5-5   accepts {"type": "disabled"}
+#   claude-sonnet-5-5  REJECTS "disabled" with a 400; its off-switch is
+#                      {"type": "between_tools"} (no other field, effort high
+#                      or below)
+# Both verified against the live API on 2026-10-12. Guessing here does not
+# fail safe: the wrong value is a 400 on every call, and a value that is
+# merely accepted-but-ignored silently spends the output budget on reasoning.
+_THINKING_OFF: Dict[str, Dict[str, str]] = {
+    "claude-haiku-5-5": {"type": "disabled"},
+    "claude-sonnet-5-5": {"type": "between_tools"},
+}
+
+# Used for an Anthropic model not in the table above. "disabled" is the more
+# common form, and a 400 on an unknown model is the correct outcome: it is a
+# loud, immediate signal to add the model to the table rather than a silent
+# budget leak. See `scripts/probe_fallback.py`, which exercises this.
+_THINKING_OFF_DEFAULT: Dict[str, str] = {"type": "disabled"}
+
+
+def thinking_off_for(model: str) -> Dict[str, str]:
+    """Return the thinking-off config for `model`.
+
+    Keyed per model, not per provider: see the table above for why.
+    """
+    return _THINKING_OFF.get(model.lower(), _THINKING_OFF_DEFAULT)
 
 
 def is_anthropic_model(model: str) -> bool:
@@ -68,19 +90,20 @@ def generate_anthropic(
     """
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError(
-            "Anthropic API key is missing or empty; cannot use the fallback model."
+            "Anthropic API key is missing or empty; cannot use an Anthropic model."
         )
 
     # Imported here rather than at module scope so that importing src.llm
     # never hard-depends on the SDK being present at collection time.
     import anthropic
 
+    thinking: Any = thinking_off_for(model)
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=model,
         max_tokens=max_output_tokens,
         system=system_instr,
-        thinking=_THINKING_DISABLED,
+        thinking=thinking,
         messages=[{"role": "user", "content": task}],
     )
     # Discriminate on .type so the union narrows to TextBlock: the response can
