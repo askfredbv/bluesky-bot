@@ -12,13 +12,15 @@ from dotenv import load_dotenv
 # Internal Imports
 from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
-    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, ANTHROPIC_FALLBACK_MODELS, Mode,
+    IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
+    ANTHROPIC_MODELS, ANTHROPIC_CHAIN_POSITION,
     RECENT_TOPICS_WINDOW,
 )
 from src.utils import get_link_metadata, compress_image, is_usable_image
 from src.state_store import load_seen_articles, update_seen_articles, prune_pioneer_recent
 from src.news import fetch_news
 from src.net_safety import canonical_url
+from src.llm import compose_model_chain
 from src.agents import (
     generate_content, handle_interactions, generate_post_image,
     filter_available_models, select_pioneer_topic, generate_mastodon_tags,
@@ -889,18 +891,28 @@ async def main():
     # Non-fatal: if discovery fails the configured list is used unchanged.
     active_models = await filter_available_models(creds.gemini_api_key, GEMINI_MODEL_PRIORITY)
 
-    # Append the cross-provider fallback BELOW the Gemini chain, and only when
-    # a key is configured. Deliberately after filter_available_models: that
-    # call asks Gemini which models it serves, so a claude-* entry passed into
-    # it would be absent from the answer and silently pruned — the fallback
-    # would vanish at startup and nobody would notice until the day it was
-    # needed. Without a key the list is unchanged, byte for byte.
+    # Splice the Anthropic rung in, above or below the Gemini chain depending
+    # on ANTHROPIC_CHAIN_POSITION, and only when a key is configured.
+    #
+    # Deliberately after filter_available_models: that call asks Gemini which
+    # models it serves, so a claude-* entry passed into it would be absent from
+    # the answer and silently pruned — the rung would vanish at startup and
+    # nobody would notice until the day it was needed. Without a key the list
+    # is unchanged, byte for byte, and the bot behaves exactly as it did before
+    # any of this existed.
     if creds.anthropic_api_key:
-        active_models = active_models + ANTHROPIC_FALLBACK_MODELS
+        active_models = compose_model_chain(
+            active_models,
+            ANTHROPIC_MODELS,
+            ANTHROPIC_CHAIN_POSITION,
+            has_anthropic_key=True,
+        )
         SafeLogger.info(
             "fallback_provider_armed",
-            "Cross-provider fallback appended below the Gemini chain",
-            fallback_models=ANTHROPIC_FALLBACK_MODELS,
+            "Anthropic rung spliced into the model chain",
+            anthropic_models=ANTHROPIC_MODELS,
+            position=ANTHROPIC_CHAIN_POSITION,
+            writes_by_default=active_models[0] if active_models else None,
             chain_length=len(active_models),
         )
 

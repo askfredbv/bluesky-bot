@@ -40,7 +40,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.agents import generate_content, is_anthropic_model  # noqa: E402
 from src.config import (  # noqa: E402
-    ANTHROPIC_FALLBACK_MODELS,
+    ANTHROPIC_MODELS,
+    ANTHROPIC_CHAIN_POSITION,
     GEMINI_MODEL_PRIORITY,
     MAX_POST_LENGTH_BSKY,
     Mode,
@@ -66,40 +67,58 @@ ITEMS = [
 ]
 
 
-async def one_run(anthropic_key: str, index: int) -> bool:
-    """Force every Gemini model to fail, then report what Anthropic produced."""
+async def one_run(
+    anthropic_key: str, gemini_key: str, index: int, outage: str
+) -> bool:
+    """Fail one provider's whole rung, then report what the other produced.
+
+    `outage` names the provider that is simulated DOWN. The useful direction
+    is whichever rung production does not exercise: with Anthropic primary the
+    daily run never reaches Gemini, so "anthropic" is the default. Flip it to
+    "gemini" to re-prove the Anthropic rung in isolation.
+    """
     import src.agents as agents
 
     real = agents._sync_generate
     tried: list[str] = []
+    gemini_is_down = outage == "gemini"
 
-    def _gemini_is_down(api_key, instr, task, model, anthropic_api_key=None):
+    def _one_provider_is_down(api_key, instr, task, model, anthropic_api_key=None):
         tried.append(model)
-        if not is_anthropic_model(model):
-            raise RuntimeError("simulated Gemini outage")
+        if is_anthropic_model(model) != gemini_is_down:
+            raise RuntimeError(f"simulated {outage} outage")
         return real(api_key, instr, task, model, anthropic_api_key)
 
-    agents._sync_generate = _gemini_is_down
+    # Always walk the full chain in production order, so the probe reports the
+    # real sequence rather than a convenient one.
+    chain = (
+        ANTHROPIC_MODELS + GEMINI_MODEL_PRIORITY
+        if ANTHROPIC_CHAIN_POSITION == "primary"
+        else GEMINI_MODEL_PRIORITY + ANTHROPIC_MODELS
+    )
+
+    agents._sync_generate = _one_provider_is_down
     try:
         posts, topic, link = await generate_content(
-            "gemini-key-intentionally-unused",
+            gemini_key,
             [],
             mode=Mode.CURATOR,
             news_items=ITEMS,
-            model_priority=GEMINI_MODEL_PRIORITY + ANTHROPIC_FALLBACK_MODELS,
+            model_priority=chain,
             anthropic_api_key=anthropic_key,
         )
     finally:
         agents._sync_generate = real
 
-    reached = [m for m in tried if is_anthropic_model(m)]
+    survivor_reached = [m for m in tried if is_anthropic_model(m) == gemini_is_down]
     print(f"\n--- run {index} ---")
     print(f"  chain walked : {' -> '.join(tried)}")
-    if not reached:
-        print("  FAIL: the chain never reached an Anthropic model")
+    if not survivor_reached:
+        print(f"  FAIL: the chain never reached a non-{outage} model")
         return False
     if not posts:
-        print("  FAIL: fallback produced nothing publishable (validators rejected it)")
+        print("  FAIL: the surviving rung produced nothing publishable "
+              "(validators rejected it)")
         return False
 
     print(f"  chose        : {link}")
@@ -116,6 +135,15 @@ async def main() -> int:
     # `or "3"` rather than a dict default: a workflow_dispatch input that is
     # present but empty arrives as "", which int() would reject.
     ap.add_argument("--runs", type=int, default=int(os.environ.get("PROBE_RUNS") or "3"))
+    # Default to failing whichever provider currently writes the posts, because
+    # the rung worth probing is the one production never reaches.
+    ap.add_argument(
+        "--outage",
+        choices=("anthropic", "gemini"),
+        default=os.environ.get("PROBE_OUTAGE")
+        or ("anthropic" if ANTHROPIC_CHAIN_POSITION == "primary" else "gemini"),
+        help="which provider to simulate as down",
+    )
     args = ap.parse_args()
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -130,17 +158,31 @@ async def main() -> int:
 
     key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not key:
-        print("ANTHROPIC_API_KEY is not set. The fallback is unarmed in production.")
+        print("ANTHROPIC_API_KEY is not set. The Anthropic rung is unarmed.")
         return 1
 
-    print(f"Fallback models: {ANTHROPIC_FALLBACK_MODELS}")
-    print(f"Simulating a total Gemini outage across {GEMINI_MODEL_PRIORITY}")
+    # Needed for real, not as a placeholder: with --outage anthropic the Gemini
+    # rung has to actually answer, so a dummy key fails all four models and the
+    # probe reports a false negative.
+    gemini_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+    if not gemini_key:
+        print("GEMINI_API_KEY is not set; the Gemini rung cannot be exercised.")
+        return 1
 
-    results = [await one_run(key, i) for i in range(1, args.runs + 1)]
+    down = GEMINI_MODEL_PRIORITY if args.outage == "gemini" else ANTHROPIC_MODELS
+    survives = ANTHROPIC_MODELS if args.outage == "gemini" else GEMINI_MODEL_PRIORITY
+    print(f"Anthropic rung: {ANTHROPIC_MODELS}  (position: {ANTHROPIC_CHAIN_POSITION})")
+    print(f"Simulating a total {args.outage} outage across {down}")
+    print(f"Expecting the run to be carried by {survives}")
+
+    results = [
+        await one_run(key, gemini_key, i, args.outage)
+        for i in range(1, args.runs + 1)
+    ]
     ok = sum(results)
     print(f"\n{ok}/{len(results)} runs produced a publishable post.")
     if ok != len(results):
-        print("The fallback is NOT reliable in its current state.")
+        print(f"The non-{args.outage} rung is NOT reliable in its current state.")
         return 1
     return 0
 
