@@ -382,30 +382,51 @@ GEMINI_MODEL_PRIORITY: List[str] = [
     # (The Gemma prompt-inlining path in agents.py stays — harmless if unused.)
 ]
 
-# Cross-provider fallback, appended BELOW the Gemini chain at runtime.
+# The Anthropic rung of the model chain, in its own preference order.
 #
-# Every entry above is Gemini on one key and one account, so a revoked key,
-# a quota decision or a surprise deprecation takes all four down together.
-# This fires only when all of them have failed, which turns a provider-wide
-# outage from a missed run into a posted one.
+# Every entry in GEMINI_MODEL_PRIORITY is Gemini on one key and one account,
+# so a revoked key, a quota decision or a surprise deprecation takes all four
+# down together. These sit on a second provider entirely.
 #
-# Why this model: on 2026-10-10 the five candidates were run against the real
-# Curator prompt, 8 samples each. claude-haiku-5-5 produced valid, in-bounds
-# output 7/8 and was the fastest of the five (1.6s mean); gpt-6-luna ignored
-# the JSON output contract in 3 of 8 and was rejected on that alone. Haiku
-# also accepts thinking={"type": "disabled"}, so the whole MAX_OUTPUT_TOKENS
-# budget goes to visible text rather than to reasoning.
+# Order within this list: claude-sonnet-5-5 first, claude-haiku-5-5 as the
+# Anthropic-side backup, so an outage on one does not send the run straight
+# back to Gemini.
 #
-# Why it is LAST and not higher: two rounds of blind voice picks the same day
-# did not show a stable preference between Haiku and the Gemini line (round 1
-# favoured Haiku 3/4, round 2 reversed), so there is no evidence for promoting
-# it. This is insurance, not a second opinion.
-#
-# Empty when ANTHROPIC_API_KEY is unset — main.py only appends these when a
-# key is configured, so the bot's behaviour is byte-identical without one.
-ANTHROPIC_FALLBACK_MODELS: List[str] = [
+# Both turn thinking off, but NOT the same way — Haiku takes
+# {"type": "disabled"}, Sonnet rejects that and takes {"type":
+# "between_tools"}. See `thinking_off_for` in src/llm.py; it is keyed per
+# model for exactly this reason.
+ANTHROPIC_MODELS: List[str] = [
+    "claude-sonnet-5-5",
     "claude-haiku-5-5",
 ]
+
+# Where ANTHROPIC_MODELS sits relative to the Gemini chain: "primary" puts it
+# ABOVE, "fallback" puts it BELOW. One word, because it is the revert switch
+# for the trial below.
+#
+# TRIAL, opened 2026-10-12: Sonnet as primary, decide by 2026-10-26.
+# ----------------------------------------------------------------------
+# Basis is craft, not metrics, and the honest version of that is written down
+# rather than dressed up: Frederik prefers how Claude writes. Two blind reads
+# support it weakly — gemini-3.7-flash drew ZERO of ten picks across two
+# sessions and four articles — but ten picks cannot carry a conclusion and the
+# 2026-10-10 result did not replicate. The deciding evidence will be reading
+# the live feed, which is this project's established method (2026-06-12,
+# 2026-08-19).
+#
+# Why Sonnet and not Haiku: on 2026-10-12 the picks split 1-1, which at n=2 is
+# no information rather than a tie. What was informative was WHICH article
+# each won: Haiku's pick was the item with an obvious angle, Sonnet's was the
+# dry tabular-ML benchmark where the model has to find a reason to care. The
+# Curator's diet is mostly dry — arXiv held 79 of 105 candidate slots
+# historically — so an edge on hard material is an edge on most real runs.
+# Cost is not the deciding factor at this volume: roughly $3/month against
+# $0.16, both negligible against the thing being bought.
+#
+# REVERT: set this to "fallback". That restores the 2026-10-11 behaviour
+# exactly — Gemini first, Anthropic as insurance — and needs no other change.
+ANTHROPIC_CHAIN_POSITION: str = "primary"
 
 # Image generation
 # 2026-08-31: 0.5 -> 1.0, then 1.0 -> 0.85 (2026-09-04).

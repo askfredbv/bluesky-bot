@@ -12,8 +12,13 @@ import types
 import pytest
 
 from src.agents import _sync_generate, generate_content
-from src.config import ANTHROPIC_FALLBACK_MODELS, MAX_OUTPUT_TOKENS
-from src.llm import generate_anthropic, is_anthropic_model
+from src.config import ANTHROPIC_CHAIN_POSITION, ANTHROPIC_MODELS, MAX_OUTPUT_TOKENS
+from src.llm import (
+    compose_model_chain,
+    generate_anthropic,
+    is_anthropic_model,
+    thinking_off_for,
+)
 from src.settings import Settings
 
 
@@ -223,5 +228,83 @@ def test_anthropic_key_is_read_when_present():
 
 def test_fallback_models_are_all_anthropic():
     """Guards against a Gemini id landing here, where it would skip discovery."""
-    assert ANTHROPIC_FALLBACK_MODELS
-    assert all(is_anthropic_model(m) for m in ANTHROPIC_FALLBACK_MODELS)
+    assert ANTHROPIC_MODELS
+    assert all(is_anthropic_model(m) for m in ANTHROPIC_MODELS)
+
+
+# ----------------------------------------------- per-model thinking-off config
+
+
+def test_thinking_off_is_keyed_per_model_not_per_provider():
+    """Haiku and Sonnet disagree, and getting it wrong is a 400 on every call."""
+    assert thinking_off_for("claude-haiku-5-5") == {"type": "disabled"}
+    assert thinking_off_for("claude-sonnet-5-5") == {"type": "between_tools"}
+
+
+def test_thinking_off_is_case_insensitive():
+    assert thinking_off_for("Claude-Sonnet-5-5") == {"type": "between_tools"}
+
+
+def test_thinking_off_falls_back_for_an_unknown_model():
+    """An unmapped model gets "disabled" - a loud 400 beats a silent budget leak."""
+    assert thinking_off_for("claude-something-new") == {"type": "disabled"}
+
+
+def test_generate_anthropic_sends_the_models_own_thinking_config(monkeypatch):
+    rec = []
+    monkeypatch.setitem(
+        __import__("sys").modules, "anthropic", _fake_anthropic_module(rec)
+    )
+    generate_anthropic("key", "sys", "task", "claude-sonnet-5-5", 1500)
+    assert rec[-1]["thinking"] == {"type": "between_tools"}, (
+        "Sonnet rejects 'disabled' with a 400"
+    )
+
+
+# ------------------------------------------------------- chain composition
+
+
+def test_chain_puts_anthropic_first_when_primary():
+    assert compose_model_chain(["g1", "g2"], ["a1", "a2"], "primary", True) == [
+        "a1",
+        "a2",
+        "g1",
+        "g2",
+    ]
+
+
+def test_chain_puts_anthropic_last_when_fallback():
+    assert compose_model_chain(["g1", "g2"], ["a1", "a2"], "fallback", True) == [
+        "g1",
+        "g2",
+        "a1",
+        "a2",
+    ]
+
+
+def test_chain_treats_an_unrecognised_position_as_fallback():
+    """A typo must leave the proven Gemini path in charge, not hand over the feed."""
+    assert compose_model_chain(["g1"], ["a1"], "primry", True) == ["g1", "a1"]
+
+
+@pytest.mark.parametrize("position", ["primary", "fallback"])
+def test_chain_is_unchanged_without_a_key(position):
+    """No key is never a failed run, whatever the position says."""
+    assert compose_model_chain(["g1", "g2"], ["a1"], position, False) == ["g1", "g2"]
+
+
+def test_chain_is_unchanged_when_there_are_no_anthropic_models():
+    assert compose_model_chain(["g1"], [], "primary", True) == ["g1"]
+
+
+def test_chain_does_not_alias_its_inputs():
+    """Returned list must not be the caller's, or a later append mutates config."""
+    gemini = ["g1"]
+    out = compose_model_chain(gemini, ["a1"], "fallback", True)
+    out.append("mutated")
+    assert gemini == ["g1"]
+
+
+def test_configured_position_is_one_the_resolver_recognises():
+    """Guards the revert switch: a typo silently degrades to fallback."""
+    assert ANTHROPIC_CHAIN_POSITION in {"primary", "fallback"}
