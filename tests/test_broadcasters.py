@@ -800,6 +800,46 @@ def test_a_bare_mention_of_the_source_still_counts(text):
     assert broadcasters.ensure_mastodon_source_link([text], "https://example.com/p") == [text]
 
 
+# ---------------------------------------------------------------------------
+# The source link is appended AFTER validate_summary, so it bypasses the voice
+# validators by construction. External scan, 2026-10-13: a feed-controlled link
+# carrying an embedded newline shipped a mention and a hashtag the prose never
+# made. AGENTS.md principle 7: the bar for an append like this is stated here.
+# ---------------------------------------------------------------------------
+
+_INJECTED = ("https://attacker.example/article" + P
+             + "@victim@example.social #Injected")
+
+
+@pytest.mark.parametrize("source, why", [
+    (_INJECTED, "an embedded newline makes the tail its own line of content"),
+    ("https://attacker.example/a tail", "a space does the same inside one line"),
+    ("https://attacker.example/a" + chr(9) + "tail", "so does a tab"),
+    ("https://[", "malformed enough that urlparse itself raises"),
+    ("javascript:alert(1)", "not an http(s) link at all"),
+    ("notaurl", "no scheme, no host"),
+])
+def test_a_source_that_is_not_a_single_clean_url_is_refused(source, why):
+    """The post still ships -- it just ships without the link, like overflow."""
+    assert broadcasters.ensure_mastodon_source_link(["A dry statement."], source) == [
+        "A dry statement."], why
+
+
+def test_the_injected_tail_never_reaches_the_status():
+    """Named separately from the table above: this is the finding itself."""
+    out = broadcasters.ensure_mastodon_source_link(["A dry statement."], _INJECTED)
+
+    assert "@victim@example.social" not in out[0]
+    assert "#Injected" not in out[0]
+    assert "attacker.example" not in out[0]
+
+
+def test_a_clean_link_is_still_added():
+    """The guard must not cost the feature it protects."""
+    out = broadcasters.ensure_mastodon_source_link(["A dry statement."], SRC)
+    assert out == ["A dry statement." + P + SRC]
+
+
 @pytest.mark.asyncio
 async def test_post_to_mastodon_carries_the_source_link(monkeypatch):
     sent = []

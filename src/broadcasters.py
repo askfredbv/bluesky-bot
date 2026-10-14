@@ -13,7 +13,7 @@ from src.config import (
 )
 from src.retry import classify_retry, sleep_for_rate_limit, sleep_for_transient
 from src.utils import compress_image_to_fit
-from src.net_safety import canonical_url
+from src.net_safety import canonical_url, is_single_clean_url
 from src.logger import SafeLogger
 from src.facets import build_facets
 from src.metrics import BroadcastResult
@@ -186,6 +186,21 @@ def ensure_mastodon_source_link(
     if not content_list or not source_url or not source_url.strip():
         return list(content_list)
     url = source_url.strip()
+    # This text is appended AFTER validate_summary, so it bypasses the voice
+    # validators by construction -- AGENTS.md principle 7 says the bar it must
+    # clear is stated at the point of the append instead. The bar: a link and
+    # nothing else. A feed-controlled value carrying an embedded newline
+    # otherwise ships a mention and a hashtag the prose never made (external
+    # scan, 2026-10-13). Declining is the same failure mode as the overflow
+    # branch below: the broadcast ships without the link, never dropped.
+    if not is_single_clean_url(url):
+        SafeLogger.warn(
+            "mastodon_source_link_rejected",
+            "Source link is not a single clean URL; shipping without it",
+            platform="mastodon",
+            source_url=url[:200],
+        )
+        return list(content_list)
     if any(_text_mentions_url(part, url) for part in content_list):
         return list(content_list)
     root = content_list[0].rstrip() + _MASTODON_LINK_SEPARATOR + url
