@@ -31,8 +31,16 @@ import httpx
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.agents import _thinking_budget_for  # noqa: E402  (reuse canonical rule)
-from src.config import GEMINI_MODEL_PRIORITY, RSS_FEEDS  # noqa: E402
+from src.config import (  # noqa: E402
+    FEED_REQUEST_CONNECT_TIMEOUT_SECONDS,
+    FEED_REQUEST_POOL_TIMEOUT_SECONDS,
+    FEED_REQUEST_READ_TIMEOUT_SECONDS,
+    FEED_REQUEST_WRITE_TIMEOUT_SECONDS,
+    GEMINI_MODEL_PRIORITY,
+    RSS_FEEDS,
+)
 from src.logger import SafeLogger  # noqa: E402
+from src.net_safety import get_with_safe_redirects  # noqa: E402
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "src" / "config.py"
 
@@ -59,11 +67,48 @@ _PROMPT = (
 )
 
 
+_FEED_TIMEOUT = httpx.Timeout(
+    connect=FEED_REQUEST_CONNECT_TIMEOUT_SECONDS,
+    read=FEED_REQUEST_READ_TIMEOUT_SECONDS,
+    write=FEED_REQUEST_WRITE_TIMEOUT_SECONDS,
+    pool=FEED_REQUEST_POOL_TIMEOUT_SECONDS,
+)
+
+
 async def _fetch_headlines() -> list[str]:
-    """Pull the first few headlines from each configured feed, in parallel."""
+    """Pull the first few headlines from each configured feed, in parallel.
+
+    Routed through ``get_with_safe_redirects`` -- the same guard the daily feed
+    path uses in ``src/news.py``: public-address validation, DNS pinning,
+    per-hop redirect and scheme checks, and a body-size cap. This script used
+    to call ``client.get`` directly with ``follow_redirects=True``, so a
+    scheduled job reached the open network with none of the controls the rest
+    of the repo goes through, including the one that blocks a compromised feed
+    origin from redirecting the runner at an internal address. Flagged by an
+    external scan, 2026-10-13.
+
+    Entry selection is deliberately unchanged: the first 5 entries of each
+    feed, no date filter. Reusing ``fetch_single_feed`` would have brought the
+    safe fetch for free but also its 2-day lookback, which is the daily path's
+    requirement and not this weekly job's -- it could thin the headline set
+    under MIN headlines and turn a refresh into a skip.
+    """
     async def one(client: httpx.AsyncClient, url: str) -> list[str]:
         try:
-            resp = await client.get(url, timeout=10)
+            resp = await get_with_safe_redirects(
+                client, url, timeout=_FEED_TIMEOUT, enforce_metadata_policy=False)
+            if resp is None:
+                # None covers both a security block and an ordinary transport
+                # failure; get_with_safe_redirects logs which one it was.
+                SafeLogger.warn("momentum_feed_fetch_blocked",
+                                "Feed fetch failed or was blocked (see prior log for cause)",
+                                url=url)
+                return []
+            if not (200 <= resp.status_code < 300):
+                SafeLogger.warn("momentum_feed_http_error",
+                                "Feed returned a non-success HTTP status",
+                                url=url, status_code=resp.status_code)
+                return []
             feed = feedparser.parse(resp.content)
             return [t for e in feed.entries[:5] if (t := getattr(e, "title", "").strip())]
         except Exception as exc:  # best-effort per feed
@@ -71,7 +116,10 @@ async def _fetch_headlines() -> list[str]:
                             url=url, error_type=type(exc).__name__, error_msg=str(exc)[:200])
             return []
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+    # follow_redirects stays off: get_with_safe_redirects walks the chain
+    # itself so it can validate every hop. A client that followed redirects on
+    # its own would skip exactly those checks.
+    async with httpx.AsyncClient(follow_redirects=False, timeout=_FEED_TIMEOUT) as client:
         results = await asyncio.gather(*(one(client, u) for u in RSS_FEEDS))
     headlines: list[str] = [h for sub in results for h in sub]
     return headlines[:MAX_HEADLINES]

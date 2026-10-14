@@ -1,10 +1,12 @@
 """Tests for scripts/refresh_momentum — the pure, safety-critical parts.
 
-The network + Gemini calls are best-effort and untested here; what MUST be
-correct is (1) the sanitiser that stands between raw model output and a source
-file (the injection guard) and (2) the config rewriter (must produce valid
-Python and touch only the list body).
+The Gemini call is best-effort; what MUST be correct is (1) the sanitiser that
+stands between raw model output and a source file (the injection guard),
+(2) the config rewriter (must produce valid Python and touch only the list
+body), and (3) the feed fetch going through the repo's SSRF guard rather than
+around it.
 """
+import httpx
 import pytest
 
 import scripts.refresh_momentum as rm
@@ -96,3 +98,95 @@ def test_rewrite_replaces_body_and_stays_valid_python():
 def test_rewrite_raises_when_anchor_missing():
     with pytest.raises(ValueError):
         rewrite_momentum_products("x = 1\n", ["gpt-6"])
+
+
+# -- Feed fetch: the transport must be the guarded one ------------------------
+# External scan, 2026-10-13: this script ran its own httpx client with
+# follow_redirects=True and no public-address, DNS-pin, per-hop, scheme or
+# body-size checks, while every other fetch in the repo went through them.
+
+_RSS = (
+    b"<?xml version='1.0'?><rss version='2.0'><channel>"
+    b"<item><title>Gemini 3 ships</title></item>"
+    b"<item><title>Claude 5 ships</title></item>"
+    b"</channel></rss>"
+)
+
+
+class _FakeFeedResp:
+    def __init__(self, status_code, content):
+        self.status_code = status_code
+        self.content = content
+
+
+def _guard_returning(*responses):
+    """Build a fake get_with_safe_redirects that records how it was called."""
+    calls = []
+    queue = list(responses)
+
+    async def guard(_client, url, *, timeout=None, enforce_metadata_policy=True):
+        calls.append({"url": url, "enforce_metadata_policy": enforce_metadata_policy,
+                      "timeout": timeout})
+        result = queue.pop(0) if queue else None
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    return guard, calls
+
+
+async def test_fetch_headlines_goes_through_the_ssrf_guard(monkeypatch):
+    guard, calls = _guard_returning(_FakeFeedResp(200, _RSS))
+    monkeypatch.setattr(rm, "get_with_safe_redirects", guard)
+    monkeypatch.setattr(rm, "RSS_FEEDS", ["https://example.com/feed.xml"])
+
+    headlines = await rm._fetch_headlines()
+
+    assert headlines == ["Gemini 3 ships", "Claude 5 ships"]
+    assert [c["url"] for c in calls] == ["https://example.com/feed.xml"]
+    # Feeds are their own trusted list, so the metadata domain allowlist is
+    # off -- but public-IP validation, DNS pinning and per-hop redirect checks
+    # all stay on. Same call shape as src/news.py's fetch_single_feed.
+    assert calls[0]["enforce_metadata_policy"] is False
+    assert calls[0]["timeout"] is rm._FEED_TIMEOUT
+
+
+async def test_fetch_headlines_never_uses_a_raw_client_get(monkeypatch):
+    """The regression lock: a direct client.get skips every control above."""
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("raw client.get bypasses the SSRF guard")
+
+    guard, _calls = _guard_returning(_FakeFeedResp(200, _RSS))
+    monkeypatch.setattr(httpx.AsyncClient, "get", forbidden)
+    monkeypatch.setattr(rm, "get_with_safe_redirects", guard)
+    monkeypatch.setattr(rm, "RSS_FEEDS", ["https://example.com/feed.xml"])
+
+    assert await rm._fetch_headlines() == ["Gemini 3 ships", "Claude 5 ships"]
+
+
+async def test_fetch_headlines_drops_a_blocked_feed(monkeypatch):
+    """A None from the guard is a block or a transport failure; neither posts."""
+    guard, _calls = _guard_returning(None)
+    monkeypatch.setattr(rm, "get_with_safe_redirects", guard)
+    monkeypatch.setattr(rm, "RSS_FEEDS", ["https://blocked.example/feed.xml"])
+
+    assert await rm._fetch_headlines() == []
+
+
+async def test_fetch_headlines_ignores_a_non_success_status(monkeypatch):
+    """A 404 page that happens to parse must not become headlines."""
+    guard, _calls = _guard_returning(_FakeFeedResp(404, _RSS))
+    monkeypatch.setattr(rm, "get_with_safe_redirects", guard)
+    monkeypatch.setattr(rm, "RSS_FEEDS", ["https://example.com/feed.xml"])
+
+    assert await rm._fetch_headlines() == []
+
+
+async def test_fetch_headlines_survives_one_feed_raising(monkeypatch):
+    """Best-effort per feed: one bad feed must not lose the others."""
+    guard, _calls = _guard_returning(RuntimeError("boom"), _FakeFeedResp(200, _RSS))
+    monkeypatch.setattr(rm, "get_with_safe_redirects", guard)
+    monkeypatch.setattr(rm, "RSS_FEEDS",
+                        ["https://bad.example/feed.xml", "https://ok.example/feed.xml"])
+
+    assert await rm._fetch_headlines() == ["Gemini 3 ships", "Claude 5 ships"]
