@@ -329,6 +329,39 @@ def test_normalise_url_handles_each_link_shape(raw, base, expected):
     assert net_safety.normalise_url(raw, base_url=base) == expected
 
 
+# A URL that still holds whitespace or a control character after trimming is
+# two things stuck together, not a link. External scan, 2026-10-13: a feed
+# entry link shaped that way travelled intact to a published Mastodon status.
+
+_BREAK = chr(10) * 2
+
+
+@pytest.mark.parametrize("raw", [
+    "https://attacker.example/a" + _BREAK + "@victim@example.social #Injected",
+    "https://attacker.example/a tail",
+    "https://attacker.example/a" + chr(9) + "tail",
+    "https://attacker.example/a" + chr(13) + "tail",
+    "https://attacker.example/a" + chr(0) + "tail",
+])
+def test_normalise_url_rejects_embedded_whitespace_and_controls(raw):
+    assert net_safety.normalise_url(raw, base_url="https://feed.example/rss") is None
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("https://example.com/article", True),
+    ("http://example.com/a?b=c#d", True),
+    ("https://example.com/a" + _BREAK + "@victim #x", False),
+    ("https://example.com/a b", False),
+    ("https://[", False),                 # urlparse raises; callers must not
+    ("javascript:alert(1)", False),       # parseable, wrong scheme
+    ("https://", False),                  # scheme but no host
+    ("example.com/a", False),             # no scheme
+    ("", False),
+])
+def test_is_single_clean_url(raw, expected):
+    assert net_safety.is_single_clean_url(raw) is expected
+
+
 @pytest.mark.parametrize("raw, expected", [("  not a url  ", "not a url"), ("http://[::1", "http://[::1")])
 def test_canonical_url_returns_an_unparseable_or_hostless_string_as_is(raw, expected):
     assert net_safety.canonical_url(raw) == expected

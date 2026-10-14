@@ -76,6 +76,36 @@ def canonical_url(url: str) -> str:
         "",
         "",
     ))
+# Whitespace and C0 controls (plus DEL) must be percent-encoded in a URL per
+# RFC 3986, so a value that still contains one after trimming is not a link
+# that needs fixing -- it is two things stuck together. Feed links cross an
+# untrusted boundary and get concatenated into post text downstream, where an
+# embedded newline turns whatever follows into its own line of published
+# content. Rejecting costs nothing legitimate.
+_URL_UNSAFE_CHARS = re.compile(r"[\x00-\x20\x7F]")
+
+
+def is_single_clean_url(url: str) -> bool:
+    """True if ``url`` is exactly one parseable http(s) URL.
+
+    "One" is the load-bearing word. Callers that concatenate a URL into text a
+    reader will see need to know they are appending a link and nothing else.
+
+    External scan, 2026-10-13: an RSS entry link of the form
+    "https://host/article<newline><newline>@victim@example.social #Injected"
+    reached a published Mastodon status intact, because every step between the
+    feed and the status only ever trimmed the ends of the string.
+    """
+    if not url or _URL_UNSAFE_CHARS.search(url):
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        # urlparse raises on malformed IPv6 ("https://["); callers must not.
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
 def normalise_url(url: str, base_url: str = "") -> Optional[str]:
     """
     Normalises a raw URL extracted from HTML into a fully qualified URL.
@@ -88,6 +118,14 @@ def normalise_url(url: str, base_url: str = "") -> Optional[str]:
     if not url:
         return None
     url = url.strip()
+    # Reject before any branch below: every return value derives from this
+    # string, so one check here covers the absolute, protocol-relative and
+    # urljoin paths alike.
+    if _URL_UNSAFE_CHARS.search(url):
+        SafeLogger.warn("url_rejected_unsafe_chars",
+                        "Rejected URL containing whitespace or control characters",
+                        url=url[:200])
+        return None
     if url.startswith('//'):
         return 'https:' + url
     if url.startswith(('http://', 'https://')):
