@@ -83,11 +83,12 @@ async def one_run(
     tried: list[str] = []
     gemini_is_down = outage == "gemini"
 
-    def _one_provider_is_down(api_key, instr, task, model, anthropic_api_key=None):
+    def _one_provider_is_down(api_key, instr, task, model, anthropic_api_key=None,
+                              timeout_seconds=None):
         tried.append(model)
         if is_anthropic_model(model) != gemini_is_down:
             raise RuntimeError(f"simulated {outage} outage")
-        return real(api_key, instr, task, model, anthropic_api_key)
+        return real(api_key, instr, task, model, anthropic_api_key, timeout_seconds)
 
     # Always walk the full chain in production order, so the probe reports the
     # real sequence rather than a convenient one.
