@@ -75,11 +75,11 @@ def test_malformed_entries_do_not_raise(monkeypatch):
 def _patch_pipeline(monkeypatch, raw, candidates, kept):
     proposals, reviews = [], []
 
-    async def propose(key, post, model, allowance):
+    async def propose(key, post, model, allowance, anthropic_key=None):
         proposals.append(post)
         return raw, candidates
 
-    async def review(key, post, cands, model):
+    async def review(key, post, cands, model, anthropic_key=None):
         reviews.append(cands)
         return [c in kept for c in cands], kept
 
@@ -128,10 +128,10 @@ async def test_probe_reports_an_invalid_verdict_as_invalid(monkeypatch, capsys):
     _probe_adversarial already made this distinction; _probe_one discarded
     the decision status and credited the reviewer with a judgement it never
     made (Codex review, 2026-09-09)."""
-    async def propose(key, post, model, allowance):
+    async def propose(key, post, model, allowance, anthropic_key=None):
         return ["#Python"], ["#Python"]
 
-    async def invalid(key, post, cands, model):
+    async def invalid(key, post, cands, model, anthropic_key=None):
         return None, []
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
@@ -145,10 +145,10 @@ async def test_probe_reports_an_invalid_verdict_as_invalid(monkeypatch, capsys):
 @pytest.mark.asyncio
 async def test_probe_reports_a_review_failure_distinctly(monkeypatch, capsys):
     """A failure in review must not read as 'the model proposed nothing'."""
-    async def propose(key, post, model, allowance):
+    async def propose(key, post, model, allowance, anthropic_key=None):
         return ["#Python"], ["#Python"]
 
-    async def boom(key, post, cands, model):
+    async def boom(key, post, cands, model, anthropic_key=None):
         raise RuntimeError("review exploded")
 
     monkeypatch.setattr(probe, "request_mastodon_tags", propose)
@@ -163,7 +163,7 @@ async def test_a_reviewer_that_drops_everything_does_not_score_perfectly(
 ):
     """The positive controls exist for this. Against negatives alone, a
     reviewer that refuses every tag would look flawless."""
-    async def drops_everything(key, post, cands, model):
+    async def drops_everything(key, post, cands, model, anthropic_key=None):
         return [False] * len(cands), []
 
     monkeypatch.setattr(probe, "review_mastodon_tags", drops_everything)
@@ -175,7 +175,7 @@ async def test_a_reviewer_that_drops_everything_does_not_score_perfectly(
 
 @pytest.mark.asyncio
 async def test_a_reviewer_that_keeps_everything_is_flagged(monkeypatch, capsys):
-    async def keeps_everything(key, post, cands, model):
+    async def keeps_everything(key, post, cands, model, anthropic_key=None):
         return [True] * len(cands), list(cands)
 
     monkeypatch.setattr(probe, "review_mastodon_tags", keeps_everything)
@@ -187,7 +187,7 @@ async def test_a_reviewer_that_keeps_everything_is_flagged(monkeypatch, capsys):
 @pytest.mark.asyncio
 async def test_a_perfect_reviewer_scores_perfectly(monkeypatch):
     """Sanity check on the scoring itself, using the cases' own expectations."""
-    async def oracle(key, post, cands, model):
+    async def oracle(key, post, cands, model, anthropic_key=None):
         # Positive controls are the three tags the case table marks must-keep.
         keep = [c in ("#OOP", "#BrowserExtensions") or
                 (c == "#NVIDIA" and "CoWoS" in post) for c in cands]
@@ -204,7 +204,7 @@ async def test_an_unparseable_verdict_is_never_scored_as_a_rejection(
 ):
     """The finding that mattered: `[]` from a parser failure is not a semantic
     rejection. A model returning junk must not post a perfect record."""
-    async def unparseable(key, post, cands, model):
+    async def unparseable(key, post, cands, model, anthropic_key=None):
         return None, []
 
     monkeypatch.setattr(probe, "review_mastodon_tags", unparseable)
@@ -218,7 +218,7 @@ async def test_an_unparseable_verdict_is_never_scored_as_a_rejection(
 async def test_probe_skips_a_post_that_already_spends_the_ceiling(monkeypatch, capsys):
     called = []
 
-    async def one_call(key, post, model, allowance):
+    async def one_call(key, post, model, allowance, anthropic_key=None):
         called.append(1)
         return [], []
 
@@ -232,7 +232,7 @@ async def test_probe_skips_a_post_that_already_spends_the_ceiling(monkeypatch, c
 
 @pytest.mark.asyncio
 async def test_a_failing_call_does_not_stop_the_run(monkeypatch, capsys):
-    async def boom(key, post, model, allowance):
+    async def boom(key, post, model, allowance, anthropic_key=None):
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(probe, "request_mastodon_tags", boom)

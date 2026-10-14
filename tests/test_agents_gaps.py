@@ -388,7 +388,8 @@ async def test_the_reviewer_sees_candidates_numbered_from_one(monkeypatch):
     the reviewer's ids would never line up and every tag would be dropped."""
     tasks = []
 
-    async def fake_thread(fn, api_key, system_instr, task, model, anthropic_api_key=None):
+    async def fake_thread(fn, api_key, system_instr, task, model,
+                          anthropic_api_key=None, timeout_seconds=None):
         tasks.append(task)
         return json.dumps([{"id": 1, "keep": True}, {"id": 2, "keep": False}])
 
@@ -401,7 +402,7 @@ async def test_the_reviewer_sees_candidates_numbered_from_one(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_candidates_skips_the_review(monkeypatch):
-    async def no_candidates(api_key, post, model, allowance):
+    async def no_candidates(api_key, post, model, allowance, anthropic_api_key=None):
         return ["#AI"], []
 
     monkeypatch.setattr(agents, "request_mastodon_tags", no_candidates)

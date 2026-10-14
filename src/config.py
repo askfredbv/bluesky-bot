@@ -122,6 +122,29 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 # Setting this back to False stops tagging without reverting anything.
 MASTODON_TAGS_ENABLED: bool = True
 
+# The economy rung of each provider's line-up. Tagging picks its proposer and
+# reviewer from here first, in chain order, and only falls back to the head of
+# the chain when fewer than two of these are available.
+#
+# Why: the model chain is ordered by how much we want a model WRITING POSTS,
+# which is not the same question as who should name two hashtags. When the
+# Anthropic rung was promoted to primary (#187) the tag pass inherited the new
+# head of the chain and would have put the most expensive model on the cheapest
+# task. Tags are decoration -- the post is already written and validated by the
+# time they are asked for.
+#
+# Membership is declared, not inferred from the name, because a name heuristic
+# is precisely the kind of rule that drifts silently when a model is added. A
+# model missing from this list is simply not preferred: selection falls back to
+# chain order, which is the pre-#187 behaviour, so forgetting to add one costs
+# money rather than correctness.
+MASTODON_TAG_ECONOMY_MODELS: List[str] = [
+    "claude-haiku-5-5",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+]
+
 # Total wall-clock budget for naming tags. Tagging runs concurrently with the
 # Bluesky broadcast (main.broadcasting_stage), so this never delays that post
 # — but the Mastodon post must not wait on it indefinitely either. One model,

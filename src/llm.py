@@ -105,12 +105,30 @@ def compose_model_chain(
     return list(gemini_models) + list(anthropic_models)
 
 
+# An Anthropic request must carry its own deadline, for the same reason the
+# Gemini client does (see _REQUEST_TIMEOUT_MS in src/agents.py): cancelling an
+# await does NOT stop the synchronous SDK call running in a to_thread worker,
+# and asyncio.run() waits for that worker during executor shutdown. Without
+# this the SDK's own defaults apply -- 600s with two retries -- so a best-effort
+# tag request could keep the process alive for twenty minutes after the post
+# had already shipped untagged. Codex raised it against #194, which is what
+# made the path routine: the tag proposer is now an Anthropic model.
+ANTHROPIC_REQUEST_TIMEOUT_SECONDS: float = 30.0
+
+# Zero, not the SDK default of two. Retrying is this repo's model-chain loop,
+# which walks to the next model on failure; SDK-level retries multiply the
+# deadline above without that loop knowing, which is precisely what has to stay
+# bounded. A caller that wants a second attempt already gets one from the chain.
+ANTHROPIC_MAX_RETRIES: int = 0
+
+
 def generate_anthropic(
     api_key: Optional[str],
     system_instr: str,
     task: str,
     model: str,
     max_output_tokens: int,
+    timeout_seconds: float = ANTHROPIC_REQUEST_TIMEOUT_SECONDS,
 ) -> str:
     """One synchronous Anthropic completion, shaped like ``_sync_generate``.
 
@@ -131,7 +149,11 @@ def generate_anthropic(
     import anthropic
 
     thinking: Any = thinking_off_for(model)
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        timeout=timeout_seconds,
+        max_retries=ANTHROPIC_MAX_RETRIES,
+    )
     response = client.messages.create(
         model=model,
         max_tokens=max_output_tokens,

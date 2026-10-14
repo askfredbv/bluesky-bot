@@ -11,6 +11,7 @@ import types
 
 import pytest
 
+from src import llm
 from src.agents import _sync_generate, generate_content
 from src.config import ANTHROPIC_CHAIN_POSITION, ANTHROPIC_MODELS, MAX_OUTPUT_TOKENS
 from src.llm import (
@@ -39,8 +40,9 @@ def _fake_anthropic_module(recorder, blocks=None, raises=None):
             )
 
     class _Anthropic:
-        def __init__(self, api_key=None):
-            recorder.append({"_init_api_key": api_key})
+        def __init__(self, api_key=None, timeout=None, max_retries=None):
+            recorder.append({"_init_api_key": api_key, "_init_timeout": timeout,
+                             "_init_max_retries": max_retries})
             self.messages = _Messages()
 
     return types.SimpleNamespace(Anthropic=_Anthropic)
@@ -308,3 +310,32 @@ def test_chain_does_not_alias_its_inputs():
 def test_configured_position_is_one_the_resolver_recognises():
     """Guards the revert switch: a typo silently degrades to fallback."""
     assert ANTHROPIC_CHAIN_POSITION in {"primary", "fallback"}
+
+
+def test_the_anthropic_client_is_bounded(monkeypatch):
+    """Cancelling an await does not stop a to_thread worker, and asyncio.run()
+    waits for it at shutdown. Without an SDK deadline the pinned client's own
+    defaults apply (600s, two retries), so a best-effort tag request could hold
+    the process open long after the post shipped. Codex P1 on #194, which is
+    what made the path routine: the tag proposer is an Anthropic model now.
+    """
+    rec = []
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", _fake_anthropic_module(rec))
+
+    generate_anthropic("key", "sys", "task", "claude-haiku-5-5", 1500)
+
+    init = rec[0]
+    assert init["_init_timeout"] == llm.ANTHROPIC_REQUEST_TIMEOUT_SECONDS
+    assert init["_init_max_retries"] == 0, (
+        "SDK retries multiply the deadline without the model chain knowing")
+
+
+def test_a_caller_can_impose_a_tighter_deadline(monkeypatch):
+    """The tag pass has 20s for both its calls, so it passes its own budget."""
+    rec = []
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", _fake_anthropic_module(rec))
+
+    generate_anthropic("key", "sys", "task", "claude-haiku-5-5", 1500, 20.0)
+
+    assert rec[0]["_init_timeout"] == 20.0
+

@@ -43,5 +43,10 @@ jobs:
       - name: Probe Mastodon discovery tags
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Production's tag proposer is an Anthropic model while the trial
+          # runs, so without this the probe measures a pairing production
+          # does not use. Unset, the probe says so and falls back to the
+          # Gemini-only chain rather than failing.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PROBE_POST_LIMIT: ${{ inputs.post_limit }}
         run: python -m scripts.probe_mastodon_tags
