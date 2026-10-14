@@ -162,13 +162,26 @@ def _is_public_ip(ip_str: str) -> bool:
     except ValueError:
         return False
 
-    return not (
+    # is_global AND the explicit denies, not either alone.
+    #
+    # The denies alone let CGNAT shared space (100.64.0.0/10) and deprecated
+    # IPv6 site-local (fec0::/10) through: Python classifies neither as private,
+    # and both are routable inside a carrier or corporate network. An external
+    # scan flagged the CGNAT half on 2026-10-13.
+    #
+    # is_global alone is worse: Python reports the NAT64 well-known prefix
+    # (64:ff9b::/96) as global, so switching to it outright would newly ALLOW
+    # an address that maps straight onto internal IPv4. is_reserved catches
+    # that one, which is why both halves stay.
+    return ip_obj.is_global and not (
         ip_obj.is_private
         or ip_obj.is_loopback
         or ip_obj.is_link_local
         or ip_obj.is_multicast
         or ip_obj.is_reserved
         or ip_obj.is_unspecified
+        # IPv6-only attribute; absent on IPv4Address.
+        or getattr(ip_obj, "is_site_local", False)
     )
 def _resolve_public_ip_candidates(hostname: str) -> Optional[List[str]]:
     try:
@@ -216,6 +229,38 @@ def is_allowed_metadata_fetch_url(url: str) -> bool:
         return False
 
     return True
+def _resolver_host_key(host: object) -> str:
+    """Normalise a getaddrinfo host argument so it can be compared to the pin."""
+    if isinstance(host, (bytes, bytearray)):
+        host = bytes(host).decode("ascii", "ignore")
+    return str(host).lower().rstrip(".")
+
+
+def _resolver_host_keys(hostname: str) -> frozenset:
+    """Every spelling of ``hostname`` a resolver call might arrive as.
+
+    httpcore hands socket.getaddrinfo a BYTES host, already IDNA-encoded, not
+    the str that urlparse produced. The pin used to compare
+    ``str(host).lower()`` against the parsed hostname, so a bytes host rendered
+    as "b'example.com'" and never matched: guarded_getaddrinfo took its
+    passthrough branch on every request and the DNS-rebinding guard never fired
+    at all -- for ASCII hostnames too, not only internationalised ones.
+    Verified against the locked httpx 0.28.1 / httpcore 1.0.9.
+
+    An external scan (2026-10-13) reported only the IDNA half of this. The
+    bytes half is what makes it total, which is why both forms are matched
+    here and why test_net_safety_gaps pins the exact call shape httpcore uses.
+    """
+    base = hostname.lower().rstrip(".")
+    keys = {base}
+    try:
+        keys.add(base.encode("idna").decode("ascii").lower())
+    except (UnicodeError, ValueError):
+        # Unencodable label: the raw form is still a valid key to match on.
+        pass
+    return frozenset(keys)
+
+
 @contextmanager
 def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
     """
@@ -223,11 +268,11 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
     If the resolver returns addresses outside the allowed set, resolution is blocked.
     """
     original_getaddrinfo = socket.getaddrinfo
-    canonical_hostname = hostname.lower()
+    pinned_keys = _resolver_host_keys(hostname)
     allowed_set = set(allowed_ips)
 
-    def guarded_getaddrinfo(host: str, *args, **kwargs):
-        if str(host).lower() != canonical_hostname:
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        if _resolver_host_key(host) not in pinned_keys:
             return original_getaddrinfo(host, *args, **kwargs)
 
         current = original_getaddrinfo(host, *args, **kwargs)
@@ -364,7 +409,49 @@ async def _capped_stream_get(client: httpx.AsyncClient, url: str, *,
                               request=response.request)
 
 
+# Wall-clock budget for one fetch, redirects and body read included.
+#
+# The per-hop timeouts are inactivity timeouts: a server that sends one byte
+# inside every read window keeps the connection alive indefinitely, and because
+# the resolver pin is held across the request (see _resolver_pin_lock) a single
+# slow-drip host stalls every other fetch behind it. 45s is far above anything
+# legitimate here (a feed answers in under 5) and bounds the damage. Flagged by
+# an external scan, 2026-10-13.
+MAX_FETCH_SECONDS: float = 45.0
+
+
 async def get_with_safe_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: Union[float, httpx.Timeout, None] = 10.0,
+    max_redirects: int = 5,
+    enforce_metadata_policy: bool = True,
+    max_bytes: int = MAX_FETCH_BYTES,
+    total_timeout: float = MAX_FETCH_SECONDS,
+) -> Optional[httpx.Response]:
+    """Deadline wrapper around the validating fetch; see ``_safe_redirect_get``.
+
+    Returns None on expiry, the same "fetch failed or was blocked" signal every
+    caller already handles, so no call site changes.
+    """
+    try:
+        async with asyncio.timeout(total_timeout):
+            return await _safe_redirect_get(
+                client, url, headers=headers, timeout=timeout,
+                max_redirects=max_redirects,
+                enforce_metadata_policy=enforce_metadata_policy,
+                max_bytes=max_bytes,
+            )
+    except TimeoutError:
+        SafeLogger.warn("fetch_deadline_exceeded",
+                        "Fetch exceeded its total deadline; abandoning",
+                        url=url, deadline_seconds=total_timeout)
+        return None
+
+
+async def _safe_redirect_get(
     client: httpx.AsyncClient,
     url: str,
     *,
@@ -412,7 +499,12 @@ async def get_with_safe_redirects(
                         headers=headers, timeout=timeout, max_bytes=max_bytes,
                     )
         except Exception as e:
-            SafeLogger.warn("dns_validated_request_blocked", "Blocked URL request after DNS validation", url=current_url, error_type=type(e).__name__)
+            SafeLogger.warn("dns_validated_request_blocked",
+                            "Blocked URL request after DNS validation",
+                            url=current_url, error_type=type(e).__name__,
+                            # AGENTS.md #3: the type alone has cost this repo
+                            # multi-day diagnoses more than once.
+                            error_msg=str(e)[:200])
             return None
 
         # None => blocked by the size cap (logged in _capped_stream_get).

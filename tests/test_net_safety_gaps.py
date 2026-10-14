@@ -16,6 +16,7 @@ numbers refer to net_safety.py at 49af4a4. Left alone as equivalent or noise:
     the same bytes.
 """
 import asyncio
+import contextlib
 import gzip
 import socket
 import zlib
@@ -365,3 +366,141 @@ def test_is_single_clean_url(raw, expected):
 @pytest.mark.parametrize("raw, expected", [("  not a url  ", "not a url"), ("http://[::1", "http://[::1")])
 def test_canonical_url_returns_an_unparseable_or_hostless_string_as_is(raw, expected):
     assert net_safety.canonical_url(raw) == expected
+
+
+# ===========================================================================
+# External scan sweep, 2026-10-13/14.
+# ===========================================================================
+
+# -- The public-address predicate -------------------------------------------
+# It denied a list of flags instead of also requiring is_global, so CGNAT
+# shared space and deprecated IPv6 site-local passed as public.
+
+@pytest.mark.parametrize("ip, public", [
+    ("93.184.216.34", True),            # ordinary public IPv4
+    ("8.8.8.8", True),
+    ("2606:4700:4700::1111", True),     # ordinary public IPv6
+    ("100.64.0.1", False),              # CGNAT / RFC 6598 shared space
+    ("100.127.255.254", False),         # ... and its far end
+    ("fec0::1", False),                 # deprecated IPv6 site-local
+    ("64:ff9b::1.2.3.4", False),        # NAT64: is_global says True, is_reserved saves us
+    ("10.0.0.1", False),
+    ("172.16.0.1", False),
+    ("169.254.169.254", False),         # cloud metadata
+    ("127.0.0.1", False),
+    ("::1", False),
+    ("2001:db8::1", False),
+    ("::ffff:127.0.0.1", False),        # IPv4-mapped loopback
+    ("224.0.0.1", False),
+    ("0.0.0.0", False),
+    ("not-an-ip", False),
+])
+def test_is_public_ip(ip, public):
+    assert net_safety._is_public_ip(ip) is public
+
+
+# -- The DNS-rebinding pin ---------------------------------------------------
+# It compared str(host).lower() to the parsed hostname. httpcore passes a BYTES
+# host, so str() rendered it as "b'example.com'", the guard took its passthrough
+# branch on every request, and the pin never fired at all -- for ASCII hosts as
+# well as internationalised ones. The scan reported only the IDNA half.
+
+_REBOUND = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 443))]
+
+
+@pytest.fixture
+def rebinding_resolver(monkeypatch):
+    """A resolver that always answers with a link-local address."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: list(_REBOUND))
+
+
+@pytest.mark.parametrize("host", [
+    "example.com",
+    b"example.com",                 # what httpcore actually passes
+    b"example.com.",                # fully-qualified form
+    "EXAMPLE.COM",
+])
+def test_the_pin_blocks_a_rebind_however_the_host_is_spelled(host, rebinding_resolver):
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        with pytest.raises(socket.gaierror):
+            socket.getaddrinfo(host, 443)
+
+
+@pytest.mark.parametrize("host", ["münchen.example", b"xn--mnchen-3ya.example"])
+def test_the_pin_blocks_a_rebind_on_an_internationalised_host(host, rebinding_resolver):
+    with net_safety._resolver_pinned_to_ips("münchen.example", ["93.184.216.34"]):
+        with pytest.raises(socket.gaierror):
+            socket.getaddrinfo(host, 443)
+
+
+def test_the_pin_leaves_other_hostnames_alone(rebinding_resolver):
+    """The pin is a global monkeypatch, so an unrelated lookup must pass through
+    -- other tasks resolve while a pinned fetch is in flight."""
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        assert socket.getaddrinfo("other.example", 443) == list(_REBOUND)
+
+
+def test_the_pin_matches_the_host_shape_httpcore_really_passes(monkeypatch):
+    """Pins the integration, not a fixture.
+
+    The bug was a mismatch between what the pin expected and what the HTTP
+    stack passes. A hand-written b"example.com" fixture would drift from a
+    future httpx; this asserts against the live call. No network: the spy
+    raises before any connection is made.
+    """
+    seen = []
+    original = socket.getaddrinfo
+
+    def spy(host, *args, **kwargs):
+        seen.append(host)
+        raise socket.gaierror("intercepted")
+
+    monkeypatch.setattr(socket, "getaddrinfo", spy)
+
+    async def attempt():
+        async with httpx.AsyncClient(timeout=3) as client:
+            with contextlib.suppress(Exception):
+                await client.get("https://example.com/x")
+
+    asyncio.run(attempt())
+    monkeypatch.setattr(socket, "getaddrinfo", original)
+
+    assert seen, "httpx did not reach socket.getaddrinfo; the pin's patch point moved"
+    keys = net_safety._resolver_host_keys("example.com")
+    assert net_safety._resolver_host_key(seen[0]) in keys
+
+
+# -- The total fetch deadline ------------------------------------------------
+# Per-hop timeouts are inactivity timeouts: a slow-drip server stays under them
+# forever while holding the process-wide resolver pin.
+
+def test_a_fetch_that_outlives_its_deadline_returns_none(monkeypatch):
+    async def never_finishes(*_args, **_kwargs):
+        await asyncio.sleep(30)
+        raise AssertionError("should not get here")
+
+    monkeypatch.setattr(net_safety, "_safe_redirect_get", never_finishes)
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            return await net_safety.get_with_safe_redirects(
+                client, "https://example.com/slow", total_timeout=0.05)
+
+    assert asyncio.run(go()) is None
+
+
+def test_the_deadline_does_not_interfere_with_a_prompt_fetch(monkeypatch):
+    sentinel = httpx.Response(200, content=b"ok")
+
+    async def prompt(*_args, **_kwargs):
+        return sentinel
+
+    monkeypatch.setattr(net_safety, "_safe_redirect_get", prompt)
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            return await net_safety.get_with_safe_redirects(
+                client, "https://example.com/fast", total_timeout=5)
+
+    assert asyncio.run(go()) is sentinel
+

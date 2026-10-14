@@ -265,7 +265,7 @@ def test_an_entry_with_only_an_updated_date_is_kept(monkeypatch):
 # fetch_news: telemetry, consensus, ranking and the hidden gem (L279-L357)
 # ---------------------------------------------------------------------------
 
-def _run_news(monkeypatch, items, *, feeds=("https://feed-a.com/rss",), **kwargs):
+def _run_news(monkeypatch, items, *, feeds=("https://feed-a.com/rss",), health_trusted=True, **kwargs):
     """Run fetch_news on fixed items, scored by their "s" field."""
     calls = {"recorded": [], "saved": []}
     health = {"feeds": {}}
@@ -276,7 +276,7 @@ def _run_news(monkeypatch, items, *, feeds=("https://feed-a.com/rss",), **kwargs
 
     monkeypatch.setattr(news, "RSS_FEEDS", list(feeds))
     monkeypatch.setattr(news, "fetch_single_feed", fake_fetch)
-    monkeypatch.setattr(news, "load_feed_health", lambda: health)
+    monkeypatch.setattr(news, "load_feed_health_strict", lambda: (health, health_trusted))
     monkeypatch.setattr(news, "record_feed_attempt", lambda h, r: calls["recorded"].append((h, r.url)))
     monkeypatch.setattr(news, "save_feed_health", lambda h: calls["saved"].append(h))
     monkeypatch.setattr(news, "check_feed_health_alerts", lambda *a, **k: [])
@@ -494,3 +494,21 @@ def test_the_shortlist_comes_back_best_first_after_promotion():
     result = news.select_candidates(ranked, 5)
 
     assert [i["score"] for i in result] == sorted((i["score"] for i in result), reverse=True)
+
+
+def test_untrusted_feed_health_is_not_written_back(monkeypatch):
+    """An untrusted read must not be persisted: it would overwrite real history
+    in the Gist with a synthesised or stale snapshot (external scan, 2026-10-13).
+    Losing one run of telemetry is the cheaper failure."""
+    _result, calls, _health = _run_news(monkeypatch, [_story(1, 5.0)], health_trusted=False)
+
+    assert calls["recorded"], "attempts are still recorded in memory"
+    assert calls["saved"] == [], "but nothing is written back"
+
+
+def test_trusted_feed_health_is_still_written_back(monkeypatch):
+    """The guard must not cost the telemetry it protects."""
+    _result, calls, _health = _run_news(monkeypatch, [_story(1, 5.0)])
+
+    assert len(calls["saved"]) == 1
+

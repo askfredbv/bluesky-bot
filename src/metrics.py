@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Collection, Dict, List, Optional
+from typing import Any, Collection, Dict, List, Optional, Tuple
 
 from src.config import (
     FEED_HEALTH_BROKEN_AFTER_DAYS,
@@ -75,26 +75,51 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def load_feed_health() -> Dict[str, Any]:
-    """Load feed_health.json via the same Gist/local pattern as seen_articles.
+def load_feed_health_strict() -> Tuple[Dict[str, Any], bool]:
+    """Load feed_health.json, and say whether the result is safe to write back.
+
+    The same trusted/untrusted distinction ``load_seen_articles_strict`` draws,
+    for the same reason, and it was missing here: this loader used the flag-
+    dropping ``_load_gist_state`` wrapper, so a transient Gist read failure fell
+    through to the repo's committed copy of feed_health.json and presented that
+    stale snapshot as current. Saving it back then overwrote real history in the
+    Gist. An external scan flagged the pattern on 2026-10-13.
+
+    ``trusted=False`` means no tier supplied real state AND the Gist read itself
+    failed, so the empty default is a guess, not an observation. Callers must
+    not persist on False.
 
     Imports are local to avoid a circular dependency with `src.utils`
     (utils imports from this module for `FeedFetchResult`).
     """
-    from src.state_store import _atomic_write_json, _load_gist_state, _load_json_with_repair
+    from src.state_store import (
+        _atomic_write_json,
+        _load_gist_state_strict,
+        _load_json_with_repair_strict,
+    )
 
     default: Dict[str, Any] = {"feeds": {}}
 
-    gist_data = _load_gist_state("feed_health.json")
+    gist_data, gist_trusted = _load_gist_state_strict("feed_health.json")
     if isinstance(gist_data, dict) and "feeds" in gist_data:
-        return gist_data
+        return gist_data, True
 
-    data = _load_json_with_repair(FEED_HEALTH_FILE, lambda: default)
+    data, from_file = _load_json_with_repair_strict(FEED_HEALTH_FILE, lambda: default)
     if isinstance(data, dict) and "feeds" in data:
-        return data
+        # Real local state stands on its own; the synthesised default is only
+        # trustworthy if the Gist read ahead of it actually succeeded.
+        return data, (from_file or gist_trusted)
+
+    if not gist_trusted:
+        SafeLogger.error(
+            "feed_health_read_untrusted",
+            "Feed-health read failed and no fallback tier had state; treating empty as UNKNOWN",
+        )
+        return default, False
 
     # Unexpected shape — repair to default. This write is safe because the
-    # file was either missing or corrupt; atomic_write replaces atomically.
+    # file was either missing or corrupt, and the Gist read succeeded;
+    # atomic_write replaces atomically.
     try:
         _atomic_write_json(FEED_HEALTH_FILE, default)
     except Exception as e:
@@ -102,8 +127,18 @@ def load_feed_health() -> Dict[str, Any]:
             "feed_health_repair_failed",
             "Failed to rewrite feed_health.json with default shape",
             error_type=type(e).__name__,
+            error_msg=str(e)[:200],
         )
-    return default
+    return default, True
+
+
+def load_feed_health() -> Dict[str, Any]:
+    """``load_feed_health_strict`` without the trust flag.
+
+    For read-only callers. Anything that WRITES the result back must use the
+    strict variant and honour ``trusted``.
+    """
+    return load_feed_health_strict()[0]
 
 
 def save_feed_health(data: Dict[str, Any]) -> None:
@@ -289,19 +324,36 @@ def check_feed_health_alerts(
 # need (metrics sub-object, posted_at) populated as zeros / None.
 # ---------------------------------------------------------------------------
 
-def load_post_metrics() -> Dict[str, Any]:
-    """Same Gist-first, local-fallback pattern as load_feed_health."""
-    from src.state_store import _atomic_write_json, _load_gist_state, _load_json_with_repair
+def load_post_metrics_strict() -> Tuple[Dict[str, Any], bool]:
+    """Same Gist-first, local-fallback pattern as load_feed_health_strict.
+
+    Same reason for the trust flag too: without it a transient Gist read
+    failure presented the repo's committed post_metrics.json as current, and
+    the save at the end of the run wrote that stale snapshot over the real
+    history. Callers must not persist on ``trusted=False``.
+    """
+    from src.state_store import (
+        _atomic_write_json,
+        _load_gist_state_strict,
+        _load_json_with_repair_strict,
+    )
 
     default: Dict[str, Any] = {"posts": []}
 
-    gist_data = _load_gist_state("post_metrics.json")
+    gist_data, gist_trusted = _load_gist_state_strict("post_metrics.json")
     if isinstance(gist_data, dict) and "posts" in gist_data:
-        return gist_data
+        return gist_data, True
 
-    data = _load_json_with_repair(POST_METRICS_FILE, lambda: default)
+    data, from_file = _load_json_with_repair_strict(POST_METRICS_FILE, lambda: default)
     if isinstance(data, dict) and "posts" in data:
-        return data
+        return data, (from_file or gist_trusted)
+
+    if not gist_trusted:
+        SafeLogger.error(
+            "post_metrics_read_untrusted",
+            "Post-metrics read failed and no fallback tier had state; treating empty as UNKNOWN",
+        )
+        return default, False
 
     try:
         _atomic_write_json(POST_METRICS_FILE, default)
@@ -310,8 +362,14 @@ def load_post_metrics() -> Dict[str, Any]:
             "post_metrics_repair_failed",
             "Failed to rewrite post_metrics.json with default shape",
             error_type=type(e).__name__,
+            error_msg=str(e)[:200],
         )
-    return default
+    return default, True
+
+
+def load_post_metrics() -> Dict[str, Any]:
+    """``load_post_metrics_strict`` without the trust flag, for read-only callers."""
+    return load_post_metrics_strict()[0]
 
 
 def save_post_metrics(data: Dict[str, Any]) -> None:
@@ -638,19 +696,36 @@ async def refresh_stale_metrics(
 # be added if it ever matters.
 # ---------------------------------------------------------------------------
 
-def load_growth() -> Dict[str, Any]:
-    """Load growth.json via the same Gist/local pattern as feed_health."""
-    from src.state_store import _atomic_write_json, _load_gist_state, _load_json_with_repair
+def load_growth_strict() -> Tuple[Dict[str, Any], bool]:
+    """Load growth.json, with the same trust flag as load_feed_health_strict.
+
+    The external scan named the feed-health and post-metrics loaders; this one
+    had the identical shape and the identical consequence (a transient Gist
+    read failure presenting the repo's committed copy as current, then saved
+    back over the real series), so it gets the identical fix.
+    """
+    from src.state_store import (
+        _atomic_write_json,
+        _load_gist_state_strict,
+        _load_json_with_repair_strict,
+    )
 
     default: Dict[str, Any] = {"snapshots": []}
 
-    gist_data = _load_gist_state("growth.json")
+    gist_data, gist_trusted = _load_gist_state_strict("growth.json")
     if isinstance(gist_data, dict) and "snapshots" in gist_data:
-        return gist_data
+        return gist_data, True
 
-    data = _load_json_with_repair(GROWTH_FILE, lambda: default)
+    data, from_file = _load_json_with_repair_strict(GROWTH_FILE, lambda: default)
     if isinstance(data, dict) and "snapshots" in data:
-        return data
+        return data, (from_file or gist_trusted)
+
+    if not gist_trusted:
+        SafeLogger.error(
+            "growth_read_untrusted",
+            "Growth read failed and no fallback tier had state; treating empty as UNKNOWN",
+        )
+        return default, False
 
     try:
         _atomic_write_json(GROWTH_FILE, default)
@@ -659,8 +734,14 @@ def load_growth() -> Dict[str, Any]:
             "growth_repair_failed",
             "Failed to rewrite growth.json with default shape",
             error_type=type(e).__name__,
+            error_msg=str(e)[:200],
         )
-    return default
+    return default, True
+
+
+def load_growth() -> Dict[str, Any]:
+    """``load_growth_strict`` without the trust flag, for read-only callers."""
+    return load_growth_strict()[0]
 
 
 def save_growth(data: Dict[str, Any]) -> None:

@@ -287,13 +287,14 @@ def test_the_configured_stale_exemptions_are_feeds_we_still_fetch():
 
 def test_load_feed_health_returns_default_when_no_gist_or_file(monkeypatch, tmp_path):
     monkeypatch.setattr("src.metrics.FEED_HEALTH_FILE", tmp_path / "missing.json")
-    monkeypatch.setattr("src.state_store._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: (None, True))
     assert metrics.load_feed_health() == {"feeds": {}}
 
 
 def test_load_feed_health_prefers_gist(monkeypatch):
     payload = {"feeds": {"https://a": {"last_fetch_at": "2026-01-01T00:00:00+00:00"}}}
-    monkeypatch.setattr("src.state_store._load_gist_state", lambda name: payload if name == "feed_health.json" else None)
+    monkeypatch.setattr("src.state_store._load_gist_state_strict",
+                        lambda name: (payload, True) if name == "feed_health.json" else (None, True))
     assert metrics.load_feed_health() == payload
 
 
@@ -531,7 +532,7 @@ def test_record_post_metric_time_of_day_handles_unparseable():
 # ---------------------------------------------------------------------------
 
 def test_load_post_metrics_returns_default_shape_when_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.state_store._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: (None, True))
     monkeypatch.setattr("src.metrics.POST_METRICS_FILE", tmp_path / "post_metrics.json")
     assert metrics.load_post_metrics() == {"posts": []}
 
@@ -539,8 +540,8 @@ def test_load_post_metrics_returns_default_shape_when_missing(monkeypatch, tmp_p
 def test_load_post_metrics_uses_gist_data_when_available(monkeypatch):
     payload = {"posts": [{"post_id": "at://x"}]}
     monkeypatch.setattr(
-        "src.state_store._load_gist_state",
-        lambda name: payload if name == "post_metrics.json" else None,
+        "src.state_store._load_gist_state_strict",
+        lambda name: (payload, True) if name == "post_metrics.json" else (None, True),
     )
     assert metrics.load_post_metrics() == payload
 
@@ -901,7 +902,7 @@ def test_record_follower_snapshot_appends_to_existing():
 
 
 def test_load_growth_returns_default_shape_when_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr("src.state_store._load_gist_state", lambda *_: None)
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: (None, True))
     monkeypatch.setattr("src.metrics.GROWTH_FILE", tmp_path / "growth.json")
     assert metrics.load_growth() == {"snapshots": []}
 
@@ -909,8 +910,8 @@ def test_load_growth_returns_default_shape_when_missing(monkeypatch, tmp_path):
 def test_load_growth_uses_gist_data_when_available(monkeypatch):
     payload = {"snapshots": [{"at": "x", "platform": "bluesky", "followers": 99}]}
     monkeypatch.setattr(
-        "src.state_store._load_gist_state",
-        lambda name: payload if name == "growth.json" else None,
+        "src.state_store._load_gist_state_strict",
+        lambda name: (payload, True) if name == "growth.json" else (None, True),
     )
     assert metrics.load_growth() == payload
 
@@ -924,3 +925,61 @@ def test_save_growth_falls_back_to_local_file(monkeypatch, tmp_path):
     assert target.exists()
     import json
     assert json.loads(target.read_text(encoding="utf-8"))["snapshots"][0]["followers"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Strict telemetry loaders (external scan, 2026-10-13).
+#
+# These three loaders used the flag-dropping _load_gist_state wrapper. A
+# transient Gist read failure therefore fell through to the repo's COMMITTED
+# copy of the json and presented that stale snapshot as current; the save at
+# the end of the run then wrote it over the real history in the Gist. The trust
+# flag already existed for seen_articles; it was simply never wired here.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("loader, filename, default", [
+    ("load_feed_health_strict", "feed_health.json", {"feeds": {}}),
+    ("load_post_metrics_strict", "post_metrics.json", {"posts": []}),
+    ("load_growth_strict", "growth.json", {"snapshots": []}),
+])
+def test_a_failed_gist_read_with_no_local_state_is_untrusted(
+        monkeypatch, tmp_path, loader, filename, default):
+    """trusted=False: the empty default here is a guess, not an observation."""
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: (None, False))
+    monkeypatch.setattr("src.metrics.FEED_HEALTH_FILE", tmp_path / "feed_health.json")
+    monkeypatch.setattr("src.metrics.POST_METRICS_FILE", tmp_path / "post_metrics.json")
+    monkeypatch.setattr("src.metrics.GROWTH_FILE", tmp_path / "growth.json")
+
+    data, trusted = getattr(metrics, loader)()
+
+    assert data == default
+    assert trusted is False
+
+
+@pytest.mark.parametrize("loader, filename, payload", [
+    ("load_feed_health_strict", "feed_health.json", {"feeds": {"a": 1}}),
+    ("load_post_metrics_strict", "post_metrics.json", {"posts": [{"id": "x"}]}),
+    ("load_growth_strict", "growth.json", {"snapshots": [{"followers": 9}]}),
+])
+def test_real_gist_state_is_trusted(monkeypatch, loader, filename, payload):
+    monkeypatch.setattr(
+        "src.state_store._load_gist_state_strict",
+        lambda name: (payload, True) if name == filename else (None, True),
+    )
+    assert getattr(metrics, loader)() == (payload, True)
+
+
+@pytest.mark.parametrize("loader, default", [
+    ("load_feed_health_strict", {"feeds": {}}),
+    ("load_post_metrics_strict", {"posts": []}),
+    ("load_growth_strict", {"snapshots": []}),
+])
+def test_a_reachable_gist_with_no_file_yet_is_trusted(monkeypatch, tmp_path, loader, default):
+    """A first run is genuinely empty, which is different from unknown."""
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: (None, True))
+    monkeypatch.setattr("src.metrics.FEED_HEALTH_FILE", tmp_path / "feed_health.json")
+    monkeypatch.setattr("src.metrics.POST_METRICS_FILE", tmp_path / "post_metrics.json")
+    monkeypatch.setattr("src.metrics.GROWTH_FILE", tmp_path / "growth.json")
+
+    assert getattr(metrics, loader)() == (default, True)
+

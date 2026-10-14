@@ -133,8 +133,14 @@ def test_load_fills_missing_buckets_with_empty_lists(monkeypatch):
     assert trusted is True
 
 
-def test_load_ignores_non_list_bucket_values(monkeypatch):
-    """Defensive: malformed bucket (string instead of list) → empty list."""
+def test_load_marks_a_malformed_bucket_untrusted(monkeypatch):
+    """A bucket that is not a list is corrupt state, not empty state.
+
+    Until 2026-10-14 this returned an empty skeleton marked TRUSTED, so the
+    next save wrote that empty object over real pending/posted/rejected
+    history. Flagged by an external scan: a read that cannot be understood is
+    not evidence that there is nothing there.
+    """
     monkeypatch.setattr(
         proactive, "_load_gist_state_strict",
         lambda _f: ({"pending": "not-a-list", "posted": [], "rejected": []}, True),
@@ -143,17 +149,31 @@ def test_load_ignores_non_list_bucket_values(monkeypatch):
     state, trusted = proactive.load_pending_replies()
 
     assert state == {"pending": [], "posted": [], "rejected": []}
+    assert trusted is False
+
+
+def test_load_accepts_a_state_missing_a_bucket(monkeypatch):
+    """Absent is legitimate (a first write, or a bucket never used) -- unlike
+    present-but-wrong-typed, which the test above refuses."""
+    monkeypatch.setattr(
+        proactive, "_load_gist_state_strict",
+        lambda _f: ({"pending": [{"id": "abc"}]}, True),
+    )
+
+    state, trusted = proactive.load_pending_replies()
+
+    assert state == {"pending": [{"id": "abc"}], "posted": [], "rejected": []}
     assert trusted is True
 
 
-def test_load_handles_non_dict_state(monkeypatch):
-    """Defensive: loader returns a list (corrupt) but trusted → empty skeleton, trusted."""
+def test_load_marks_non_dict_state_untrusted(monkeypatch):
+    """Valid JSON of the wrong shape is corrupt state; same rule as above."""
     monkeypatch.setattr(proactive, "_load_gist_state_strict", lambda _f: (["unexpected"], True))
 
     state, trusted = proactive.load_pending_replies()
 
     assert state == {"pending": [], "posted": [], "rejected": []}
-    assert trusted is True
+    assert trusted is False
 
 
 def test_load_untrusted_when_read_failed(monkeypatch):

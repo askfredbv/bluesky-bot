@@ -92,12 +92,38 @@ def load_pending_replies() -> Tuple[Dict[str, List[Dict[str, Any]]], bool]:
     if not trusted:
         return _empty_state(), False
 
+    # A successful read of content that is valid JSON but the wrong shape used
+    # to return an empty state marked TRUSTED, so the next save wrote that
+    # empty object over real pending/posted/rejected history. A read that
+    # cannot be understood is not evidence that there is nothing there.
+    # (External scan, 2026-10-13; same rule as the docstring above.)
+    if data is None:
+        # The Gist read succeeded and the file is simply not there yet: a
+        # legitimate first run, and genuinely empty.
+        return _empty_state(), True
+
+    if not isinstance(data, dict):
+        SafeLogger.error(
+            "pending_replies_schema_invalid",
+            "pending_replies parsed but is not an object; treating state as untrusted",
+            payload_type=type(data).__name__,
+        )
+        return _empty_state(), False
+
     state = _empty_state()
-    if isinstance(data, dict):
-        for bucket in ("pending", "posted", "rejected"):
-            value = data.get(bucket)
-            if isinstance(value, list):
-                state[bucket] = value
+    for bucket in ("pending", "posted", "rejected"):
+        if bucket not in data:
+            continue  # absent is legitimate: a first write, or a bucket never used
+        value = data[bucket]
+        if not isinstance(value, list):
+            SafeLogger.error(
+                "pending_replies_schema_invalid",
+                "pending_replies bucket is not a list; treating state as untrusted",
+                bucket=bucket,
+                payload_type=type(value).__name__,
+            )
+            return _empty_state(), False
+        state[bucket] = value
     return state, True
 
 

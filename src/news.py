@@ -50,7 +50,7 @@ from src.logger import SafeLogger
 from src.metrics import (
     FeedFetchResult,
     check_feed_health_alerts,
-    load_feed_health,
+    load_feed_health_strict,
     record_feed_attempt,
     save_feed_health,
 )
@@ -576,10 +576,19 @@ async def fetch_news(seen_links: List[str], recent_topics: List[str], limit: int
 
     # Record per-feed outcomes for the weekly health view.
     try:
-        feed_health = load_feed_health()
+        feed_health, feed_health_trusted = load_feed_health_strict()
         for result in results:
             record_feed_attempt(feed_health, result)
-        save_feed_health(feed_health)
+        if feed_health_trusted:
+            save_feed_health(feed_health)
+        else:
+            # Writing here would persist a synthesised-empty or stale-local
+            # snapshot over real history in the Gist. One run of missing
+            # telemetry is the cheaper loss.
+            SafeLogger.error(
+                "feed_health_save_skipped",
+                "Feed-health state was untrusted; skipping the save to protect stored history",
+            )
         # Surface any feed that has been silently failing across the window (see
         # check_feed_health_alerts) — a dead feed like the removed Anthropic
         # news.rss otherwise stays invisible until someone notices the gap in
