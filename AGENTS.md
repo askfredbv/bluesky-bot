@@ -111,10 +111,37 @@ its author.** Audience growth is deprioritised. Reasoning and numbers: `docs/BAC
 
 ## Build / test
 
+The fast loop while working:
+
 ```
 pip install -r requirements-dev.txt
 ruff check src/ main.py scripts/ tests/
+mypy
 pytest -q
+```
+
+**All three, not two.** CI runs `mypy` as its own gate, and `ruff` + `pytest`
+green is not the same as CI green: on 2026-10-14 a PR went up with both passing
+and the type-check red, because this block listed only two commands and the
+agent working from it never ran the third. `mypy` takes no arguments on
+purpose: scope and flags live in `[tool.mypy]` in `pyproject.toml` precisely so
+a bare local run checks what the gate checks.
+
+Before pushing, the coverage gate, which the fast loop does not reproduce:
+
+```
+pytest --cov=main --cov=src --cov-fail-under=80
+```
+
+`pytest -q` passes while coverage sits below the line, so new code with no tests
+clears the fast loop and fails CI.
+
+Only if you edited `pyproject.toml`, regenerate both lockfiles with the exact
+flags the check uses, then confirm `git diff` is empty for them:
+
+```
+pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml
+pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml
 ```
 
 `requirements.txt` (runtime) and `requirements-dev.txt` (runtime + dev tools) are both
