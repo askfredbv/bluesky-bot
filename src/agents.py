@@ -810,6 +810,7 @@ def _sync_generate(
     task: str,
     model: str,
     anthropic_api_key: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> str:
     """Helper for a synchronous completion with separated system and user content.
 
@@ -827,8 +828,16 @@ def _sync_generate(
     reply path do still name Gemini models explicitly.
     """
     if is_anthropic_model(model):
+        # A caller working to a tighter budget than the module default passes
+        # it here, so the SDK deadline matches the budget the caller will
+        # actually wait for (the tag pass has 20s for BOTH its calls).
+        if timeout_seconds is None:
+            return generate_anthropic(
+                anthropic_api_key, system_instr, task, model, MAX_OUTPUT_TOKENS
+            )
         return generate_anthropic(
-            anthropic_api_key, system_instr, task, model, MAX_OUTPUT_TOKENS
+            anthropic_api_key, system_instr, task, model, MAX_OUTPUT_TOKENS,
+            timeout_seconds,
         )
 
     if not isinstance(api_key, str) or not api_key.strip():
@@ -1023,6 +1032,7 @@ async def request_mastodon_tags(
         _MASTODON_TAG_PROMPT.format(post=post),
         model,
         anthropic_api_key,
+        MASTODON_TAGS_TIMEOUT_SECONDS,
     )
     clean = response.replace("```json", "").replace("```", "").strip()
     raw = json.loads(clean)
@@ -1130,6 +1140,7 @@ async def review_mastodon_tags(
         task,
         model,
         anthropic_api_key,
+        MASTODON_TAGS_TIMEOUT_SECONDS,
     )
     clean = response.replace("```json", "").replace("```", "").strip()
     decisions = _parse_tag_verdicts(json.loads(clean), len(candidates))

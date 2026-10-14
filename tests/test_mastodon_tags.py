@@ -577,8 +577,10 @@ async def test_the_anthropic_key_reaches_both_tag_calls(monkeypatch, tags_on):
     seen = []
     answers = iter([json.dumps(["#AIAgents"]), json.dumps([{"id": 1, "keep": True}])])
 
-    def fake(api_key, system_instr, task, model, anthropic_api_key=None):
-        seen.append({"model": model, "anthropic_api_key": anthropic_api_key})
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None,
+             timeout_seconds=None):
+        seen.append({"model": model, "anthropic_api_key": anthropic_api_key,
+                     "timeout_seconds": timeout_seconds})
         return next(answers)
 
     monkeypatch.setattr(agents, "_sync_generate", fake)
@@ -594,6 +596,11 @@ async def test_the_anthropic_key_reaches_both_tag_calls(monkeypatch, tags_on):
     assert len(seen) == 2
     assert [c["anthropic_api_key"] for c in seen] == ["anthropic-key", "anthropic-key"]
     assert seen[0]["model"] == "claude-haiku-5-5"
+    # The SDK call must carry its own deadline: cancelling the wait_for does
+    # not stop the to_thread worker, and asyncio.run() waits for it at
+    # shutdown (Codex P1 on #194).
+    assert [c["timeout_seconds"] for c in seen] == [
+        MASTODON_TAGS_TIMEOUT_SECONDS, MASTODON_TAGS_TIMEOUT_SECONDS]
 
 
 @pytest.mark.asyncio
@@ -604,7 +611,8 @@ async def test_tags_are_empty_when_a_claude_proposer_has_no_key(monkeypatch, tag
     and deliberate -- tags must never cost the post. What was wrong was the
     caller never supplying the key, which the test above now pins.
     """
-    def unkeyed(api_key, system_instr, task, model, anthropic_api_key=None):
+    def unkeyed(api_key, system_instr, task, model, anthropic_api_key=None,
+                timeout_seconds=None):
         if model.startswith("claude-") and not anthropic_api_key:
             raise ValueError("Anthropic API key is missing or empty; cannot use an Anthropic model.")
         return json.dumps(["#Nope"])

@@ -35,14 +35,17 @@ import re
 import sys
 import time
 import urllib.request
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.agents import (
     request_mastodon_tags, review_mastodon_tags, _select_tag_models,
     filter_available_models,
 )
 from src.broadcasters import apply_mastodon_tags
+from src.llm import compose_model_chain
 from src.config import (
+    ANTHROPIC_CHAIN_POSITION,
+    ANTHROPIC_MODELS,
     GEMINI_MODEL_PRIORITY, MASTODON_TAGS_EXCLUDED, MAX_HASHTAGS_PER_POST,
     MASTODON_TAGS_TIMEOUT_SECONDS,
 )
@@ -88,7 +91,8 @@ def _fetch_recent_posts(limit: int) -> List[str]:
 
 
 async def _probe_one(
-    key: str, proposer: str, reviewer: str, idx: int, post: str
+    key: str, proposer: str, reviewer: str, idx: int, post: str,
+    anthropic_key: Optional[str] = None,
 ) -> bool:
     """Print one post's tagging result. Returns True if it ended up tagged.
 
@@ -112,7 +116,7 @@ async def _probe_one(
     # attributable to the sanitizer and nothing else.
     try:
         raw, candidates = await request_mastodon_tags(
-            key, post, proposer, allowance
+            key, post, proposer, allowance, anthropic_key
         )
     except Exception as exc:
         print(f"    FAILED (propose) {type(exc).__name__}: {str(exc)[:140]}\n")
@@ -123,7 +127,7 @@ async def _probe_one(
 
     try:
         decisions, tags = await review_mastodon_tags(
-            key, post, candidates, reviewer
+            key, post, candidates, reviewer, anthropic_key
         )
     except Exception as exc:
         print(f"    FAILED (review) {type(exc).__name__}: {str(exc)[:140]}\n")
@@ -148,7 +152,8 @@ async def _probe_one(
     return bool(tags)
 
 
-async def _probe_adversarial(key: str, reviewer: str) -> tuple:
+async def _probe_adversarial(key: str, reviewer: str,
+                             anthropic_key: Optional[str] = None) -> tuple:
     """Measure the reviewer's DECISION quality, both directions.
 
     Ten posts the model tagged sensibly say nothing about what it does with a
@@ -241,7 +246,7 @@ async def _probe_adversarial(key: str, reviewer: str) -> tuple:
         want = "KEEP" if must_keep else "DROP"
         try:
             decisions, kept = await review_mastodon_tags(
-                key, post, [tag], reviewer
+                key, post, [tag], reviewer, anthropic_key
             )
         except Exception as exc:
             invalid += 1
@@ -273,7 +278,25 @@ async def _run(posts: List[str]) -> int:
     # passes filter_available_models' output into tagging, so probing the
     # unfiltered list could validate a pairing production never uses
     # (Codex review, 2026-09-09).
+    #
+    # ...and that is exactly what it started doing again. The chain is composed
+    # here the same way main() composes it, because #187 put Anthropic models at
+    # its head and #194 made the tag pass select from it: a Gemini-only chain
+    # here would probe gemini/gemini while production ran haiku/gemini, and this
+    # probe is the only measurement standing behind content that is appended
+    # AFTER validate_summary (AGENTS.md #7). Codex raised it against #194.
+    anthropic_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
     active = await filter_available_models(key, GEMINI_MODEL_PRIORITY)
+    active = compose_model_chain(
+        active, list(ANTHROPIC_MODELS), ANTHROPIC_CHAIN_POSITION,
+        has_anthropic_key=bool(anthropic_key),
+    )
+    if anthropic_key:
+        print(f"Anthropic rung composed ({ANTHROPIC_CHAIN_POSITION}); "
+              f"chain: {' -> '.join(active)}")
+    else:
+        print("ANTHROPIC_API_KEY not set: probing the Gemini-only chain. "
+              "If production has the secret, this is NOT the pairing it uses.")
     proposer, reviewer = _select_tag_models(active)
     if reviewer is None:
         print("No distinct reviewer model is reachable with this key, so "
@@ -298,7 +321,7 @@ async def _run(posts: List[str]) -> int:
             # comfortably finish untimed can still blow the shared budget
             # (Codex review, 2026-09-09).
             got = await asyncio.wait_for(
-                _probe_one(key, proposer, reviewer, idx, post),
+                _probe_one(key, proposer, reviewer, idx, post, anthropic_key),
                 timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
@@ -310,7 +333,8 @@ async def _run(posts: List[str]) -> int:
         if got:
             tagged += 1
 
-    correct, invalid, adversarial_total = await _probe_adversarial(key, reviewer)
+    correct, invalid, adversarial_total = await _probe_adversarial(
+        key, reviewer, anthropic_key)
 
     total = len(posts)
     print("=" * 68)

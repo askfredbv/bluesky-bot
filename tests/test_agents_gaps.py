@@ -388,7 +388,8 @@ async def test_the_reviewer_sees_candidates_numbered_from_one(monkeypatch):
     the reviewer's ids would never line up and every tag would be dropped."""
     tasks = []
 
-    async def fake_thread(fn, api_key, system_instr, task, model, anthropic_api_key=None):
+    async def fake_thread(fn, api_key, system_instr, task, model,
+                          anthropic_api_key=None, timeout_seconds=None):
         tasks.append(task)
         return json.dumps([{"id": 1, "keep": True}, {"id": 2, "keep": False}])
 
