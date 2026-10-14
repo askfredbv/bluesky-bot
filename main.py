@@ -547,13 +547,13 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
     """
     try:
         from src.metrics import (
-            load_post_metrics,
+            load_post_metrics_strict,
             prune_old_metrics,
             record_post_metric,
             refresh_stale_metrics,
             save_post_metrics,
         )
-        post_metrics = load_post_metrics()
+        post_metrics, post_metrics_trusted = load_post_metrics_strict()
         ctx = broadcast.metrics_context or {}
         now = datetime.now(timezone.utc)
         posted_at = now.isoformat()
@@ -655,7 +655,16 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
                 error_msg=str(e)[:200],
             )
 
-        save_post_metrics(post_metrics)
+        if post_metrics_trusted:
+            save_post_metrics(post_metrics)
+        else:
+            # The read failed and no tier had real state, so this run's rows sit
+            # on top of a guess. Persisting would write that guess over the
+            # stored history; one run of missing telemetry is the cheaper loss.
+            SafeLogger.error(
+                "post_metrics_save_skipped",
+                "Post-metrics state was untrusted; skipping the save to protect stored history",
+            )
     except Exception as e:
         SafeLogger.warn(
             "post_metrics_record_failed",
@@ -677,8 +686,8 @@ async def capture_follower_snapshot_stage(broadcast: BroadcastPayload, creds: An
     Mastodon: account_verify_credentials() → followers_count
     """
     try:
-        from src.metrics import load_growth, record_follower_snapshot, save_growth
-        growth = load_growth()
+        from src.metrics import load_growth_strict, record_follower_snapshot, save_growth
+        growth, growth_trusted = load_growth_strict()
         snapshot_at = datetime.now(timezone.utc).isoformat()
         wrote_any = False
 
@@ -733,7 +742,13 @@ async def capture_follower_snapshot_stage(broadcast: BroadcastPayload, creds: An
                 )
 
         if wrote_any:
-            save_growth(growth)
+            if growth_trusted:
+                save_growth(growth)
+            else:
+                SafeLogger.error(
+                    "growth_save_skipped",
+                    "Growth state was untrusted; skipping the save to protect stored history",
+                )
     except Exception as e:
         SafeLogger.warn(
             "follower_snapshot_failed",

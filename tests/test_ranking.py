@@ -250,7 +250,7 @@ def test_fetch_news_merges_source_feeds_on_duplicate_link(monkeypatch):
     # one feed so the mock's items are collected once; keep the test offline
     monkeypatch.setattr(news, "RSS_FEEDS", ["https://feed-a.com/rss"])
     monkeypatch.setattr(news, "fetch_single_feed", _fake_fetch_single_feed)
-    monkeypatch.setattr(news, "load_feed_health", lambda: {})
+    monkeypatch.setattr(news, "load_feed_health_strict", lambda: ({}, True))
     monkeypatch.setattr(news, "record_feed_attempt", lambda *a, **k: None)
     monkeypatch.setattr(news, "save_feed_health", lambda *a, **k: None)
 
