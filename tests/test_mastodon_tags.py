@@ -518,6 +518,103 @@ def test_a_single_model_chain_yields_no_reviewer():
     assert agents._select_tag_models(["only"]) == ("only", None)
 
 
+# ── the cheap end, and the key that reaches it (#187 regression) ───────────
+#
+# Promoting the Anthropic rung to primary changed the head of the chain, and
+# the tag pass inherits that chain. Two consequences, both fixed here: the pass
+# was handed claude-* models without the key that reaches them, so every
+# Mastodon post shipped untagged from 2026-10-12; and the head of the chain is
+# chosen for who should WRITE A POST, which is the wrong question for naming
+# two hashtags.
+
+_ANTHROPIC_PRIMARY = [
+    "claude-sonnet-5-5", "claude-haiku-5-5",
+    "gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash",
+]
+_GEMINI_ONLY = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"]
+
+
+def test_tagging_skips_the_expensive_head_of_the_chain():
+    """Haiku over Sonnet: the cheapest task must not take the dearest model."""
+    proposer, reviewer = agents._select_tag_models(_ANTHROPIC_PRIMARY)
+
+    assert proposer == "claude-haiku-5-5"
+    assert "sonnet" not in proposer and "sonnet" not in (reviewer or "")
+
+
+def test_tagging_keeps_chain_order_within_the_economy_models():
+    """Reordering, not a new ranking: 3.7-flash still precedes 3.5-flash."""
+    _proposer, reviewer = agents._select_tag_models(_ANTHROPIC_PRIMARY)
+    assert reviewer == "gemini-3.7-flash"
+
+
+def test_a_gemini_only_chain_selects_exactly_as_before():
+    """Blast radius: a run without the Anthropic key must see no change."""
+    assert agents._select_tag_models(_GEMINI_ONLY) == ("gemini-3.7-flash", "gemini-3.5-flash")
+
+
+def test_selection_falls_back_to_chain_order_without_two_economy_models():
+    """A model missing from the declared list costs money, never correctness."""
+    assert agents._select_tag_models(["gemini-2.5-pro", "claude-sonnet-5-5"]) == (
+        "gemini-2.5-pro", "claude-sonnet-5-5")
+
+
+def test_a_lone_economy_model_does_not_strand_the_reviewer():
+    """One economy entry is not a pair, so the whole chain is used instead of
+    returning a proposer with no reviewer (which would mean no tags)."""
+    assert agents._select_tag_models(["claude-sonnet-5-5", "gemini-2.5-flash"]) == (
+        "claude-sonnet-5-5", "gemini-2.5-flash")
+
+
+@pytest.mark.asyncio
+async def test_the_anthropic_key_reaches_both_tag_calls(monkeypatch, tags_on):
+    """The regression itself.
+
+    Without the key, _sync_generate dispatched claude-* to
+    generate_anthropic(None, ...), which raises; generate_mastodon_tags caught
+    it by design and returned [], so every Mastodon post went out untagged.
+    """
+    seen = []
+    answers = iter([json.dumps(["#AIAgents"]), json.dumps([{"id": 1, "keep": True}])])
+
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None):
+        seen.append({"model": model, "anthropic_api_key": anthropic_api_key})
+        return next(answers)
+
+    monkeypatch.setattr(agents, "_sync_generate", fake)
+
+    tags = await agents.generate_mastodon_tags(
+        "gemini-key", ["A dry statement about agents."],
+        model_priority=_ANTHROPIC_PRIMARY,
+        anthropic_api_key="anthropic-key",
+    )
+
+    assert tags == ["#AIAgents"]
+    # Both calls, proposer and reviewer, not just the first.
+    assert len(seen) == 2
+    assert [c["anthropic_api_key"] for c in seen] == ["anthropic-key", "anthropic-key"]
+    assert seen[0]["model"] == "claude-haiku-5-5"
+
+
+@pytest.mark.asyncio
+async def test_tags_are_empty_when_a_claude_proposer_has_no_key(monkeypatch, tags_on):
+    """What production did from 2026-10-12 to 10-14: fail closed, post untagged.
+
+    Kept as a test because the swallow-and-ship-untagged behaviour is correct
+    and deliberate -- tags must never cost the post. What was wrong was the
+    caller never supplying the key, which the test above now pins.
+    """
+    def unkeyed(api_key, system_instr, task, model, anthropic_api_key=None):
+        if model.startswith("claude-") and not anthropic_api_key:
+            raise ValueError("Anthropic API key is missing or empty; cannot use an Anthropic model.")
+        return json.dumps(["#Nope"])
+
+    monkeypatch.setattr(agents, "_sync_generate", unkeyed)
+
+    assert await agents.generate_mastodon_tags(
+        "gemini-key", ["A dry statement."], model_priority=_ANTHROPIC_PRIMARY) == []
+
+
 @pytest.mark.asyncio
 async def test_no_reviewer_means_no_tags_and_no_model_call(monkeypatch, tags_on):
     """Fail closed: tags are decoration, so refusing to tag costs a

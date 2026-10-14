@@ -25,6 +25,7 @@ from src.config import (
     PROACTIVE_REPLY_MAX_CHARS,
     PROACTIVE_REPLY_SYSTEM_INSTRUCTIONS, PROACTIVE_REPLY_FEW_SHOT_EXAMPLES,
     MASTODON_TAGS_ENABLED, MASTODON_TAGS_EXCLUDED,
+    MASTODON_TAG_ECONOMY_MODELS,
     MASTODON_TAGS_TIMEOUT_SECONDS, MAX_HASHTAGS_PER_POST,
 )
 from src.llm import generate_anthropic, is_anthropic_model
@@ -813,10 +814,17 @@ def _sync_generate(
     """Helper for a synchronous completion with separated system and user content.
 
     Dispatches on the model name: anything starting with ``claude-`` goes to
-    Anthropic (``src/llm.py``), everything else to Gemini. The default
-    ``anthropic_api_key=None`` means every existing caller keeps its current
-    behaviour — the Mastodon tag passes, the visual-prompt step and the
-    Phase 4b reply path all name Gemini models explicitly and stay Gemini-only.
+    Anthropic (``src/llm.py``), everything else to Gemini.
+
+    ``anthropic_api_key`` defaults to None, which is safe only for a caller
+    that names its models explicitly. **A caller that is handed the ACTIVE
+    chain must pass the key**, because that chain can start with a ``claude-*``
+    model. This docstring used to assert that the Mastodon tag passes "name
+    Gemini models explicitly and stay Gemini-only"; they were given the active
+    chain in #116, that sentence quietly stopped being true when the Anthropic
+    rung was promoted to primary in #187, and every Mastodon post shipped
+    untagged for two days as a result. The visual-prompt step and the Phase 4b
+    reply path do still name Gemini models explicitly.
     """
     if is_anthropic_model(model):
         return generate_anthropic(
@@ -995,6 +1003,7 @@ async def request_mastodon_tags(
     post: str,
     model: str,
     allowance: int = MAX_HASHTAGS_PER_POST,
+    anthropic_api_key: Optional[str] = None,
 ) -> Tuple[Any, List[str]]:
     """One tagging call. Returns ``(raw_model_output, sanitized_candidates)``.
 
@@ -1013,6 +1022,7 @@ async def request_mastodon_tags(
         "You return only JSON. No prose, no explanation.",
         _MASTODON_TAG_PROMPT.format(post=post),
         model,
+        anthropic_api_key,
     )
     clean = response.replace("```json", "").replace("```", "").strip()
     raw = json.loads(clean)
@@ -1067,6 +1077,7 @@ async def review_mastodon_tags(
     post: str,
     candidates: List[str],
     model: str,
+    anthropic_api_key: Optional[str] = None,
 ) -> Tuple[Optional[List[bool]], List[str]]:
     """Keep only the candidates the post actually supports.
 
@@ -1118,6 +1129,7 @@ async def review_mastodon_tags(
         "You return only JSON. No prose, no explanation.",
         task,
         model,
+        anthropic_api_key,
     )
     clean = response.replace("```json", "").replace("```", "").strip()
     decisions = _parse_tag_verdicts(json.loads(clean), len(candidates))
@@ -1153,8 +1165,19 @@ def _select_tag_models(
     chain = list(model_priority or GEMINI_MODEL_PRIORITY)
     if not chain:
         chain = list(GEMINI_MODEL_PRIORITY)
-    proposer = chain[0]
-    reviewer = next((m for m in chain[1:] if m != proposer), None)
+
+    # Cheap end first. The chain is ordered by who should WRITE THE POST, which
+    # is a different question from who should name two hashtags; promoting the
+    # Anthropic rung to primary (#187) would otherwise have put the most
+    # expensive model on the cheapest task. Chain order is preserved WITHIN the
+    # economy models, so this reorders the candidates without inventing a new
+    # ranking. Falls back to the whole chain when fewer than two are available,
+    # which is the pre-#187 behaviour and keeps a Gemini-only run identical.
+    economy = [m for m in chain if m in MASTODON_TAG_ECONOMY_MODELS]
+    preferred = economy if len(set(economy)) >= 2 else chain
+
+    proposer = preferred[0]
+    reviewer = next((m for m in preferred[1:] if m != proposer), None)
     return proposer, reviewer
 
 
@@ -1164,6 +1187,7 @@ async def _tag_pipeline(
     proposer: str,
     reviewer: str,
     allowance: int,
+    anthropic_api_key: Optional[str] = None,
 ) -> Tuple[Any, List[str], Optional[List[bool]], List[str]]:
     """Propose candidates with one model, review them with another.
 
@@ -1171,10 +1195,12 @@ async def _tag_pipeline(
     the reviewer's response was unusable, so the caller can log that as its own
     outcome rather than as an ordinary all-DROP verdict.
     """
-    raw, candidates = await request_mastodon_tags(api_key, post, proposer, allowance)
+    raw, candidates = await request_mastodon_tags(
+        api_key, post, proposer, allowance, anthropic_api_key)
     if not candidates:
         return raw, [], [], []
-    decisions, kept = await review_mastodon_tags(api_key, post, candidates, reviewer)
+    decisions, kept = await review_mastodon_tags(
+        api_key, post, candidates, reviewer, anthropic_api_key)
     return raw, candidates, decisions, kept
 
 
@@ -1182,6 +1208,7 @@ async def generate_mastodon_tags(
     api_key: str,
     posts: List[str],
     model_priority: Optional[List[str]] = None,
+    anthropic_api_key: Optional[str] = None,
 ) -> List[str]:
     """Name up to MAX_HASHTAGS_PER_POST hashtags for a finished post.
 
@@ -1221,7 +1248,8 @@ async def generate_mastodon_tags(
         return []
     try:
         raw, candidates, decisions, tags = await asyncio.wait_for(
-            _tag_pipeline(api_key, root, model, reviewer, allowance),
+            _tag_pipeline(api_key, root, model, reviewer, allowance,
+                          anthropic_api_key),
             timeout=MASTODON_TAGS_TIMEOUT_SECONDS,
         )
     except Exception as e:
