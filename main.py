@@ -442,6 +442,11 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             tags = await generate_mastodon_tags(
                 creds.gemini_api_key, content_list,
                 model_priority=active_models,
+                # The tag pass is handed the ACTIVE chain, so once that chain
+                # can start with a claude-* model it needs that key too. Without
+                # this the dispatch called generate_anthropic(None, ...), which
+                # raises, and every Mastodon post shipped untagged (#187).
+                anthropic_api_key=creds.anthropic_api_key,
             )
         return await post_to_mastodon(
             creds.mastodon_access_token, creds.mastodon_api_base_url,
