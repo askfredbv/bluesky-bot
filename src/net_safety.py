@@ -12,6 +12,8 @@ import asyncio
 import ipaddress
 import re
 import socket
+import time
+import unicodedata
 import zlib
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Union
@@ -76,13 +78,28 @@ def canonical_url(url: str) -> str:
         "",
         "",
     ))
-# Whitespace and C0 controls (plus DEL) must be percent-encoded in a URL per
-# RFC 3986, so a value that still contains one after trimming is not a link
-# that needs fixing -- it is two things stuck together. Feed links cross an
-# untrusted boundary and get concatenated into post text downstream, where an
-# embedded newline turns whatever follows into its own line of published
-# content. Rejecting costs nothing legitimate.
-_URL_UNSAFE_CHARS = re.compile(r"[\x00-\x20\x7F]")
+# Characters a URL must not carry once trimmed: every Unicode space separator
+# (Zs, Zl, Zp) and every control or format character (Cc, Cf). RFC 3986 wants
+# these percent-encoded, so a value still holding one is not a link that needs
+# fixing -- it is two things stuck together. Feed links cross an untrusted
+# boundary and get concatenated into post text downstream, where a break turns
+# whatever follows into its own line of published content.
+#
+# This started as the ASCII class [\x00-\x20\x7F] (#191). Codex caught what
+# that misses: U+2028, U+2029, U+0085 and U+00A0 all render as a break or a
+# space while sitting outside it, so the injection #191 set out to close stayed
+# open through any of them. Categories rather than a longer character list,
+# because the list is what drifted. Cf also covers the bidi overrides (U+202E
+# and friends), which can make a rendered URL read as something it is not.
+#
+# Nothing legitimate is caught: letters, marks, digits, punctuation and symbols
+# all pass, including non-ASCII ones in an internationalised URL.
+_URL_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Zs"})
+
+
+def _has_unsafe_url_char(value: str) -> bool:
+    """True if ``value`` holds any separator, control or format character."""
+    return any(unicodedata.category(ch) in _URL_UNSAFE_CATEGORIES for ch in value)
 
 
 def is_single_clean_url(url: str) -> bool:
@@ -96,7 +113,7 @@ def is_single_clean_url(url: str) -> bool:
     reached a published Mastodon status intact, because every step between the
     feed and the status only ever trimmed the ends of the string.
     """
-    if not url or _URL_UNSAFE_CHARS.search(url):
+    if not url or _has_unsafe_url_char(url):
         return False
     try:
         parsed = urlparse(url)
@@ -121,7 +138,7 @@ def normalise_url(url: str, base_url: str = "") -> Optional[str]:
     # Reject before any branch below: every return value derives from this
     # string, so one check here covers the absolute, protocol-relative and
     # urljoin paths alike.
-    if _URL_UNSAFE_CHARS.search(url):
+    if _has_unsafe_url_char(url):
         SafeLogger.warn("url_rejected_unsafe_chars",
                         "Rejected URL containing whitespace or control characters",
                         url=url[:200])
@@ -409,7 +426,7 @@ async def _capped_stream_get(client: httpx.AsyncClient, url: str, *,
                               request=response.request)
 
 
-# Wall-clock budget for one fetch, redirects and body read included.
+# Working-time budget for one fetch, redirects and body read included.
 #
 # The per-hop timeouts are inactivity timeouts: a server that sends one byte
 # inside every read window keeps the connection alive indefinitely, and because
@@ -431,38 +448,20 @@ async def get_with_safe_redirects(
     max_bytes: int = MAX_FETCH_BYTES,
     total_timeout: float = MAX_FETCH_SECONDS,
 ) -> Optional[httpx.Response]:
-    """Deadline wrapper around the validating fetch; see ``_safe_redirect_get``.
-
-    Returns None on expiry, the same "fetch failed or was blocked" signal every
-    caller already handles, so no call site changes.
-    """
-    try:
-        async with asyncio.timeout(total_timeout):
-            return await _safe_redirect_get(
-                client, url, headers=headers, timeout=timeout,
-                max_redirects=max_redirects,
-                enforce_metadata_policy=enforce_metadata_policy,
-                max_bytes=max_bytes,
-            )
-    except TimeoutError:
-        SafeLogger.warn("fetch_deadline_exceeded",
-                        "Fetch exceeded its total deadline; abandoning",
-                        url=url, deadline_seconds=total_timeout)
-        return None
-
-
-async def _safe_redirect_get(
-    client: httpx.AsyncClient,
-    url: str,
-    *,
-    headers: Optional[Dict[str, str]] = None,
-    timeout: Union[float, httpx.Timeout, None] = 10.0,
-    max_redirects: int = 5,
-    enforce_metadata_policy: bool = True,
-    max_bytes: int = MAX_FETCH_BYTES
-) -> Optional[httpx.Response]:
     """
     Fetch a URL while validating each redirect target and disallowing scheme changes.
+
+    ``total_timeout`` bounds the time this fetch spends WORKING -- connecting,
+    reading, following redirects -- and deliberately not the time it spends
+    queued behind another fetch on the resolver pin lock.
+
+    #192 wrapped the whole call in one asyncio.timeout, which charged a task
+    for the wait. Codex caught the consequence: with six feeds fetched
+    concurrently and one slow-drip origin holding the pin, the other five burn
+    their identical budgets queueing and expire without ever attempting their
+    own feed, so one bad host discards the whole batch instead of only itself.
+    The budget is therefore started after lock admission and carried across
+    hops, so a redirect chain still cannot run away.
 
     ``enforce_metadata_policy`` toggles the METADATA_FETCH allow/block domain
     list (the extra restriction for scraping arbitrary article URLs). RSS feed
@@ -472,6 +471,7 @@ async def _safe_redirect_get(
     """
     current_url = url
     initial_scheme = urlparse(url).scheme
+    budget = total_timeout
 
     for _ in range(max_redirects + 1):
         if enforce_metadata_policy and not is_allowed_metadata_fetch_url(current_url):
@@ -494,10 +494,27 @@ async def _safe_redirect_get(
             # the await rather than only around the getaddrinfo swap.
             async with _resolver_pin_lock():
                 with _resolver_pinned_to_ips(hostname, candidate_ips):
-                    response = await _capped_stream_get(
-                        client, current_url,
-                        headers=headers, timeout=timeout, max_bytes=max_bytes,
-                    )
+                    if budget <= 0:
+                        raise TimeoutError("fetch budget exhausted before this hop")
+                    # Clock starts here, after admission, and the elapsed time
+                    # is charged back whatever the outcome.
+                    started = time.monotonic()
+                    try:
+                        async with asyncio.timeout(budget):
+                            response = await _capped_stream_get(
+                                client, current_url,
+                                headers=headers, timeout=timeout, max_bytes=max_bytes,
+                            )
+                    finally:
+                        budget -= time.monotonic() - started
+        except TimeoutError as e:
+            # Before the broad handler below: TimeoutError is an Exception, and
+            # a deadline is a different story from a blocked request.
+            SafeLogger.warn("fetch_deadline_exceeded",
+                            "Fetch exceeded its total working deadline; abandoning",
+                            url=current_url, deadline_seconds=total_timeout,
+                            error_type=type(e).__name__, error_msg=str(e)[:200])
+            return None
         except Exception as e:
             SafeLogger.warn("dns_validated_request_blocked",
                             "Blocked URL request after DNS validation",

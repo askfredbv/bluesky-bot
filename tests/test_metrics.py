@@ -983,3 +983,50 @@ def test_a_reachable_gist_with_no_file_yet_is_trusted(monkeypatch, tmp_path, loa
 
     assert getattr(metrics, loader)() == (default, True)
 
+
+@pytest.mark.parametrize("loader, default", [
+    ("load_feed_health_strict", {"feeds": {}}),
+    ("load_post_metrics_strict", {"posts": []}),
+    ("load_growth_strict", {"snapshots": []}),
+])
+@pytest.mark.parametrize("payload", ["not-a-dict", ["a", "list"], 42, {"wrong": "shape"}])
+def test_a_malformed_gist_payload_is_untrusted(monkeypatch, tmp_path, loader, default, payload):
+    """A successful read of content nobody can interpret is corrupt remote
+    state, not absent state. Saving an empty default over it would destroy
+    whatever is really stored.
+
+    Codex, on #192: load_pending_replies drew this distinction and the three
+    telemetry loaders did not, so a malformed payload came back marked
+    writable.
+    """
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: (payload, True))
+    monkeypatch.setattr("src.metrics.FEED_HEALTH_FILE", tmp_path / "feed_health.json")
+    monkeypatch.setattr("src.metrics.POST_METRICS_FILE", tmp_path / "post_metrics.json")
+    monkeypatch.setattr("src.metrics.GROWTH_FILE", tmp_path / "growth.json")
+
+    data, trusted = getattr(metrics, loader)()
+
+    assert data == default
+    assert trusted is False
+
+
+@pytest.mark.parametrize("loader", [
+    "load_feed_health_strict", "load_post_metrics_strict", "load_growth_strict",
+])
+def test_real_local_state_survives_a_malformed_gist_payload(monkeypatch, tmp_path, loader):
+    """Demoting the Gist tier must not discard a good local file."""
+    import json
+    files = {
+        "load_feed_health_strict": ("feed_health.json", "FEED_HEALTH_FILE", {"feeds": {"a": 1}}),
+        "load_post_metrics_strict": ("post_metrics.json", "POST_METRICS_FILE", {"posts": [{"id": "x"}]}),
+        "load_growth_strict": ("growth.json", "GROWTH_FILE", {"snapshots": [{"followers": 3}]}),
+    }
+    name, attr, content = files[loader]
+    target = tmp_path / name
+    target.write_text(json.dumps(content), encoding="utf-8")
+
+    monkeypatch.setattr("src.state_store._load_gist_state_strict", lambda *_: ("garbage", True))
+    monkeypatch.setattr(f"src.metrics.{attr}", target)
+
+    assert getattr(metrics, loader)() == (content, True)
+

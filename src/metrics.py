@@ -75,6 +75,31 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _demote_malformed_gist(prefix: str, gist_data: Any, gist_trusted: bool) -> bool:
+    """Lower the Gist tier's trust when it returned something unusable.
+
+    Called once a loader has established that ``gist_data`` is not the shape it
+    needs. ``None`` means the file is simply not there -- on a reachable Gist
+    that is a legitimate first run, and genuinely empty. Anything else means the
+    read SUCCEEDED and returned content nobody can interpret: corrupt remote
+    state, not absent state. Persisting an empty default over it would destroy
+    whatever is really stored.
+
+    load_pending_replies has drawn that distinction since 2026-06-12; the three
+    telemetry loaders did not, and Codex caught the gap after it had already
+    been fixed one file away. One helper rather than three copies, because the
+    copies are what diverged.
+    """
+    if gist_data is None or not gist_trusted:
+        return gist_trusted
+    SafeLogger.error(
+        f"{prefix}_gist_malformed",
+        "Gist payload has an unexpected shape; treating remote state as untrusted",
+        payload_type=type(gist_data).__name__,
+    )
+    return False
+
+
 def load_feed_health_strict() -> Tuple[Dict[str, Any], bool]:
     """Load feed_health.json, and say whether the result is safe to write back.
 
@@ -103,6 +128,7 @@ def load_feed_health_strict() -> Tuple[Dict[str, Any], bool]:
     gist_data, gist_trusted = _load_gist_state_strict("feed_health.json")
     if isinstance(gist_data, dict) and "feeds" in gist_data:
         return gist_data, True
+    gist_trusted = _demote_malformed_gist("feed_health", gist_data, gist_trusted)
 
     data, from_file = _load_json_with_repair_strict(FEED_HEALTH_FILE, lambda: default)
     if isinstance(data, dict) and "feeds" in data:
@@ -343,6 +369,7 @@ def load_post_metrics_strict() -> Tuple[Dict[str, Any], bool]:
     gist_data, gist_trusted = _load_gist_state_strict("post_metrics.json")
     if isinstance(gist_data, dict) and "posts" in gist_data:
         return gist_data, True
+    gist_trusted = _demote_malformed_gist("post_metrics", gist_data, gist_trusted)
 
     data, from_file = _load_json_with_repair_strict(POST_METRICS_FILE, lambda: default)
     if isinstance(data, dict) and "posts" in data:
@@ -715,6 +742,7 @@ def load_growth_strict() -> Tuple[Dict[str, Any], bool]:
     gist_data, gist_trusted = _load_gist_state_strict("growth.json")
     if isinstance(gist_data, dict) and "snapshots" in gist_data:
         return gist_data, True
+    gist_trusted = _demote_malformed_gist("growth", gist_data, gist_trusted)
 
     data, from_file = _load_json_with_repair_strict(GROWTH_FILE, lambda: default)
     if isinstance(data, dict) and "snapshots" in data:

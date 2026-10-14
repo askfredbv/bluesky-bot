@@ -363,6 +363,52 @@ def test_is_single_clean_url(raw, expected):
     assert net_safety.is_single_clean_url(raw) is expected
 
 
+# The first version of the check was the ASCII class \x00-\x20\x7F.
+# Codex caught what it misses: these all render as a break or a space while
+# sitting outside that range, so the injection #191 set out to close stayed
+# open through any of them. No ASCII whitespace in these payloads -- that is
+# the point, an ASCII space would have been caught for the wrong reason.
+
+_SEPARATORS = [
+    # chr() rather than the literal characters: these are invisible in source,
+    # which is exactly how the gap survived review the first time.
+    ("U+2028 line separator", chr(0x2028)),
+    ("U+2029 paragraph separator", chr(0x2029)),
+    ("U+0085 next line", chr(0x0085)),
+    ("U+00A0 no-break space", chr(0x00A0)),
+    ("U+1680 ogham space mark", chr(0x1680)),
+    ("U+3000 ideographic space", chr(0x3000)),
+    ("U+200B zero-width space", chr(0x200B)),
+    ("U+202E right-to-left override", chr(0x202E)),
+    ("U+FEFF byte order mark", chr(0xFEFF)),
+]
+
+
+@pytest.mark.parametrize("label, sep", _SEPARATORS)
+def test_a_unicode_separator_does_not_survive_normalisation(label, sep):
+    raw = "https://attacker.example/a" + sep + "@victim@example.social" + sep + "#Injected"
+    assert net_safety.normalise_url(raw, base_url="https://feed.example/rss") is None, label
+
+
+@pytest.mark.parametrize("label, sep", _SEPARATORS)
+def test_a_unicode_separator_is_not_a_single_clean_url(label, sep):
+    raw = "https://attacker.example/a" + sep + "@victim@example.social"
+    assert net_safety.is_single_clean_url(raw) is False, label
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/article",
+    "https://arxiv.org/abs/2609.06391",
+    "https://example.com/a?b=c#d",
+    "https://münchen.example/café",     # internationalised, must still pass
+    "https://example.com/中文",           # non-ASCII path, must still pass
+])
+def test_the_separator_check_does_not_over_reject(url):
+    """Letters, marks, digits, punctuation and symbols all pass, ASCII or not."""
+    assert net_safety.is_single_clean_url(url) is True
+    assert net_safety.normalise_url(url, base_url="https://feed.example/rss") == url
+
+
 @pytest.mark.parametrize("raw, expected", [("  not a url  ", "not a url"), ("http://[::1", "http://[::1")])
 def test_canonical_url_returns_an_unparseable_or_hostless_string_as_is(raw, expected):
     assert net_safety.canonical_url(raw) == expected
@@ -474,12 +520,21 @@ def test_the_pin_matches_the_host_shape_httpcore_really_passes(monkeypatch):
 # Per-hop timeouts are inactivity timeouts: a slow-drip server stays under them
 # forever while holding the process-wide resolver pin.
 
-def test_a_fetch_that_outlives_its_deadline_returns_none(monkeypatch):
+@pytest.fixture
+def stubbed_fetch_path(monkeypatch):
+    """Let get_with_safe_redirects run for real with the network stubbed out."""
+    monkeypatch.setattr(net_safety, "is_safe_public_url", lambda _u: True)
+    monkeypatch.setattr(net_safety, "is_allowed_metadata_fetch_url", lambda _u: True)
+    monkeypatch.setattr(net_safety, "_resolve_public_ip_candidates",
+                        lambda _h: ["93.184.216.34"])
+
+
+def test_a_fetch_that_outlives_its_deadline_returns_none(monkeypatch, stubbed_fetch_path):
     async def never_finishes(*_args, **_kwargs):
         await asyncio.sleep(30)
         raise AssertionError("should not get here")
 
-    monkeypatch.setattr(net_safety, "_safe_redirect_get", never_finishes)
+    monkeypatch.setattr(net_safety, "_capped_stream_get", never_finishes)
 
     async def go():
         async with httpx.AsyncClient() as client:
@@ -489,13 +544,13 @@ def test_a_fetch_that_outlives_its_deadline_returns_none(monkeypatch):
     assert asyncio.run(go()) is None
 
 
-def test_the_deadline_does_not_interfere_with_a_prompt_fetch(monkeypatch):
+def test_the_deadline_does_not_interfere_with_a_prompt_fetch(monkeypatch, stubbed_fetch_path):
     sentinel = httpx.Response(200, content=b"ok")
 
     async def prompt(*_args, **_kwargs):
         return sentinel
 
-    monkeypatch.setattr(net_safety, "_safe_redirect_get", prompt)
+    monkeypatch.setattr(net_safety, "_capped_stream_get", prompt)
 
     async def go():
         async with httpx.AsyncClient() as client:
@@ -504,3 +559,62 @@ def test_the_deadline_does_not_interfere_with_a_prompt_fetch(monkeypatch):
 
     assert asyncio.run(go()) is sentinel
 
+
+def test_a_queued_fetch_keeps_its_whole_budget(monkeypatch, stubbed_fetch_path):
+    """The budget starts after resolver-lock admission, not before it.
+
+    Codex, on #192: the deadline wrapped the wait for the global resolver pin,
+    so with feeds fetched concurrently the tasks queued behind one slow-drip
+    origin burned their identical budgets waiting and expired without ever
+    attempting their own feed. One bad host discarded the whole batch.
+
+    Here the slow fetch holds the pin for 0.3s while the queued one is given a
+    0.2s budget. Under the old wrapper it expired; it must now succeed, because
+    its 0.2s does not start until it holds the lock.
+    """
+    fast = httpx.Response(200, content=b"fast")
+
+    async def by_url(_client, url, **_kwargs):
+        if "slow" in url:
+            await asyncio.sleep(0.3)
+            return httpx.Response(200, content=b"slow")
+        await asyncio.sleep(0.01)
+        return fast
+
+    monkeypatch.setattr(net_safety, "_capped_stream_get", by_url)
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            slow = net_safety.get_with_safe_redirects(
+                client, "https://slow.example/feed", total_timeout=5)
+            queued = net_safety.get_with_safe_redirects(
+                client, "https://fast.example/feed", total_timeout=0.2)
+            return await asyncio.gather(slow, queued)
+
+    slow_result, queued_result = asyncio.run(go())
+
+    assert slow_result is not None
+    assert queued_result is fast, "the queued fetch was charged for waiting on the lock"
+
+
+def test_an_exhausted_budget_stops_a_redirect_chain(monkeypatch, stubbed_fetch_path):
+    """The budget carries across hops, so a chain of slow redirects still ends."""
+    hops = []
+
+    async def slow_redirect(_client, url, **_kwargs):
+        hops.append(url)
+        await asyncio.sleep(0.08)
+        return httpx.Response(
+            302, headers={"location": f"https://example.com/{len(hops)}"},
+            request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(net_safety, "_capped_stream_get", slow_redirect)
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            return await net_safety.get_with_safe_redirects(
+                client, "https://example.com/0", total_timeout=0.2)
+
+    assert asyncio.run(go()) is None
+    # Not the full max_redirects + 1: the budget ran out first.
+    assert 1 <= len(hops) <= 4, hops
