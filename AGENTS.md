@@ -8,8 +8,10 @@ holds before asserting it (a reviewer can be wrong too).
 ## What this project is
 
 A bot that posts AI/tech-mentorship content to **Bluesky** (@askfred.be) and **Mastodon**,
-twice daily via GitHub Actions (triggered by cron-job.org). Python 3.11, Gemini for
-generation, a private GitHub Gist for state. **The voice is the product.** Read
+twice daily via GitHub Actions (triggered by cron-job.org). Python 3.11, a two-provider
+model chain for generation (`claude-sonnet-5-5` primary since 2026-10-12, the Gemini
+chain as fallback — see `ANTHROPIC_CHAIN_POSITION` in `src/config.py`; images stay
+Gemini-only), a private GitHub Gist for state. **The voice is the product.** Read
 `docs/RETRO_2026-05-08.md` and `docs/BACKLOG.md` for the hard-won context before proposing
 structural changes.
 
