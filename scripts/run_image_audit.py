@@ -374,7 +374,16 @@ def save_images(items: List[AuditItem], out_dir: Path) -> int:
     CDN). Strictly best-effort: one failed download must not cost the report,
     which has already been printed by the time this runs.
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # The setup line is under the guard too. Everything in this function
+        # runs after the report has been printed, so anything that raises here
+        # fails the step under `set -e` and discards the sheet that was just
+        # written — losing the issue to save nothing.
+        print(f"could not create {out_dir}: "
+              f"{type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
+        return 0
     saved = 0
     for index, item in enumerate(items, start=1):
         # urlparse is inside the guard too. classify_feed already rejects a
@@ -424,8 +433,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(render_report(illustrations, cards, len(feed)))
 
     if args.out is not None:
-        saved = save_images(illustrations + cards, args.out)
-        print(f"saved {saved} image(s) to {args.out}", file=sys.stderr)
+        # Structural, not line by line. The report is already on stdout by this
+        # point, so nothing below may be *able* to fail the process: a failure
+        # here would fail the workflow step under `set -e` and discard the
+        # sheet to save nothing. Review found three separate lines inside
+        # save_images that could do it — urlparse, the file write, the mkdir —
+        # and each was fixed on its own. This catch is what closes the class,
+        # so the next line added in there cannot reopen it. The artifact is the
+        # durable copy; the issue is the thing a human actually looks at, and
+        # it outranks.
+        try:
+            saved = save_images(illustrations + cards, args.out)
+            print(f"saved {saved} image(s) to {args.out}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 - the issue outranks the artifact
+            print(f"saving the images failed entirely, the sheet stands: "
+                  f"{type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
     return 0
 
 

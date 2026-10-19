@@ -466,3 +466,41 @@ def test_save_images_survives_a_write_that_fails(tmp_path, monkeypatch):
     item = audit.AuditItem(created_at="2026-10-19T00:00:00Z", text="t",
                            image_url="https://cdn.bsky.app/img/x", post_url="")
     assert audit.save_images([item], tmp_path) == 0
+
+
+def test_save_images_survives_an_unusable_output_directory(tmp_path, monkeypatch):
+    """The mkdir is under the guard too.
+
+    It sits above the per-image try, so a permission or filesystem error there
+    escaped `main` and failed the step under `set -e` — discarding a report
+    that had already been printed, to save nothing.
+    """
+    def boom(self, **kwargs):
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(audit.Path, "mkdir", boom)
+    item = audit.AuditItem(created_at="2026-10-19T00:00:00Z", text="t",
+                           image_url="https://cdn.bsky.app/img/x", post_url="")
+    assert audit.save_images([item], tmp_path / "out") == 0
+
+
+def test_the_sheet_outranks_the_artifact(monkeypatch, capsys, tmp_path):
+    """Nothing in the saving half may be able to fail the run.
+
+    Three rounds of review found three separate lines inside save_images that
+    could — urlparse, the file write, the mkdir. Each was fixed on its own;
+    this catch is what closes the class, so a line added there later cannot
+    reopen it. The report is already on stdout by then: failing the step would
+    throw away the issue to save nothing.
+    """
+    monkeypatch.setattr(audit, "fetch_feed", lambda a, limit: [_image_post()])
+
+    def detonate(*args, **kwargs):
+        raise RuntimeError("anything at all")
+
+    monkeypatch.setattr(audit, "save_images", detonate)
+    assert audit.main(["--out", str(tmp_path / "imgs")]) == 0
+    captured = capsys.readouterr()
+    assert "![](" in captured.out            # the sheet survived intact
+    assert "the sheet stands" in captured.err
+    assert "RuntimeError: anything at all" in captured.err
