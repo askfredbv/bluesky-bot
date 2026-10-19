@@ -313,6 +313,18 @@ TOPIC_REPEAT_PENALTY: float = 6.0   # at distance 0 (the topic posted last run)
 TOPIC_REPEAT_DECAY: float = 0.55    # multiplier per run of additional distance
 RECENT_TOPICS_WINDOW: int = 5       # how many posted topics we remember
 
+# Per-URL dedup memory. `seen_articles["links"]` is trimmed to this on every
+# write; it was a bare 200 in two places once the pre-broadcast reservation
+# started writing the same list, which is one magic number too many.
+SEEN_LINKS_WINDOW: int = 200
+
+# Pre-broadcast reservations (`seen_articles["pending_broadcast"]`). One entry
+# per run at most, and only a run that failed to settle leaves one behind, so
+# this cap is a safety stop rather than a working window — at two runs a day it
+# would take months of consecutive failures to reach. Anything it does drop is
+# far outside the two-day feed-fetch window and so unreachable anyway.
+MAX_BROADCAST_RESERVATIONS: int = 50
+
 # Time decay, bounded. Was 0.5/hour over a 48-hour window: 24 points on age
 # alone, three times the tier spread, so the clock outranked provenance.
 TIME_DECAY_PER_HOUR: float = 0.25

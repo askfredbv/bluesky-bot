@@ -23,6 +23,26 @@ def _stub_post_image(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _stub_broadcast_reservation(monkeypatch):
+    """Default every test to an in-memory pre-broadcast reservation.
+
+    broadcasting_stage reserves the Curator's story before it broadcasts, and the
+    real reservation is a locked read-modify-write of seen_articles.json — so
+    without this stub a dozen existing broadcast tests would start writing (and
+    locking) the repo's live state file. Reservation behaviour itself is covered
+    by the dedicated tests in test_broadcast_reservation.py, which override these
+    with their own stubs."""
+    def _reserved(link):
+        return True
+
+    def _settled(link, *, delivered):
+        return None
+
+    monkeypatch.setattr("main.reserve_broadcast", _reserved, raising=False)
+    monkeypatch.setattr("main.settle_broadcast", _settled, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _deterministic_image_gate(monkeypatch):
     """Pin the image probability to 1.0 so the suite is deterministic.
 
