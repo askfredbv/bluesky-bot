@@ -1,0 +1,91 @@
+name: Image Audit (monthly)
+
+# Puts the bot's recent post images in front of a human, as pictures.
+#
+# Corrective 3 of the 2026-10-19 finding (docs/BACKLOG.md). The image-prompt
+# bug shipped 2026-04-18 and ran six months, putting rendered captions into
+# post images — one read `USER: ADNIN > LDAD`. ruff, mypy, pytest, CodeQL and a
+# paid external security scan were all clean throughout, because it is neither
+# a security bug nor a type error. Opening three images is what found it.
+#
+# `voice-audit.yml` already does this for the text. This is the visual half.
+#
+# The output is an issue whose body IS the images (GitHub renders the Bluesky
+# CDN URLs inline), not a report about the images, and it carries no score or
+# pass/fail number. That is the design constraint, not an omission: a metric
+# here would repeat the mistake docs/RETRO_2026-05-08.md exists to teach, and
+# the six-month bug is the proof that instrumentation cannot see this class.
+# The images are also attached as an artifact — full resolution, and a copy
+# that survives a post being deleted.
+
+on:
+  schedule:
+    # 09:00 UTC on the 1st of each month (10:00 or 11:00 Belgian time).
+    - cron: '0 9 1 * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Posts to scan (max 100; 60 is about a month)'
+        required: false
+        default: '60'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build the contact sheet
+        # The dispatch input rides in env, never interpolated into the script
+        # text: `${{ inputs.limit }}` in a run: block is substituted before bash
+        # parses the line, so `$(...)` from a dispatcher would execute. That is
+        # the exact P1 found in image-probe.yml on 2026-10-19 and the reason
+        # workflow-lint.yml exists. The script clamps the value itself, and
+        # argparse rejects a non-integer.
+        env:
+          AUDIT_LIMIT: ${{ inputs.limit || '60' }}
+        run: |
+          set -euo pipefail
+          python -m scripts.run_image_audit \
+            --limit "$AUDIT_LIMIT" \
+            --out audit_images \
+            > audit_body.md
+
+      - name: Attach the images
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: post-images
+          path: audit_images/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Open the audit issue
+        # The label is best-effort: a missing `image-audit` label must not cost
+        # the look. Same fallback as voice-audit.yml.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TITLE="Look at the images — $(date -u +%Y-%m)"
+          gh issue create --title "$TITLE" --body-file audit_body.md \
+            --label "image-audit" 2>/dev/null \
+          || gh issue create --title "$TITLE" --body-file audit_body.md
