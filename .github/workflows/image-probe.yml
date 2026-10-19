@@ -10,8 +10,42 @@ name: Image Model Probe (diagnostic)
 # the key is IP-restricted to the runners, so this is the only place the probe is
 # truthful. Trigger from the Actions UI → "Run workflow".
 
+#
+# 2026-10-19: a `provider` input adds Cloudflare Workers AI (FLUX.1 Schnell).
+# That choice is aesthetic, not technical — a byte count cannot tell you whether
+# the images look right — so the probe now writes the generated files and this
+# workflow uploads them as an artifact to be compared by eye. Rationale in
+# docs/REVIEW_blubot_2026-10-19.md §C4. The Cloudflare secrets are optional:
+# leave them unset and the default `gemini` run behaves exactly as before.
+
 on:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: 'Which provider to probe (ignored when mode = bakeoff)'
+        required: false
+        default: 'gemini'
+        type: choice
+        options: [gemini, cloudflare, both]
+      mode:
+        description: 'probe = which models are reachable; bakeoff = compare models on the real prompt'
+        required: false
+        default: 'probe'
+        type: choice
+        options: [probe, bakeoff]
+      bakeoff_models:
+        description: 'bakeoff only: comma-separated models (blank = live IMAGE_MODEL vs the Lite tier)'
+        required: false
+        default: ''
+      topics:
+        description: 'bakeoff only: how many Mentor topics to render per model'
+        required: false
+        default: '5'
+      crafted:
+        description: 'bakeoff only: send the real production prompt (model-written + constraints) instead of the static fallback'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   probe:
@@ -35,4 +69,45 @@ jobs:
       - name: Probe image models
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python -m scripts.probe_image_models
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Dispatch inputs reach the shell ONLY as environment variables, never
+          # as ${{ }} inside `run`. GitHub substitutes those expressions into the
+          # script text before bash parses it, so a `topics` of $(curl …) would
+          # execute here — in a step holding the Gemini key and both Cloudflare
+          # secrets. Anyone who can dispatch the workflow could exfiltrate them
+          # without touching the reviewed file. (Codex P1, 2026-10-19.)
+          MODE: ${{ inputs.mode }}
+          PROVIDER: ${{ inputs.provider }}
+          TOPICS: ${{ inputs.topics }}
+          BAKEOFF_MODELS: ${{ inputs.bakeoff_models }}
+          CRAFTED: ${{ inputs.crafted }}
+        run: |
+          set -euo pipefail
+          # An array, so every element stays one argument no matter what it holds.
+          args=()
+          if [ "${MODE:-probe}" = "bakeoff" ]; then
+            # Costs real money (one image per topic per model), unlike the
+            # reachability probe — keep the topic count small.
+            args+=(--bakeoff --topics "${TOPICS:-5}")
+            if [ -n "${BAKEOFF_MODELS:-}" ]; then
+              args+=(--bakeoff-models "$BAKEOFF_MODELS")
+            fi
+            if [ "${CRAFTED:-false}" = "true" ]; then
+              args+=(--crafted)
+            fi
+          else
+            args+=(--provider "${PROVIDER:-gemini}")
+          fi
+          python -m scripts.probe_image_models "${args[@]}" --out probe-images
+
+      # The point of the run: look at the pictures. Kept short-lived because
+      # they are throwaway diagnostics, not a deliverable.
+      - name: Upload generated images
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: probe-images-${{ inputs.mode == 'bakeoff' && 'bakeoff' || inputs.provider || 'gemini' }}
+          path: probe-images/
+          retention-days: 7
+          if-no-files-found: warn
