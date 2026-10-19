@@ -160,8 +160,15 @@ def classify_feed(
             post = _as_dict(entry.get("post"))
             record = _as_dict(post.get("record"))
             embed = _as_dict(post.get("embed"))
+            # The leaf fields are validated here too, not just the containers.
+            # ``created_at`` is the one value consumed later — ``_render_item``
+            # slices it, outside any guard — so a non-string timestamp would
+            # pass this loop and take the whole sheet down with a TypeError.
+            # ``text`` and ``uri`` are consumed on this line, so a bad shape in
+            # either lands in the except below and costs only its own entry.
+            stamp = record.get("createdAt") or post.get("indexedAt") or ""
             shared = {
-                "created_at": record.get("createdAt") or post.get("indexedAt") or "",
+                "created_at": stamp if isinstance(stamp, str) else "",
                 "text": _preview(record.get("text") or ""),
                 "post_url": _post_web_url(post.get("uri") or "", handle),
             }
@@ -328,8 +335,20 @@ def fetch_feed(actor: str, limit: int) -> List[Dict[str, Any]]:
         timeout=20,
     )
     resp.raise_for_status()
-    feed = resp.json().get("feed", [])
-    return feed if isinstance(feed, list) else []
+    payload = resp.json()
+    feed = payload.get("feed") if isinstance(payload, dict) else None
+    if not isinstance(feed, list):
+        # An unreadable answer, not a quiet month. Returning [] here would
+        # print "No pictures in the window", which reads as a clean audit of a
+        # month with no images — when what actually happened is that the
+        # endpoint changed shape and nobody noticed. ``main`` turns this into
+        # the explicit "could not read the feed" result instead, which says
+        # that nothing is known either way. AGENTS.md §4: the best-effort half
+        # is each entry; the response itself is the part to fail loud on.
+        raise ValueError(
+            f"response carries no list-shaped 'feed' (got "
+            f"{type(feed).__name__})")
+    return feed
 
 
 def save_images(items: List[AuditItem], out_dir: Path) -> int:

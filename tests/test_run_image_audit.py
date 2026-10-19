@@ -180,10 +180,38 @@ def test_fetch_clamps_the_limit_to_what_the_endpoint_allows(monkeypatch):
     assert len(feed) == 1
 
 
-def test_fetch_tolerates_a_feed_that_is_not_a_list(monkeypatch):
+@pytest.mark.parametrize("payload", [{"feed": "weird"}, {"feed": None}, {}, []])
+def test_a_malformed_response_is_an_unknown_result_not_an_empty_one(
+        monkeypatch, payload):
+    """A 200 that is not the documented shape must not read as a quiet month.
+
+    This test previously asserted the opposite — that a non-list feed was
+    tolerated and returned []. That was the wrong call: it turns an upstream
+    schema change into a routine "No pictures in the window" issue, which is
+    indistinguishable from a month that genuinely had no images. Raising here
+    routes it to main's explicit "could not read the feed" result instead.
+    """
+    monkeypatch.setattr(audit.httpx, "get",
+                        lambda *a, **k: _resp(status_code=200, json=payload))
+    with pytest.raises(ValueError, match="feed"):
+        audit.fetch_feed("askfred.be", 10)
+
+
+def test_an_empty_feed_is_still_a_valid_answer(monkeypatch):
+    """An empty list is a real result and must not be confused with the above."""
+    monkeypatch.setattr(audit.httpx, "get",
+                        lambda *a, **k: _resp(status_code=200, json={"feed": []}))
+    assert audit.fetch_feed("askfred.be", 10) == []
+
+
+def test_a_malformed_response_reaches_the_reader_as_unknown(monkeypatch, capsys):
     monkeypatch.setattr(audit.httpx, "get",
                         lambda *a, **k: _resp(status_code=200, json={"feed": "weird"}))
-    assert audit.fetch_feed("askfred.be", 10) == []
+    assert audit.main(["--limit", "10"]) == 0
+    out = capsys.readouterr().out
+    assert "could not read the feed" in out
+    assert "Nothing is known about the images either way." in out
+    assert "No pictures in the window" not in out
 
 
 # --- saving the files ------------------------------------------------------
@@ -367,3 +395,22 @@ def test_a_sheet_that_fits_is_left_alone():
     report = audit.render_report(illustrations, cards, posts_scanned=2)
     assert "are not shown above" not in report
     assert report.count("![](") == 2
+
+
+@pytest.mark.parametrize("stamp", [1760000000, 17.5, {"at": "now"}, ["2026"], True])
+def test_a_non_string_timestamp_cannot_escape_the_per_entry_guard(stamp):
+    """The leaf fields are validated inside the guard, not just the containers.
+
+    `created_at` is the only value consumed outside the per-entry try/except —
+    `_render_item` slices it — so a non-string timestamp passed classification
+    and then raised `TypeError: 'int' object is not subscriptable` out of
+    `render_report`, costing the whole sheet. Reproduced before fixing.
+    """
+    post = _image_post()
+    post["post"]["record"]["createdAt"] = stamp
+    illustrations, _ = audit.classify_feed([post], "askfred.be")
+    assert len(illustrations) == 1
+    assert illustrations[0].created_at == ""
+    report = audit.render_report(illustrations, [], posts_scanned=1)
+    assert "date unknown" in report
+    assert report.count("![](") == 1   # the picture is still shown
