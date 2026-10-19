@@ -440,18 +440,30 @@ def load_seen_articles() -> Dict[str, Any]:
     return load_seen_articles_strict()[0]
 
 
-def _remote_state_configured() -> bool:
-    """Is either remote state tier configured at all?
+def _readable_state_tier() -> str:
+    """The one tier a later read of the seen state will come back from.
 
-    Decides whether a local-file write is a durable record or just a note on a
-    disk that is about to be thrown away. On a GitHub Actions runner the local
-    tier is only reached when both remote tiers failed, and the file dies with
-    the runner; in local development it is the only tier there is.
+    ``load_seen_articles_strict`` tries Gist, then ``STATE_STORE_URL``, then the
+    local file — and a Gist that parses wins unconditionally, so it never reaches
+    the tiers below it. A write that lands in a LOWER tier than the highest
+    configured one is therefore invisible to every subsequent read, which for a
+    reservation is worse than a plain write failure: during a Gist write-only
+    outage the write "succeeds" to the fallback store, the next run reloads the
+    unchanged Gist, never sees the claim, and reposts the story the reservation
+    was taken to prevent. (Codex review, 2026-10-19 — the first version of this
+    guard only rejected the local tier and missed the same shadowing one level
+    up.)
+
+    Also the reason a local write is not durable on a GitHub Actions runner: the
+    local tier is only reached there when both remote tiers refused, and that
+    file dies with the job. In local development it is the only tier there is,
+    and so the readable one.
     """
-    return bool(
-        os.environ.get("GIST_ID", "").strip()
-        or os.environ.get("STATE_STORE_URL", "").strip()
-    )
+    if os.environ.get("GIST_ID", "").strip():
+        return "gist"
+    if os.environ.get("STATE_STORE_URL", "").strip():
+        return "store"
+    return "local"
 
 
 def save_seen_articles(seen_data: Dict[str, Any]) -> Optional[str]:
@@ -662,16 +674,17 @@ def reserve_broadcast(link: str) -> bool:
             reserved_link=canonical,
         )
         return False
-    if tier == "local" and _remote_state_configured():
-        # A remote tier is configured and refused the write, so this ran on an
-        # ephemeral runner whose local file will not survive the job. Treating
-        # that as stored would be the same false positive the _STATE_STORE_WRITE_OK
-        # comment above warns about.
+    readable = _readable_state_tier()
+    if tier != readable:
+        # The write landed, but in a tier no later read will select, so the claim
+        # may as well not exist. Treating it as stored would be the same false
+        # positive the _STATE_STORE_WRITE_OK comment above warns about.
         SafeLogger.error(
             "broadcast_reservation_not_durable",
-            "Reservation reached only the local file while a remote tier is configured",
+            "Reservation landed in a tier later reads will not select",
             reserved_link=canonical,
             storage_tier=tier,
+            readable_tier=readable,
         )
         return False
     SafeLogger.info(
@@ -691,9 +704,11 @@ def settle_broadcast(link: str, *, delivered: bool) -> None:
     ``delivered=False`` marks it ``uncertain`` and KEEPS it; see the note above
     this function's section for why that is not the same as clearing it.
 
-    Best-effort by design: a failure here leaves the claim ``pending``, which
-    suppresses the story just as firmly. Still logged at ERROR, because the state
-    file is then carrying a claim nobody will ever settle.
+    Best-effort by design, and needs no readable-tier check of its own: whether
+    this write fails outright or lands in a tier reads will not select, what a
+    later read still sees is the ``pending`` claim, which suppresses the story
+    just as firmly. Every way this can go wrong fails safe. Still logged at
+    ERROR, because the state is then carrying a claim nobody will ever settle.
     """
     canonical = canonical_url(link)
     settled_at = datetime.now(timezone.utc).isoformat()

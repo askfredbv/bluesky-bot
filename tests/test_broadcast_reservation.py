@@ -42,8 +42,12 @@ def _state(monkeypatch, initial):
 
     Replaces the locked read-modify-write wholesale so these tests pin the
     mutator's decisions rather than the storage chain, which
-    test_state_store_gaps.py already covers.
+    test_state_store_gaps.py already covers. The Gist is the configured tier and
+    the one the write lands in, so the readable-tier guard is satisfied and these
+    tests see a reservation that was accepted.
     """
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.delenv("STATE_STORE_URL", raising=False)
     box = {"value": dict(initial), "tier": "gist"}
 
     def _fake(mutator):
@@ -441,6 +445,54 @@ def test_reservation_fails_when_only_the_local_file_took_it_on_a_runner(monkeypa
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
     assert "broadcast_reservation_not_durable" in events
+
+
+def test_reservation_fails_when_the_gist_shadows_the_tier_that_took_it(monkeypatch):
+    """A Gist write-only outage with a healthy fallback store (Codex, 2026-10-19).
+
+    `load_seen_articles_strict` returns a parseable Gist payload unconditionally,
+    so a claim written only to STATE_STORE_URL is never read back: the next run
+    reloads the unchanged Gist, misses the claim, and reposts the story. The
+    write succeeded and the reservation must still be refused.
+    """
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert "broadcast_reservation_not_durable" in events
+
+
+def test_reservation_succeeds_on_the_store_when_no_gist_shadows_it(monkeypatch):
+    """With only STATE_STORE_URL configured, the store IS what reads select."""
+    monkeypatch.delenv("GIST_ID", raising=False)
+    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is True
+
+
+def test_readable_tier_follows_the_read_precedence(monkeypatch):
+    """The guard is only correct while it mirrors load_seen_articles_strict's
+    order, so pin the order itself."""
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
+    assert state_store._readable_state_tier() == "gist"
+
+    monkeypatch.delenv("GIST_ID", raising=False)
+    assert state_store._readable_state_tier() == "store"
+
+    monkeypatch.delenv("STATE_STORE_URL", raising=False)
+    assert state_store._readable_state_tier() == "local"
+
+    # Blank is not configured — the whole module reads these with .strip().
+    monkeypatch.setenv("GIST_ID", "   ")
+    assert state_store._readable_state_tier() == "local"
 
 
 def test_reservation_succeeds_on_the_local_tier_in_local_development(monkeypatch, tmp_path):
