@@ -477,6 +477,16 @@ IMAGE_GENERATION_TIMEOUT_SECONDS: float = 30.0
 # 2026-05-07) -> imagen-4.0-generate-001 (v4.18) -> here.
 IMAGE_MODEL: str = "gemini-3.1-flash-image"
 
+# The static visual prompt, used when the model-written one (_craft_visual_prompt)
+# comes back empty. Lifted out of agents.py on 2026-10-19 so the model bake-off in
+# scripts/probe_image_models.py can send the string the bot actually sends: a probe
+# comparing image models on a copy of the prompt is comparing the copy, and the two
+# drift apart silently the first time one is edited.
+FALLBACK_VISUAL_PROMPT: str = (
+    "A clean, minimal editorial illustration representing the concept: '{topic}'. "
+    "No text, no people, flat design style, muted modern palette."
+)
+
 TOPIC_MAP: Dict[str, List[str]] = {
     "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],
     "Vision/Robot": ["sora", "vision", "robot", "humanoid", "image", "video", "figure"],

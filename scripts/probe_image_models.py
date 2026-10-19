@@ -33,10 +33,22 @@ from google import genai
 from google.genai import types
 
 try:
-    # The bot's live image model — probe the real one, not a guess.
-    from src.config import IMAGE_MODEL
+    # The bot's live image model, prompt and topic pool — probe the real ones,
+    # not a guess. The bake-off below is only evidence if it sends what the bot sends.
+    from src.config import FALLBACK_VISUAL_PROMPT, IMAGE_MODEL, MENTOR_TOPICS
 except Exception:  # pragma: no cover - defensive if run outside the repo root
     IMAGE_MODEL = "gemini-3.1-flash-image"
+    FALLBACK_VISUAL_PROMPT = (
+        "A clean, minimal editorial illustration representing the concept: '{topic}'. "
+        "No text, no people, flat design style, muted modern palette."
+    )
+    MENTOR_TOPICS = []
+
+# Bake-off defaults: the model the bot runs today against the half-price Lite tier
+# the 2026-10-19 probe run turned up. Same call path, same prompt, same resolution —
+# the model is the only variable, which is the point.
+_BAKEOFF_MODELS = [IMAGE_MODEL, "gemini-3.1-flash-lite-image"]
+_BAKEOFF_TOPIC_COUNT = 5
 
 _PROMPT = ("A clean, minimal editorial illustration of a lighthouse at dusk. "
            "No text, flat design, muted modern palette.")
@@ -203,13 +215,9 @@ def _probe_gemini(client: genai.Client, model: str, out_dir: Optional[str] = Non
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio="1:1")))
-        for candidate in result.candidates or []:
-            content = candidate.content
-            for part in (content.parts if content else None) or []:
-                inline = getattr(part, "inline_data", None)
-                if inline is not None and inline.data:
-                    return (f"OK        image={len(inline.data)} bytes"
-                            f"{_save(out_dir, model, inline.data)}")
+        data = _first_image_bytes(result)
+        if data:
+            return f"OK        image={len(data)} bytes{_save(out_dir, model, data)}"
         return "NO_IMAGE  (text-only response)"
     except Exception as exc:
         return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
@@ -294,14 +302,25 @@ def _probe_gemini_with_http_timeout(model: str) -> None:
               f"{type(exc).__name__}: {str(exc)[:100]}")
 
 
-def _first_image_len(result: object) -> int:
+def _first_image_bytes(result: object) -> bytes:
+    """The first inline image payload in a generate_content result, or b''.
+
+    One extraction for all three Gemini callers (reachability probe, bake-off,
+    timeout check): they must agree on what counts as an image, or their verdicts
+    are not comparable.
+    """
     for candidate in getattr(result, "candidates", None) or []:
         content = getattr(candidate, "content", None)
         for part in (getattr(content, "parts", None) if content else None) or []:
             inline = getattr(part, "inline_data", None)
-            if inline is not None and getattr(inline, "data", None):
-                return len(inline.data)
-    return 0
+            data = getattr(inline, "data", None) if inline is not None else None
+            if data:
+                return bytes(data)
+    return b""
+
+
+def _first_image_len(result: object) -> int:
+    return len(_first_image_bytes(result))
 
 
 def _run_gemini(out_dir: Optional[str]) -> None:
@@ -330,6 +349,70 @@ def _run_gemini(out_dir: Optional[str]) -> None:
     _probe_gemini_with_http_timeout(IMAGE_MODEL)
 
 
+def _topic_slug(topic: str) -> str:
+    """A short, stable, filesystem-safe stem for a Mentor topic."""
+    words = [w for w in "".join(c if c.isalnum() else " " for c in topic).split()][:5]
+    return "-".join(w.lower() for w in words) or "topic"
+
+
+def _bakeoff_prompts(count: int) -> List[Tuple[str, str]]:
+    """``(topic, prompt)`` for the first ``count`` Mentor topics.
+
+    First N rather than a random sample, so two runs are comparable: the point is
+    to vary the MODEL, and a different topic set each run reintroduces exactly the
+    confound the bake-off exists to remove.
+    """
+    topics = MENTOR_TOPICS[:count]
+    return [(t, FALLBACK_VISUAL_PROMPT.format(topic=t)) for t in topics]
+
+
+def _probe_gemini_prompt(
+    client: genai.Client, model: str, prompt: str, stem: str, out_dir: Optional[str]
+) -> str:
+    """One bake-off cell: a given model against a given prompt. Mirrors
+    ``_probe_gemini`` but takes the prompt instead of the module-level one."""
+    try:
+        result = client.models.generate_content(
+            model=model, contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="1:1")))
+        data = _first_image_bytes(result)
+        if data:
+            return f"OK        image={len(data)} bytes{_save(out_dir, stem, data)}"
+        return "NO_IMAGE  (text-only response)"
+    except Exception as exc:
+        return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
+
+
+def _run_bakeoff(out_dir: Optional[str], models: List[str], count: int) -> None:
+    """Same prompt, same call path, one image per (topic, model).
+
+    Files are named ``<topic>__<model>.png`` — topic first on purpose, so a plain
+    alphabetical listing puts each topic's variants next to each other and the
+    comparison is a scroll rather than a lookup.
+
+    This is the step that makes the model choice evidence rather than taste: the
+    2026-10-19 probe compared one lighthouse, and one image cannot carry a
+    decision that changes every picture in the feed.
+    """
+    prompts = _bakeoff_prompts(count)
+    if not prompts:
+        print("Bake-off: no Mentor topics available; nothing to compare.")
+        return
+
+    client = _client()
+    print(f"\n=== bake-off: {len(prompts)} Mentor topics x {len(models)} models "
+          f"({len(prompts) * len(models)} images) ===")
+    for topic, prompt in prompts:
+        print(f"\n  topic: {topic}")
+        for model in models:
+            stem = f"{_topic_slug(topic)}__{model}"
+            print(f"    {model:<40} {_probe_gemini_prompt(client, model, prompt, stem, out_dir)}")
+    print("\nCompare the files pairwise; a byte count says nothing about whether the "
+          "picture suits the post.")
+
+
 def _run_cloudflare(out_dir: Optional[str]) -> None:
     account_id, token = _cloudflare_creds()
     print("\n=== Cloudflare Workers AI (each model at its own default steps) ===")
@@ -352,7 +435,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--out", default=None, metavar="DIR",
         help="write the generated images here so they can be compared by eye")
+    parser.add_argument(
+        "--bakeoff", action="store_true",
+        help="compare image MODELS on the bot's real fallback prompt over real "
+             "Mentor topics, instead of probing which models are reachable")
+    parser.add_argument(
+        "--bakeoff-models", default=",".join(_BAKEOFF_MODELS), metavar="A,B",
+        help=f"comma-separated models for --bakeoff (default: {','.join(_BAKEOFF_MODELS)})")
+    parser.add_argument(
+        "--topics", type=int, default=_BAKEOFF_TOPIC_COUNT, metavar="N",
+        help=f"how many Mentor topics to run in --bakeoff (default: {_BAKEOFF_TOPIC_COUNT})")
     args = parser.parse_args(argv)
+
+    if args.bakeoff:
+        models = [m.strip() for m in args.bakeoff_models.split(",") if m.strip()]
+        if not models:
+            parser.error("--bakeoff-models resolved to no models")
+        _run_bakeoff(args.out, models, max(1, args.topics))
+        if args.out:
+            print(f"\nImages written to {args.out}")
+        return 0
 
     if args.provider in ("gemini", "both"):
         _run_gemini(args.out)

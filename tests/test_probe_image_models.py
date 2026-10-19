@@ -226,6 +226,91 @@ def test_provider_both_runs_both(monkeypatch):
     assert called == ["gemini", "cloudflare"]
 
 
+# --- bake-off ---------------------------------------------------------------
+# The bake-off exists to make the model the ONLY variable. These pin the three
+# ways that guarantee can quietly break: a drifted prompt, a shuffled topic set,
+# and filenames that don't pair up.
+
+def test_bakeoff_sends_the_bots_own_fallback_prompt():
+    from src.config import FALLBACK_VISUAL_PROMPT, MENTOR_TOPICS
+    (topic, prompt), = probe._bakeoff_prompts(1)
+    assert topic == MENTOR_TOPICS[0]
+    assert prompt == FALLBACK_VISUAL_PROMPT.format(topic=topic)
+    assert topic in prompt
+
+
+def test_bakeoff_topic_selection_is_stable_across_runs():
+    assert probe._bakeoff_prompts(3) == probe._bakeoff_prompts(3)
+
+
+def test_bakeoff_count_is_capped_by_the_topic_pool():
+    from src.config import MENTOR_TOPICS
+    assert len(probe._bakeoff_prompts(len(MENTOR_TOPICS) + 50)) == len(MENTOR_TOPICS)
+
+
+def test_topic_slug_is_short_and_filesystem_safe():
+    slug = probe._topic_slug("estimating your own time vs estimating someone else's")
+    assert slug == "estimating-your-own-time-vs"
+    assert all(c.isalnum() or c == "-" for c in slug)
+
+
+def test_topic_slug_survives_an_all_punctuation_topic():
+    assert probe._topic_slug("!!! ???") == "topic"
+
+
+def test_bakeoff_filenames_group_by_topic_not_model(tmp_path):
+    # topic first, so an alphabetical listing puts each topic's variants adjacent.
+    for model in ("model-b", "model-a"):
+        probe._save(str(tmp_path), f"{probe._topic_slug('tools you keep using')}__{model}", b"x")
+    names = sorted(p.stem for p in tmp_path.iterdir())
+    assert [n.split("__")[0] for n in names] == ["tools-you-keep-using"] * 2
+
+
+def test_bakeoff_default_models_pair_the_incumbent_with_the_lite_tier():
+    from src.config import IMAGE_MODEL
+    assert probe._BAKEOFF_MODELS[0] == IMAGE_MODEL
+    assert "lite" in probe._BAKEOFF_MODELS[1]
+
+
+def test_bakeoff_runs_every_topic_against_every_model(monkeypatch):
+    calls = []
+    monkeypatch.setattr(probe, "_client", lambda: object())
+    monkeypatch.setattr(
+        probe, "_probe_gemini_prompt",
+        lambda _c, model, prompt, stem, _o: calls.append((model, stem)) or "OK")
+    probe._run_bakeoff(None, ["m1", "m2"], 3)
+    assert len(calls) == 6
+    assert sorted({m for m, _ in calls}) == ["m1", "m2"]
+
+
+def test_bakeoff_with_no_topics_does_not_call_the_api(monkeypatch):
+    monkeypatch.setattr(probe, "MENTOR_TOPICS", [])
+    monkeypatch.setattr(probe, "_client", lambda: pytest.fail("API touched with no topics"))
+    probe._run_bakeoff(None, ["m1"], 5)
+
+
+def test_bakeoff_flag_skips_the_reachability_probe(monkeypatch):
+    called = []
+    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c: called.append(("bakeoff", m, c)))
+    monkeypatch.setattr(probe, "_run_gemini", lambda o: pytest.fail("probe ran during bakeoff"))
+    monkeypatch.setattr(probe, "_run_cloudflare", lambda o: pytest.fail("probe ran during bakeoff"))
+    assert probe.main(["--bakeoff", "--bakeoff-models", "a, b", "--topics", "2"]) == 0
+    assert called == [("bakeoff", ["a", "b"], 2)]
+
+
+def test_bakeoff_topic_count_floors_at_one(monkeypatch):
+    seen = []
+    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c: seen.append(c))
+    probe.main(["--bakeoff", "--topics", "0"])
+    assert seen == [1]
+
+
+def test_first_image_bytes_shared_by_probe_and_bakeoff():
+    assert probe._first_image_bytes(_gemini_result(b"abcd")) == b"abcd"
+    assert probe._first_image_bytes(_gemini_result(None)) == b""
+    assert probe._first_image_len(_gemini_result(b"abcd")) == 4
+
+
 def test_cloudflare_creds_required(monkeypatch):
     monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)

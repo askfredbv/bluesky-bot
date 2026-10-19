@@ -22,11 +22,25 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: 'Which provider to probe'
+        description: 'Which provider to probe (ignored when mode = bakeoff)'
         required: false
         default: 'gemini'
         type: choice
         options: [gemini, cloudflare, both]
+      mode:
+        description: 'probe = which models are reachable; bakeoff = compare models on the real prompt'
+        required: false
+        default: 'probe'
+        type: choice
+        options: [probe, bakeoff]
+      bakeoff_models:
+        description: 'bakeoff only: comma-separated models (blank = live IMAGE_MODEL vs the Lite tier)'
+        required: false
+        default: ''
+      topics:
+        description: 'bakeoff only: how many Mentor topics to render per model'
+        required: false
+        default: '5'
 
 jobs:
   probe:
@@ -53,9 +67,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          python -m scripts.probe_image_models \
-            --provider "${{ inputs.provider || 'gemini' }}" \
-            --out probe-images
+          if [ "${{ inputs.mode || 'probe' }}" = "bakeoff" ]; then
+            # Costs real money (one image per topic per model), unlike the
+            # reachability probe — keep the topic count small.
+            ARGS="--bakeoff --topics ${{ inputs.topics || '5' }}"
+            if [ -n "${{ inputs.bakeoff_models }}" ]; then
+              ARGS="$ARGS --bakeoff-models ${{ inputs.bakeoff_models }}"
+            fi
+          else
+            ARGS="--provider ${{ inputs.provider || 'gemini' }}"
+          fi
+          python -m scripts.probe_image_models $ARGS --out probe-images
 
       # The point of the run: look at the pictures. Kept short-lived because
       # they are throwaway diagnostics, not a deliverable.
@@ -63,7 +85,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: probe-images-${{ inputs.provider || 'gemini' }}
+          name: probe-images-${{ inputs.mode == 'bakeoff' && 'bakeoff' || inputs.provider || 'gemini' }}
           path: probe-images/
           retention-days: 7
           if-no-files-found: warn

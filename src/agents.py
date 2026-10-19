@@ -17,6 +17,7 @@ from src.config import (
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY, Mode,
     LANGUAGE_OPTIONS, IMAGE_MODEL, MAX_OUTPUT_TOKENS, IMAGE_GENERATION_TIMEOUT_SECONDS,
+    FALLBACK_VISUAL_PROMPT,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
@@ -1410,10 +1411,7 @@ async def generate_post_image(
     summary = " ".join(thread_posts or [])[:800]
     visual_prompt = await _craft_visual_prompt(api_key, topic, summary)
     if not visual_prompt:
-        visual_prompt = (
-            f"A clean, minimal editorial illustration representing the concept: '{topic}'. "
-            "No text, no people, flat design style, muted modern palette."
-        )
+        visual_prompt = FALLBACK_VISUAL_PROMPT.format(topic=topic)
     try:
         image = await asyncio.wait_for(
             asyncio.to_thread(_sync_generate_image, api_key, visual_prompt),
