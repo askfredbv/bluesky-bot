@@ -71,21 +71,35 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Dispatch inputs reach the shell ONLY as environment variables, never
+          # as ${{ }} inside `run`. GitHub substitutes those expressions into the
+          # script text before bash parses it, so a `topics` of $(curl …) would
+          # execute here — in a step holding the Gemini key and both Cloudflare
+          # secrets. Anyone who can dispatch the workflow could exfiltrate them
+          # without touching the reviewed file. (Codex P1, 2026-10-19.)
+          MODE: ${{ inputs.mode }}
+          PROVIDER: ${{ inputs.provider }}
+          TOPICS: ${{ inputs.topics }}
+          BAKEOFF_MODELS: ${{ inputs.bakeoff_models }}
+          CRAFTED: ${{ inputs.crafted }}
         run: |
-          if [ "${{ inputs.mode || 'probe' }}" = "bakeoff" ]; then
+          set -euo pipefail
+          # An array, so every element stays one argument no matter what it holds.
+          args=()
+          if [ "${MODE:-probe}" = "bakeoff" ]; then
             # Costs real money (one image per topic per model), unlike the
             # reachability probe — keep the topic count small.
-            ARGS="--bakeoff --topics ${{ inputs.topics || '5' }}"
-            if [ -n "${{ inputs.bakeoff_models }}" ]; then
-              ARGS="$ARGS --bakeoff-models ${{ inputs.bakeoff_models }}"
+            args+=(--bakeoff --topics "${TOPICS:-5}")
+            if [ -n "${BAKEOFF_MODELS:-}" ]; then
+              args+=(--bakeoff-models "$BAKEOFF_MODELS")
             fi
-            if [ "${{ inputs.crafted }}" = "true" ]; then
-              ARGS="$ARGS --crafted"
+            if [ "${CRAFTED:-false}" = "true" ]; then
+              args+=(--crafted)
             fi
           else
-            ARGS="--provider ${{ inputs.provider || 'gemini' }}"
+            args+=(--provider "${PROVIDER:-gemini}")
           fi
-          python -m scripts.probe_image_models $ARGS --out probe-images
+          python -m scripts.probe_image_models "${args[@]}" --out probe-images
 
       # The point of the run: look at the pictures. Kept short-lived because
       # they are throwaway diagnostics, not a deliverable.

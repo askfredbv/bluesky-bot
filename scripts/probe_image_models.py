@@ -92,8 +92,37 @@ _CLOUDFLARE_CANDIDATES = [
 _CLOUDFLARE_TIMEOUT_SECONDS = 60.0
 
 
+#: Magic bytes -> extension. Sniffing is the only source of truth here, because
+#: the other two lie. Measured on the 2026-10-19 artifacts: FLUX.1 Schnell's
+#: base64 envelope decodes to JPEG, and SDXL Lightning's stream arrives under a
+#: ``Content-Type: image/png`` header carrying JPEG bytes — so neither the model
+#: documentation nor the server's own header can be trusted to name the format.
+#: Gemini's inline_data is JPEG too. Only SDXL base actually returned PNG.
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff", "jpg"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+)
+
+
+def _sniff_ext(data: bytes, fallback: str = "png") -> str:
+    """The extension the BYTES say, not the one the header or the docs claim."""
+    for magic, ext in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return ext
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return fallback
+
+
 def _save(out_dir: Optional[str], name: str, data: bytes, ext: str = "png") -> str:
     """Write probe output for eyeballing. Returns a ' -> path' suffix, or ''.
+
+    The extension comes from the payload's magic bytes; ``ext`` is only the
+    fallback for a format we do not recognise. A file whose extension contradicts
+    its contents gets rejected by previewers and image tools, which defeats the
+    one purpose of writing it — being looked at.
 
     Never raises: a failed write must not turn a working model into an ERROR
     row, because the row is what the model-selection decision reads.
@@ -101,7 +130,7 @@ def _save(out_dir: Optional[str], name: str, data: bytes, ext: str = "png") -> s
     if not out_dir or not data:
         return ""
     safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in name)
-    safe_ext = "".join(c for c in ext if c.isalnum()) or "png"
+    safe_ext = _sniff_ext(data, "".join(c for c in ext if c.isalnum()) or "png")
     try:
         path = Path(out_dir)
         path.mkdir(parents=True, exist_ok=True)
@@ -351,13 +380,25 @@ def _run_gemini(out_dir: Optional[str]) -> None:
     _probe_gemini_with_http_timeout(IMAGE_MODEL)
 
 
+def _bakeoff_mode_label(crafted: bool, summary: str) -> str:
+    """Name the mode honestly in the run header, since the header is what a reader
+    of the log takes the evidence to be."""
+    if not crafted:
+        return "static fallback prompt"
+    if summary:
+        return "crafted — production assembly, with thread context"
+    return "crafted — production assembly, topic only (no thread context)"
+
+
 def _topic_slug(topic: str) -> str:
     """A short, stable, filesystem-safe stem for a Mentor topic."""
     words = [w for w in "".join(c if c.isalnum() else " " for c in topic).split()][:5]
     return "-".join(w.lower() for w in words) or "topic"
 
 
-def _bakeoff_prompts(count: int, crafted: bool = False) -> List[Tuple[str, str]]:
+def _bakeoff_prompts(
+    count: int, crafted: bool = False, summary: str = ""
+) -> List[Tuple[str, str]]:
     """``(topic, prompt)`` for the first ``count`` Mentor topics.
 
     First N rather than a random sample, so two runs are comparable: the point is
@@ -365,11 +406,19 @@ def _bakeoff_prompts(count: int, crafted: bool = False) -> List[Tuple[str, str]]
     confound the bake-off exists to remove.
 
     ``crafted=False`` sends the static fallback: deterministic, so the model is the
-    only variable. ``crafted=True`` runs the real production path through
-    ``agents.build_visual_prompt`` — model-written prompt plus the appended
+    only variable. ``crafted=True`` goes through ``agents.build_visual_prompt`` —
+    the same assembly production uses, model-written prompt plus the appended
     constraints — which is non-deterministic and therefore useless for comparing
-    models, but it is the ONLY way to see what the live pipeline actually sends.
-    Use it to check a constraint change, not to pick a model.
+    models. Use it to check a constraint change, not to pick a model.
+
+    **It is the production ASSEMBLY, not a production run.** Live Mentor and
+    Strategist posts hand the crafter an 800-character summary of the finished
+    thread; here ``summary`` is empty unless supplied, so the crafter writes from
+    the topic alone and invents a different scene than it would in production.
+    That does not weaken a constraint check — the constraints are appended after
+    the crafter either way — but it does mean the pictures are not the pictures a
+    real run would produce. Pass ``--summary`` with representative thread text to
+    close that gap. (Codex P2, 2026-10-19.)
     """
     topics = MENTOR_TOPICS[:count]
     if not crafted:
@@ -383,7 +432,7 @@ def _bakeoff_prompts(count: int, crafted: bool = False) -> List[Tuple[str, str]]
     key = (os.environ.get("GEMINI_API_KEY") or "").strip()
 
     async def _all() -> List[Tuple[str, str]]:
-        return [(t, await build_visual_prompt(key, t)) for t in topics]
+        return [(t, await build_visual_prompt(key, t, summary)) for t in topics]
 
     return asyncio.run(_all())
 
@@ -408,7 +457,8 @@ def _probe_gemini_prompt(
 
 
 def _run_bakeoff(
-    out_dir: Optional[str], models: List[str], count: int, crafted: bool = False
+    out_dir: Optional[str], models: List[str], count: int,
+    crafted: bool = False, summary: str = "",
 ) -> None:
     """Same prompt, same call path, one image per (topic, model).
 
@@ -420,7 +470,7 @@ def _run_bakeoff(
     2026-10-19 probe compared one lighthouse, and one image cannot carry a
     decision that changes every picture in the feed.
     """
-    prompts = _bakeoff_prompts(count, crafted)
+    prompts = _bakeoff_prompts(count, crafted, summary)
     if not prompts:
         print("Bake-off: no Mentor topics available; nothing to compare.")
         return
@@ -428,7 +478,7 @@ def _run_bakeoff(
     client = _client()
     print(f"\n=== bake-off: {len(prompts)} Mentor topics x {len(models)} models "
           f"({len(prompts) * len(models)} images, "
-          f"{'crafted — production path' if crafted else 'static fallback prompt'}) ===")
+          f"{_bakeoff_mode_label(crafted, summary)}) ===")
     for topic, prompt in prompts:
         print(f"\n  topic: {topic}")
         # The prompt is the thing under test when --crafted is on, so show it.
@@ -475,16 +525,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         help=f"how many Mentor topics to run in --bakeoff (default: {_BAKEOFF_TOPIC_COUNT})")
     parser.add_argument(
         "--crafted", action="store_true",
-        help="--bakeoff: send the real production prompt (model-written + appended "
-             "constraints) instead of the static fallback. Non-deterministic, so use "
-             "it to check a prompt change, not to compare models")
+        help="--bakeoff: build the prompt the way production does (model-written + "
+             "appended constraints) instead of the static fallback. Non-deterministic, "
+             "so use it to check a prompt change, not to compare models")
+    parser.add_argument(
+        "--summary", default="", metavar="TEXT",
+        help="--crafted: representative thread text for the crafter. Production passes "
+             "800 chars of the finished thread; without this the crafter sees only the "
+             "topic and writes a different scene than a real run would")
     args = parser.parse_args(argv)
 
     if args.bakeoff:
         models = [m.strip() for m in args.bakeoff_models.split(",") if m.strip()]
         if not models:
             parser.error("--bakeoff-models resolved to no models")
-        _run_bakeoff(args.out, models, max(1, args.topics), args.crafted)
+        _run_bakeoff(args.out, models, max(1, args.topics), args.crafted, args.summary)
         if args.out:
             print(f"\nImages written to {args.out}")
         return 0

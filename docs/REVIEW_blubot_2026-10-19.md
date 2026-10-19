@@ -96,9 +96,16 @@ currently answer. It would also give the bot a citable public surface.
 ### C3. Weekly deterministic roundup
 
 Friday's slot is replaced by a digest built from the ledger with **zero AI** — plain
-`This week in AI (iso-week)` then numbered title/URL pairs — ranked by live engagement,
-falling back to recency, skipping entirely if already published or if nothing is
-eligible.
+`This week in AI (iso-week)` then numbered title/URL pairs — skipping entirely if
+already published or if nothing is eligible.
+
+**One part of his version must not come with it: he ranks the week's stories by live
+Bluesky engagement.** `AGENTS.md` §1 says engagement data is noise at this scale and
+cannot support a decision either way, and that applies to an editorial decision as much
+as to a roadmap one — ranking by it would let the sparsest signal we have choose what
+gets repeated. If C3 is ever built, order by recency or source tier. (Flagged by Codex
+on this PR, correctly: the original wording here carried his ranking rule forward as if
+it were part of the idea.)
 
 No generation risk and no voice risk by construction, which is the appeal: it is the one
 content idea in his batch that cannot embarrass its author. Needs C1.
@@ -138,8 +145,11 @@ row in that plan's facts table and the only one that removes Google from the ima
 
 **The open question is aesthetic, not technical.** Schnell is a 4-step distilled model,
 and the look of every image in the feed is a brand surface. Settle it by looking, not by
-reasoning — hence the probe mode added alongside this review
-(`scripts/probe_image_models.py --cloudflare`).
+reasoning — hence the probe mode added alongside this review:
+
+```
+python -m scripts.probe_image_models --provider cloudflare --out <dir>
+```
 
 ### C5. Diagnostics consolidation
 

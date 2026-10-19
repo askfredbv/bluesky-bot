@@ -154,11 +154,34 @@ def test_cloudflare_empty_image_stream_is_no_image():
     assert out.startswith("NO_IMAGE") and "stream" in out
 
 
-def test_cloudflare_stream_extension_follows_content_type(tmp_path):
+def test_saved_extension_follows_the_bytes_not_the_header(tmp_path):
+    # Measured 2026-10-19: SDXL Lightning serves JPEG bytes under an image/png
+    # header, and Schnell's base64 envelope decodes to JPEG too. The header and
+    # the model docs both lie; the magic bytes do not.
     probe._probe_cloudflare(
-        _cf_client(content_type="image/jpeg", content=b"\xff\xd8ab"), "acct", "m",
+        _cf_client(content_type="image/png", content=b"\xff\xd8\xffJPEGBYTES"), "acct", "m",
         out_dir=str(tmp_path))
-    assert [p.name for p in tmp_path.iterdir()] == ["m.jpeg"]
+    assert [p.name for p in tmp_path.iterdir()] == ["m.jpg"]
+
+
+def test_schnell_envelope_saved_as_jpeg_when_it_is_jpeg(tmp_path):
+    payload = {"success": True, "result": {"image": base64.b64encode(b"\xff\xd8\xffdata").decode()}}
+    probe._probe_cloudflare(_cf_client(payload=payload), "acct", "m", out_dir=str(tmp_path))
+    assert [p.name for p in tmp_path.iterdir()] == ["m.jpg"]
+
+
+@pytest.mark.parametrize("data,ext", [
+    (b"\x89PNG\r\n\x1a\nrest", "png"),
+    (b"\xff\xd8\xffrest", "jpg"),
+    (b"GIF89a-rest", "gif"),
+    (b"RIFF1234WEBPrest", "webp"),
+])
+def test_sniff_recognises_each_format(data, ext):
+    assert probe._sniff_ext(data) == ext
+
+
+def test_sniff_falls_back_when_the_format_is_unknown():
+    assert probe._sniff_ext(b"\x00\x01\x02\x03nonsense", "bin") == "bin"
 
 
 def test_cloudflare_sends_the_models_own_steps_parameter():
@@ -311,7 +334,7 @@ def test_bakeoff_with_no_topics_does_not_call_the_api(monkeypatch):
 def test_bakeoff_flag_skips_the_reachability_probe(monkeypatch):
     called = []
     monkeypatch.setattr(
-        probe, "_run_bakeoff", lambda o, m, c, cr: called.append(("bakeoff", m, c, cr)))
+        probe, "_run_bakeoff", lambda o, m, c, cr, s: called.append(("bakeoff", m, c, cr)))
     monkeypatch.setattr(probe, "_run_gemini", lambda o: pytest.fail("probe ran during bakeoff"))
     monkeypatch.setattr(probe, "_run_cloudflare", lambda o: pytest.fail("probe ran during bakeoff"))
     assert probe.main(["--bakeoff", "--bakeoff-models", "a, b", "--topics", "2"]) == 0
@@ -320,16 +343,37 @@ def test_bakeoff_flag_skips_the_reachability_probe(monkeypatch):
 
 def test_bakeoff_topic_count_floors_at_one(monkeypatch):
     seen = []
-    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c, cr: seen.append(c))
+    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c, cr, s: seen.append(c))
     probe.main(["--bakeoff", "--topics", "0"])
     assert seen == [1]
 
 
 def test_crafted_flag_reaches_the_bakeoff(monkeypatch):
     seen = []
-    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c, cr: seen.append(cr))
+    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c, cr, s: seen.append((cr, s)))
     probe.main(["--bakeoff", "--crafted"])
-    assert seen == [True]
+    assert seen == [(True, "")]
+
+
+def test_summary_reaches_the_crafter(monkeypatch):
+    # Production hands the crafter 800 chars of the finished thread; topic-only
+    # prompts describe a different scene, so the option exists and must connect.
+    from src import agents
+    seen = {}
+
+    async def _fake(api_key, topic, summary=""):
+        seen["summary"] = summary
+        return "prompt"
+
+    monkeypatch.setattr(agents, "build_visual_prompt", _fake)
+    probe._bakeoff_prompts(1, crafted=True, summary="a thread about estimation")
+    assert seen["summary"] == "a thread about estimation"
+
+
+def test_mode_label_does_not_claim_thread_context_it_does_not_have():
+    assert "topic only" in probe._bakeoff_mode_label(True, "")
+    assert "with thread context" in probe._bakeoff_mode_label(True, "some thread text")
+    assert probe._bakeoff_mode_label(False, "") == "static fallback prompt"
 
 
 def test_first_image_bytes_shared_by_probe_and_bakeoff():
