@@ -275,7 +275,11 @@ def test_repair_loader_migrates_a_legacy_list_and_rewrites_the_file(tmp_path):
 
 def _seen_env(monkeypatch, tmp_path, gist=(None, True), remote=None):
     monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
-    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: gist)
+    # The seen loader reads the Gist through the status-reporting variant; these
+    # fixtures still speak in trusted/untrusted, so map the flag onto a status.
+    value, trusted = gist
+    status = state_store.GIST_READ_OK if trusted else state_store.GIST_READ_UNREACHABLE
+    monkeypatch.setattr(state_store, "_load_gist_state_checked", lambda _f: (value, status))
     monkeypatch.setattr(state_store, "_load_state_from_store", lambda _k: remote)
     saved = []
     monkeypatch.setattr(state_store, "_save_state_to_store", lambda k, d: saved.append((k, d)) or True)
@@ -402,13 +406,21 @@ def test_save_replied_writes_the_backup_and_the_file_when_no_remote_takes_it(mon
 def test_update_seen_returns_the_read_when_it_skips(monkeypatch, tmp_path):
     monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
     current = {"links": ["x"], "recent_topics": [], "pioneer_recent": []}
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: (current, False))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (current, False, state_store.GIST_READ_UNREACHABLE),
+    )
     assert state_store.update_seen_articles(lambda _c: {"links": []}) is current
 
 
 def test_update_seen_returns_what_it_saved(monkeypatch, tmp_path):
     monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: ({"links": []}, True))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": []}, True, state_store.GIST_READ_OK),
+    )
     monkeypatch.setattr(state_store, "save_seen_articles", lambda _d: None)
     assert state_store.update_seen_articles(lambda _c: {"links": ["new"]}) == {"links": ["new"]}
 

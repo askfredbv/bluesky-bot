@@ -10,6 +10,36 @@ replied_to.json
 feed_health.json
 post_metrics.json
 growth.json
+
+# ...and the siblings the state code writes next to each of them: `.bak`
+# (save_seen_articles / save_replied_to), `.lock` (update_seen_articles_checked
+# / update_replied_to) and `.corrupt.<timestamp>` (_load_json_with_repair_strict).
+# Only the bare names were listed, so a test run left seen_articles.json.bak
+# untracked-but-visible and `git add -A` swept it in (caught 2026-10-19).
+#
+# A committed .bak is the dangerous one, and it defeats the exact guard the
+# strict-read machinery exists for. On a runner the primary file is absent
+# (gitignored), so `_load_json_with_repair_strict` restores from .bak and
+# reports `from_file=True` — which makes `load_seen_articles_strict` call an
+# EMPTY state trusted whenever the Gist read fails, instead of returning
+# trusted=False and skipping the write. The next write then puts that empty
+# state over the real Gist and erases every seen link, recent topic and Pioneer
+# cooldown. This repo already fixed a stray .bak doing precisely that
+# (2026-09-11); do not let one into the tree again.
+seen_articles.json.*
+replied_to.json.*
+feed_health.json.*
+post_metrics.json.*
+growth.json.*
+# `_atomic_write_json` names its temp file with a LEADING dot
+# (`prefix=f".{file_path.name}."`), so it is `.seen_articles.json.<rand>.tmp`
+# and the patterns above do not match it. One line each rather than a blanket
+# `*.tmp`, which would hide temp files this repo has nothing to do with.
+.seen_articles.json.*
+.replied_to.json.*
+.feed_health.json.*
+.post_metrics.json.*
+.growth.json.*
 .claude/
 docs/WATCHLIST_AUDIT.md
 

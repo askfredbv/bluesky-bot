@@ -160,7 +160,11 @@ def test_strict_seen_read_is_untrusted_when_the_gist_is_unreachable(monkeypatch,
     and STATE_STORE_URL is normally unset. One failed Gist GET therefore walks the
     whole chain to the empty default -- which must not be written back."""
     _no_local_state(monkeypatch, tmp_path)
-    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, False))
+    monkeypatch.setattr(
+        state_store,
+        "_load_gist_state_checked",
+        lambda _f: (None, state_store.GIST_READ_UNREACHABLE),
+    )
 
     data, trusted = state_store.load_seen_articles_strict()
 
@@ -172,7 +176,11 @@ def test_strict_seen_read_is_trusted_on_a_genuine_first_run(monkeypatch, tmp_pat
     """A reachable Gist with no file yet is a legitimate empty, and must stay
     writable -- otherwise the very first run could never persist anything."""
     _no_local_state(monkeypatch, tmp_path)
-    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, True))
+    monkeypatch.setattr(
+        state_store,
+        "_load_gist_state_checked",
+        lambda _f: (None, state_store.GIST_READ_OK),
+    )
 
     data, trusted = state_store.load_seen_articles_strict()
 
@@ -183,7 +191,11 @@ def test_strict_seen_read_is_trusted_on_a_genuine_first_run(monkeypatch, tmp_pat
 def test_update_seen_articles_skips_the_write_on_an_untrusted_read(monkeypatch, tmp_path):
     """Missing one run's bookkeeping beats erasing every seen link."""
     _no_local_state(monkeypatch, tmp_path)
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: ({"links": []}, False))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": []}, False, state_store.GIST_READ_UNREACHABLE),
+    )
     saved, mutated = [], []
     monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d))
 
@@ -202,7 +214,11 @@ def test_update_seen_articles_hands_the_mutator_the_fresh_read(monkeypatch, tmp_
     and return an earlier snapshot defeat both the lock and the trust guard."""
     _no_local_state(monkeypatch, tmp_path)
     fresh = {"links": ["https://already-seen"], "recent_topics": [], "pioneer_recent": []}
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: (fresh, True))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (fresh, True, state_store.GIST_READ_OK),
+    )
     saved = []
     monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d))
 
