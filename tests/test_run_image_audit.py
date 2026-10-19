@@ -367,6 +367,10 @@ def test_the_sheet_is_trimmed_to_fit_a_github_issue():
             for n in range(400)]
     report = audit.render_report(many[:200], many[200:], posts_scanned=400)
     assert len(report) <= 65_536
+    # The whole body, prose included — a budget that counts only the item
+    # blocks is not a budget. Measuring 400 items produced 62,336 characters
+    # against a constant that claimed 60,000.
+    assert len(report) <= audit._BODY_BUDGET_CHARS
     assert "are not shown above" in report
     assert "`post-images` artifact" in report
 
@@ -414,3 +418,51 @@ def test_a_non_string_timestamp_cannot_escape_the_per_entry_guard(stamp):
     report = audit.render_report(illustrations, [], posts_scanned=1)
     assert "date unknown" in report
     assert report.count("![](") == 1   # the picture is still shown
+
+
+@pytest.mark.parametrize("url", [123, 4.5, {"uri": "x"}, ["x"], True, None, ""])
+def test_a_non_string_image_url_is_never_retained(url):
+    """save_images hands this to urlparse, so a bad leaf would cost the run.
+
+    Reproduced before fixing: a numeric `fullsize` reached save_images and
+    raised `AttributeError: 'int' object has no attribute 'decode'`. That runs
+    after the report is printed, so under `set -e` the step still fails and
+    both the artifact and the issue are discarded.
+    """
+    post = _image_post()
+    post["post"]["embed"]["images"] = [{"fullsize": url}]
+    illustrations, _ = audit.classify_feed([post], "askfred.be")
+    assert illustrations == []
+
+    card = _card_post()
+    card["post"]["embed"]["external"]["thumb"] = url
+    _, cards = audit.classify_feed([card], "askfred.be")
+    assert cards == []
+
+
+def test_a_non_string_article_uri_is_dropped_not_rendered():
+    card = _card_post()
+    card["post"]["embed"]["external"]["uri"] = 99
+    _, cards = audit.classify_feed([card], "askfred.be")
+    assert len(cards) == 1
+    assert cards[0].source_uri is None
+    assert "Article:" not in audit.render_report([], cards, posts_scanned=1)
+
+
+def test_save_images_survives_a_url_that_urlparse_cannot_read(tmp_path):
+    """Second line of defence: classify_feed rejects these, but this loop runs
+    after the report is printed and anything raising here discards it."""
+    item = audit.AuditItem(created_at="2026-10-19T00:00:00Z", text="t",
+                           image_url=123, post_url="")  # type: ignore[arg-type]
+    assert audit.save_images([item], tmp_path) == 0
+
+
+def test_save_images_survives_a_write_that_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(audit.httpx, "get",
+                        lambda *a, **k: _resp(status_code=200, content=b"x"))
+    def boom(self, data):
+        raise OSError("disk full")
+    monkeypatch.setattr(audit.Path, "write_bytes", boom)
+    item = audit.AuditItem(created_at="2026-10-19T00:00:00Z", text="t",
+                           image_url="https://cdn.bsky.app/img/x", post_url="")
+    assert audit.save_images([item], tmp_path) == 0

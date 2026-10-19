@@ -82,6 +82,14 @@ _IMAGE_BYTE_CAP = 8 * 1024 * 1024
 #: trusting "it will fit" is the shape of reasoning that cost six months.
 _BODY_BUDGET_CHARS = 60_000
 
+#: What the sheet's own prose costs — header, both section intros, the footer.
+#: ``_trim_to_budget`` can only weigh the item blocks, so this is subtracted
+#: rather than ignored: measuring 400 items against the budget produced a
+#: 62,336-character report, 2,336 over the number the constant above claims.
+#: Under GitHub's hard limit either way, but a budget that does not count
+#: everything in the body is not a budget.
+_PROSE_RESERVE_CHARS = 4_000
+
 
 @dataclass(frozen=True)
 class AuditItem:
@@ -178,14 +186,20 @@ def classify_feed(
                 images = embed.get("images")
                 for image in images if isinstance(images, list) else []:
                     url = _as_dict(image).get("fullsize") or _as_dict(image).get("thumb")
-                    if url:
+                    # String, not merely truthy: ``save_images`` hands this to
+                    # urlparse outside its own try, so a numeric or object URL
+                    # would escape this guard and cost the run — the same leak
+                    # ``created_at`` had.
+                    if isinstance(url, str) and url:
                         illustrations.append(AuditItem(image_url=url, **shared))
             elif embed_type.startswith("app.bsky.embed.external"):
                 external = _as_dict(embed.get("external"))
-                thumb = external.get("thumb") or ""
-                if thumb:
+                thumb = external.get("thumb")
+                source = external.get("uri")
+                if isinstance(thumb, str) and thumb:
                     cards.append(AuditItem(
-                        image_url=thumb, source_uri=external.get("uri") or None,
+                        image_url=thumb,
+                        source_uri=source if isinstance(source, str) else None,
                         **shared))
         except Exception as exc:  # noqa: BLE001 - one bad entry, not the run
             print(f"skipped a malformed feed entry: "
@@ -220,11 +234,12 @@ def _trim_to_budget(
     reader can skip. Every picture is still in the artifact either way, and the
     report says how many it is not showing rather than quietly ending early.
     """
+    allowance = _BODY_BUDGET_CHARS - _PROSE_RESERVE_CHARS
     kept_illustrations = list(illustrations)
     kept_cards = list(cards)
     total = sum(len(_render_item(i)) for i in kept_illustrations + kept_cards)
     dropped = 0
-    while total > _BODY_BUDGET_CHARS and (kept_cards or len(kept_illustrations) > 1):
+    while total > allowance and (kept_cards or len(kept_illustrations) > 1):
         victim = kept_cards.pop() if kept_cards else kept_illustrations.pop()
         total -= len(_render_item(victim))
         dropped += 1
@@ -362,21 +377,26 @@ def save_images(items: List[AuditItem], out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = 0
     for index, item in enumerate(items, start=1):
-        host = (urlparse(item.image_url).hostname or "").lower()
-        if host != _IMAGE_HOST:
-            print(f"skipped (unexpected host {host!r}): {item.image_url}",
-                  file=sys.stderr)
-            continue
+        # urlparse is inside the guard too. classify_feed already rejects a
+        # non-string URL, so this is the second line rather than the first —
+        # but this loop runs after the report has been printed, and anything
+        # raising here fails the step under `set -e`, which discards both the
+        # artifact and the issue the script just produced.
         try:
+            host = (urlparse(item.image_url).hostname or "").lower()
+            if host != _IMAGE_HOST:
+                print(f"skipped (unexpected host {host!r}): {item.image_url}",
+                      file=sys.stderr)
+                continue
             resp = httpx.get(item.image_url, timeout=30)
             resp.raise_for_status()
             data = resp.content[:_IMAGE_BYTE_CAP]
+            stamp = (item.created_at[:10] or "undated").replace(":", "-")
+            (out_dir / f"{index:02d}_{stamp}.jpg").write_bytes(data)
         except Exception as exc:  # noqa: BLE001 - best-effort, message captured
-            print(f"download failed for {item.image_url}: "
+            print(f"could not save {item.image_url}: "
                   f"{type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
             continue
-        stamp = (item.created_at[:10] or "undated").replace(":", "-")
-        (out_dir / f"{index:02d}_{stamp}.jpg").write_bytes(data)
         saved += 1
     return saved
 
