@@ -10,10 +10,25 @@ Imagen generate_images path) so a working replacement is one dispatch away if th
 model drops off again, and it verifies the request-level HttpOptions timeout the
 bot relies on. Run via the image-probe workflow — the key is IP-restricted to the
 GitHub runners.
-"""
-import os
-from typing import List
 
+Second provider, added 2026-10-19 (``--provider cloudflare``): Cloudflare Workers
+AI running FLUX.1 Schnell. Rationale in ``docs/REVIEW_blubot_2026-10-19.md`` §C4 —
+it is the only candidate that takes images off Google entirely, which is the
+single point of failure ``PLAN_provider_agnostic.md`` names for a Google-free
+configuration. Cost is *not* the argument (~$2-3/month against $0 at our volume,
+which this project has already said does not decide anything). The open question
+is aesthetic, and a byte count cannot answer it — hence ``--out DIR``, which
+writes the actual images so they can be compared side by side. Still read-only:
+it generates into a directory and posts nothing.
+"""
+import argparse
+import base64
+import binascii
+import os
+from pathlib import Path
+from typing import List, Optional
+
+import httpx
 from google import genai
 from google.genai import types
 
@@ -44,6 +59,97 @@ _IMAGEN_CANDIDATES = [
     "imagen-3.0-generate-002",
 ]
 
+# Cloudflare Workers AI text-to-image candidates. Schnell is the one the review
+# costs out; the others are here so one dispatch shows whether a better-looking
+# model on the same account is reachable.
+_CLOUDFLARE_CANDIDATES = [
+    "@cf/black-forest-labs/flux-1-schnell",
+    "@cf/stabilityai/stable-diffusion-xl-base-1.0",
+    "@cf/bytedance/stable-diffusion-xl-lightning",
+]
+# Schnell's default; 8 is the documented maximum. Billing is per step, so this
+# is also the cost knob — see the review's pricing table.
+_CLOUDFLARE_STEPS = 4
+_CLOUDFLARE_TIMEOUT_SECONDS = 60.0
+
+
+def _save(out_dir: Optional[str], name: str, data: bytes) -> str:
+    """Write probe output for eyeballing. Returns a ' -> path' suffix, or ''.
+
+    Never raises: a failed write must not turn a working model into an ERROR
+    row, because the row is what the model-selection decision reads.
+    """
+    if not out_dir or not data:
+        return ""
+    safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in name)
+    try:
+        path = Path(out_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        target = path / f"{safe}.png"
+        target.write_bytes(data)
+        return f"  -> {target}"
+    except OSError as exc:
+        return f"  (save failed: {type(exc).__name__}: {str(exc)[:120]})"
+
+
+def _cloudflare_creds() -> tuple:
+    account = (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip()
+    token = (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip()
+    if not account or not token:
+        raise SystemExit(
+            "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set "
+            "for --provider cloudflare")
+    return account, token
+
+
+def _probe_cloudflare(
+    client: httpx.Client, account_id: str, model: str, out_dir: Optional[str] = None
+) -> str:
+    """Probe one Workers AI text-to-image model. Same verdict vocabulary as the
+    Gemini probes: OK only when real decoded image bytes came back.
+
+    Workers AI answers with the standard Cloudflare envelope
+    ``{"result": {"image": "<base64>"}, "success": bool, "errors": [...]}``.
+    Three ways that is not an image, all of which used to read as success if you
+    only checked the status code: ``success: false`` with an errors array, a
+    result with no ``image`` field, and a base64 payload that will not decode.
+    """
+    try:
+        resp = client.post(
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
+            json={"prompt": _PROMPT, "steps": _CLOUDFLARE_STEPS},
+            timeout=_CLOUDFLARE_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
+
+    if resp.status_code != 200:
+        return f"ERROR     HTTP {resp.status_code}: {resp.text[:140]}"
+
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        return f"ERROR     non-JSON response: {str(exc)[:140]}"
+
+    if not isinstance(payload, dict):
+        return "ERROR     unexpected response shape (not an object)"
+    if not payload.get("success", False):
+        return f"ERROR     success=false: {str(payload.get('errors'))[:140]}"
+
+    result = payload.get("result")
+    encoded = result.get("image") if isinstance(result, dict) else None
+    if not encoded or not isinstance(encoded, str):
+        return "NO_IMAGE  (no image field in result)"
+
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        return f"ERROR     base64 decode failed: {str(exc)[:140]}"
+    if not data:
+        return "NO_IMAGE  (image field decoded to zero bytes)"
+
+    return f"OK        image={len(data)} bytes{_save(out_dir, model, data)}"
+
 
 def _client() -> genai.Client:
     key = (os.environ.get("GEMINI_API_KEY") or "").strip()
@@ -64,7 +170,7 @@ def _list_image_like(client: genai.Client) -> List[str]:
     return sorted(set(names))
 
 
-def _probe_gemini(client: genai.Client, model: str) -> str:
+def _probe_gemini(client: genai.Client, model: str, out_dir: Optional[str] = None) -> str:
     try:
         result = client.models.generate_content(
             model=model, contents=_PROMPT,
@@ -76,13 +182,14 @@ def _probe_gemini(client: genai.Client, model: str) -> str:
             for part in (content.parts if content else None) or []:
                 inline = getattr(part, "inline_data", None)
                 if inline is not None and inline.data:
-                    return f"OK        image={len(inline.data)} bytes"
+                    return (f"OK        image={len(inline.data)} bytes"
+                            f"{_save(out_dir, model, inline.data)}")
         return "NO_IMAGE  (text-only response)"
     except Exception as exc:
         return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
 
 
-def _probe_imagen(client: genai.Client, model: str) -> str:
+def _probe_imagen(client: genai.Client, model: str, out_dir: Optional[str] = None) -> str:
     try:
         result = client.models.generate_images(
             model=model, prompt=_PROMPT,
@@ -91,7 +198,7 @@ def _probe_imagen(client: genai.Client, model: str) -> str:
         if images:
             data = getattr(getattr(images[0], "image", None), "image_bytes", None)
             if data:
-                return f"OK        image={len(data)} bytes"
+                return f"OK        image={len(data)} bytes{_save(out_dir, model, data)}"
             return "NO_IMAGE  (entry had no image_bytes — filtered?)"
         return "NO_IMAGE  (empty result)"
     except Exception as exc:
@@ -171,7 +278,7 @@ def _first_image_len(result: object) -> int:
     return 0
 
 
-def main() -> int:
+def _run_gemini(out_dir: Optional[str]) -> None:
     client = _client()
 
     print("=== image/imagen models the key enumerates ===")
@@ -185,16 +292,46 @@ def main() -> int:
 
     print("\n=== generate_content (Gemini IMAGE modality — the bot's path) ===")
     for model in gemini:
-        print(f"  {model:<46} {_probe_gemini(client, model)}")
+        print(f"  {model:<46} {_probe_gemini(client, model, out_dir)}")
 
     print("\n=== generate_images (Imagen path) ===")
     for model in imagen:
-        print(f"  {model:<46} {_probe_imagen(client, model)}")
+        print(f"  {model:<46} {_probe_imagen(client, model, out_dir)}")
 
     print("\nPick any row marked OK for IMAGE_MODEL (and switch the call path if "
           "it is an Imagen model).")
 
     _probe_gemini_with_http_timeout(IMAGE_MODEL)
+
+
+def _run_cloudflare(out_dir: Optional[str]) -> None:
+    account_id, token = _cloudflare_creds()
+    print(f"\n=== Cloudflare Workers AI (steps={_CLOUDFLARE_STEPS}) ===")
+    with httpx.Client(headers={"Authorization": f"Bearer {token}"}) as client:
+        for model in _CLOUDFLARE_CANDIDATES:
+            print(f"  {model:<46} {_probe_cloudflare(client, account_id, model, out_dir)}")
+    print("\nThe decision this informs is how the images LOOK, not whether the call "
+          "works — read the saved files, not the byte counts.")
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Read-only image-model diagnostic. Probes which models return "
+                    "real image bytes; --out writes them so they can be compared by eye.")
+    parser.add_argument(
+        "--provider", choices=("gemini", "cloudflare", "both"), default="gemini",
+        help="which provider to probe (default: gemini, the bot's live path)")
+    parser.add_argument(
+        "--out", default=None, metavar="DIR",
+        help="write the generated images here so they can be compared by eye")
+    args = parser.parse_args(argv)
+
+    if args.provider in ("gemini", "both"):
+        _run_gemini(args.out)
+    if args.provider in ("cloudflare", "both"):
+        _run_cloudflare(args.out)
+    if args.out:
+        print(f"\nImages written to {args.out}")
     return 0
 
 

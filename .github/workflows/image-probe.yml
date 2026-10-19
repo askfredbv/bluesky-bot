@@ -10,8 +10,23 @@ name: Image Model Probe (diagnostic)
 # the key is IP-restricted to the runners, so this is the only place the probe is
 # truthful. Trigger from the Actions UI → "Run workflow".
 
+#
+# 2026-10-19: a `provider` input adds Cloudflare Workers AI (FLUX.1 Schnell).
+# That choice is aesthetic, not technical — a byte count cannot tell you whether
+# the images look right — so the probe now writes the generated files and this
+# workflow uploads them as an artifact to be compared by eye. Rationale in
+# docs/REVIEW_blubot_2026-10-19.md §C4. The Cloudflare secrets are optional:
+# leave them unset and the default `gemini` run behaves exactly as before.
+
 on:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: 'Which provider to probe'
+        required: false
+        default: 'gemini'
+        type: choice
+        options: [gemini, cloudflare, both]
 
 jobs:
   probe:
@@ -35,4 +50,20 @@ jobs:
       - name: Probe image models
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python -m scripts.probe_image_models
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python -m scripts.probe_image_models \
+            --provider "${{ inputs.provider || 'gemini' }}" \
+            --out probe-images
+
+      # The point of the run: look at the pictures. Kept short-lived because
+      # they are throwaway diagnostics, not a deliverable.
+      - name: Upload generated images
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: probe-images-${{ inputs.provider || 'gemini' }}
+          path: probe-images/
+          retention-days: 7
+          if-no-files-found: warn
