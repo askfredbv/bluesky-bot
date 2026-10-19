@@ -483,8 +483,25 @@ IMAGE_MODEL: str = "gemini-3.1-flash-image"
 # comparing image models on a copy of the prompt is comparing the copy, and the two
 # drift apart silently the first time one is edited.
 FALLBACK_VISUAL_PROMPT: str = (
-    "A clean, minimal editorial illustration representing the concept: '{topic}'. "
-    "No text, no people, flat design style, muted modern palette."
+    "A clean, minimal editorial illustration representing the concept: '{topic}'."
+)
+
+# Appended to EVERY visual prompt, crafted or static, immediately before the image
+# call. It is a separate constant because of where the old version sat: the words
+# "No text, no people, no hands" were in the instruction to the prompt-WRITING
+# model, which dutifully produced prompts that did not mention text or people —
+# and that prompt then went to the image model carrying no constraint at all. The
+# image generator was never told. Live result on 2026-10-17 and 2026-10-18: both
+# post images rendered captions, one of them reading "USER: ADNIN > LDAD", which
+# is the plainest AI tell there is.
+#
+# Enumerated rather than "no text": the static fallback already said "No text" and
+# still produced a captioned comparison layout for a topic phrased "X vs Y", so the
+# single negation is too weak on its own. Whether the longer list actually holds is
+# a question for the bake-off (--crafted), not something to assume here.
+VISUAL_PROMPT_CONSTRAINTS: str = (
+    " Flat modern design, muted palette. No text, no words, no letters, no numbers, "
+    "no labels, no captions, no signage, no watermark. No people, no hands, no faces."
 )
 
 TOPIC_MAP: Dict[str, List[str]] = {

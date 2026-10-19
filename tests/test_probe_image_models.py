@@ -232,11 +232,30 @@ def test_provider_both_runs_both(monkeypatch):
 # and filenames that don't pair up.
 
 def test_bakeoff_sends_the_bots_own_fallback_prompt():
-    from src.config import FALLBACK_VISUAL_PROMPT, MENTOR_TOPICS
+    from src.config import FALLBACK_VISUAL_PROMPT, MENTOR_TOPICS, VISUAL_PROMPT_CONSTRAINTS
     (topic, prompt), = probe._bakeoff_prompts(1)
     assert topic == MENTOR_TOPICS[0]
-    assert prompt == FALLBACK_VISUAL_PROMPT.format(topic=topic)
+    assert prompt == FALLBACK_VISUAL_PROMPT.format(topic=topic) + VISUAL_PROMPT_CONSTRAINTS
     assert topic in prompt
+
+
+def test_bakeoff_static_prompt_carries_the_constraints():
+    # The static path is the one the bake-off uses to compare models; if it drops
+    # the constraints the comparison is run against a prompt the bot never sends.
+    (_, prompt), = probe._bakeoff_prompts(1)
+    for banned in ("no text", "no people"):
+        assert banned in prompt.lower()
+
+
+def test_bakeoff_crafted_uses_the_production_builder(monkeypatch):
+    from src import agents
+
+    async def _fake(api_key, topic, summary=""):
+        return f"PRODUCTION<{topic}>"
+
+    monkeypatch.setattr(agents, "build_visual_prompt", _fake)
+    prompts = probe._bakeoff_prompts(2, crafted=True)
+    assert [p for _, p in prompts] == [f"PRODUCTION<{t}>" for t, _ in prompts]
 
 
 def test_bakeoff_topic_selection_is_stable_across_runs():
@@ -291,18 +310,26 @@ def test_bakeoff_with_no_topics_does_not_call_the_api(monkeypatch):
 
 def test_bakeoff_flag_skips_the_reachability_probe(monkeypatch):
     called = []
-    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c: called.append(("bakeoff", m, c)))
+    monkeypatch.setattr(
+        probe, "_run_bakeoff", lambda o, m, c, cr: called.append(("bakeoff", m, c, cr)))
     monkeypatch.setattr(probe, "_run_gemini", lambda o: pytest.fail("probe ran during bakeoff"))
     monkeypatch.setattr(probe, "_run_cloudflare", lambda o: pytest.fail("probe ran during bakeoff"))
     assert probe.main(["--bakeoff", "--bakeoff-models", "a, b", "--topics", "2"]) == 0
-    assert called == [("bakeoff", ["a", "b"], 2)]
+    assert called == [("bakeoff", ["a", "b"], 2, False)]
 
 
 def test_bakeoff_topic_count_floors_at_one(monkeypatch):
     seen = []
-    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c: seen.append(c))
+    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c, cr: seen.append(c))
     probe.main(["--bakeoff", "--topics", "0"])
     assert seen == [1]
+
+
+def test_crafted_flag_reaches_the_bakeoff(monkeypatch):
+    seen = []
+    monkeypatch.setattr(probe, "_run_bakeoff", lambda o, m, c, cr: seen.append(cr))
+    probe.main(["--bakeoff", "--crafted"])
+    assert seen == [True]
 
 
 def test_first_image_bytes_shared_by_probe_and_bakeoff():

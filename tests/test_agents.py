@@ -2,7 +2,7 @@ import pytest
 
 from src.agents import generate_content, handle_interactions, _fit_reply, _sync_generate, generate_post_image, _build_generate_kwargs, _validate_thread_shape
 from src import agents
-from src.config import REPLY_MAX_CHARS
+from src.config import REPLY_MAX_CHARS, VISUAL_PROMPT_CONSTRAINTS
 
 
 @pytest.mark.asyncio
@@ -778,7 +778,12 @@ async def test_generate_post_image_uses_crafted_prompt(monkeypatch):
     monkeypatch.setattr(agents, "_sync_generate_image", capture_image)
     await generate_post_image("fake-key", "teamwork", thread_posts=["Post one", "Post two"])
 
-    assert captured_prompt["value"] == "intersecting geometric rings"
+    # The crafted prompt is carried through verbatim, and the constraints are
+    # appended AFTER it. Until 2026-10-19 this assertion was a bare equality and
+    # the constraints lived only in the crafting instruction, so the image model
+    # was never told — live posts on 10-17 and 10-18 rendered captions as a result.
+    assert captured_prompt["value"].startswith("intersecting geometric rings")
+    assert captured_prompt["value"].endswith(VISUAL_PROMPT_CONSTRAINTS)
 
 
 @pytest.mark.asyncio
@@ -801,6 +806,49 @@ async def test_generate_post_image_falls_back_to_static_prompt_on_craft_failure(
     # Fallback prompt includes the topic name and the static template wording
     assert "leadership" in captured_prompt["value"]
     assert "illustration" in captured_prompt["value"]
+    # ...and the constraints reach the image model on this path too.
+    assert captured_prompt["value"].endswith(VISUAL_PROMPT_CONSTRAINTS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crafted", ["a stack of translucent cubes", None])
+async def test_image_constraints_reach_the_image_model_on_every_path(monkeypatch, crafted):
+    """The regression this guards: the constraints used to be given only to the
+    prompt-WRITING model, which obeyed them by not mentioning text or people —
+    while the prompt it produced reached the image model carrying nothing."""
+    seen = {}
+
+    monkeypatch.setattr(
+        agents, "_sync_generate_text",
+        (lambda k, s, t: crafted) if crafted else _raise_craft_failure)
+    monkeypatch.setattr(
+        agents, "_sync_generate_image",
+        lambda api_key, prompt: seen.update(prompt=prompt) or b"img")
+
+    await generate_post_image("fake-key", "estimating someone else's time")
+
+    for banned in ("no text", "no people", "no hands"):
+        assert banned in seen["prompt"].lower(), f"{banned!r} missing from the image prompt"
+
+
+def _raise_craft_failure(k, s, t):
+    raise RuntimeError("model unavailable")
+
+
+@pytest.mark.asyncio
+async def test_craft_failure_logs_the_message_not_just_the_type(monkeypatch):
+    """AGENTS.md §3 — this path degrades silently (the post still ships, with the
+    weaker static prompt), so the message is the only way to tell quota from auth
+    from content filter."""
+    logged = {}
+
+    monkeypatch.setattr(agents, "_sync_generate_text", _raise_craft_failure)
+    monkeypatch.setattr(
+        agents.SafeLogger, "info",
+        lambda event, msg=None, **kw: logged.update(kw) if event == "visual_prompt_craft_failed" else None)
+
+    assert await agents._craft_visual_prompt("fake-key", "topic", "") is None
+    assert "model unavailable" in logged.get("error_msg", "")
 
 
 def _fake_image_response(image_bytes: bytes = b"PNG", *, text_only: bool = False):

@@ -41,6 +41,11 @@ on:
         description: 'bakeoff only: how many Mentor topics to render per model'
         required: false
         default: '5'
+      crafted:
+        description: 'bakeoff only: send the real production prompt (model-written + constraints) instead of the static fallback'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   probe:
@@ -73,6 +78,9 @@ jobs:
             ARGS="--bakeoff --topics ${{ inputs.topics || '5' }}"
             if [ -n "${{ inputs.bakeoff_models }}" ]; then
               ARGS="$ARGS --bakeoff-models ${{ inputs.bakeoff_models }}"
+            fi
+            if [ "${{ inputs.crafted }}" = "true" ]; then
+              ARGS="$ARGS --crafted"
             fi
           else
             ARGS="--provider ${{ inputs.provider || 'gemini' }}"

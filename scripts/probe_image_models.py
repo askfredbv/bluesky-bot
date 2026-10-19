@@ -35,13 +35,15 @@ from google.genai import types
 try:
     # The bot's live image model, prompt and topic pool — probe the real ones,
     # not a guess. The bake-off below is only evidence if it sends what the bot sends.
-    from src.config import FALLBACK_VISUAL_PROMPT, IMAGE_MODEL, MENTOR_TOPICS
+    from src.config import (
+        FALLBACK_VISUAL_PROMPT, IMAGE_MODEL, MENTOR_TOPICS, VISUAL_PROMPT_CONSTRAINTS,
+    )
 except Exception:  # pragma: no cover - defensive if run outside the repo root
     IMAGE_MODEL = "gemini-3.1-flash-image"
     FALLBACK_VISUAL_PROMPT = (
-        "A clean, minimal editorial illustration representing the concept: '{topic}'. "
-        "No text, no people, flat design style, muted modern palette."
+        "A clean, minimal editorial illustration representing the concept: '{topic}'."
     )
+    VISUAL_PROMPT_CONSTRAINTS = " No text, no people."
     MENTOR_TOPICS = []
 
 # Bake-off defaults: the model the bot runs today against the half-price Lite tier
@@ -355,15 +357,35 @@ def _topic_slug(topic: str) -> str:
     return "-".join(w.lower() for w in words) or "topic"
 
 
-def _bakeoff_prompts(count: int) -> List[Tuple[str, str]]:
+def _bakeoff_prompts(count: int, crafted: bool = False) -> List[Tuple[str, str]]:
     """``(topic, prompt)`` for the first ``count`` Mentor topics.
 
     First N rather than a random sample, so two runs are comparable: the point is
     to vary the MODEL, and a different topic set each run reintroduces exactly the
     confound the bake-off exists to remove.
+
+    ``crafted=False`` sends the static fallback: deterministic, so the model is the
+    only variable. ``crafted=True`` runs the real production path through
+    ``agents.build_visual_prompt`` — model-written prompt plus the appended
+    constraints — which is non-deterministic and therefore useless for comparing
+    models, but it is the ONLY way to see what the live pipeline actually sends.
+    Use it to check a constraint change, not to pick a model.
     """
     topics = MENTOR_TOPICS[:count]
-    return [(t, FALLBACK_VISUAL_PROMPT.format(topic=t)) for t in topics]
+    if not crafted:
+        return [(t, FALLBACK_VISUAL_PROMPT.format(topic=t) + VISUAL_PROMPT_CONSTRAINTS)
+                for t in topics]
+
+    import asyncio
+
+    from src.agents import build_visual_prompt
+
+    key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+
+    async def _all() -> List[Tuple[str, str]]:
+        return [(t, await build_visual_prompt(key, t)) for t in topics]
+
+    return asyncio.run(_all())
 
 
 def _probe_gemini_prompt(
@@ -385,7 +407,9 @@ def _probe_gemini_prompt(
         return f"ERROR     {type(exc).__name__}: {str(exc)[:140]}"
 
 
-def _run_bakeoff(out_dir: Optional[str], models: List[str], count: int) -> None:
+def _run_bakeoff(
+    out_dir: Optional[str], models: List[str], count: int, crafted: bool = False
+) -> None:
     """Same prompt, same call path, one image per (topic, model).
 
     Files are named ``<topic>__<model>.png`` — topic first on purpose, so a plain
@@ -396,16 +420,20 @@ def _run_bakeoff(out_dir: Optional[str], models: List[str], count: int) -> None:
     2026-10-19 probe compared one lighthouse, and one image cannot carry a
     decision that changes every picture in the feed.
     """
-    prompts = _bakeoff_prompts(count)
+    prompts = _bakeoff_prompts(count, crafted)
     if not prompts:
         print("Bake-off: no Mentor topics available; nothing to compare.")
         return
 
     client = _client()
     print(f"\n=== bake-off: {len(prompts)} Mentor topics x {len(models)} models "
-          f"({len(prompts) * len(models)} images) ===")
+          f"({len(prompts) * len(models)} images, "
+          f"{'crafted — production path' if crafted else 'static fallback prompt'}) ===")
     for topic, prompt in prompts:
         print(f"\n  topic: {topic}")
+        # The prompt is the thing under test when --crafted is on, so show it.
+        if crafted:
+            print(f"    prompt: {prompt}")
         for model in models:
             stem = f"{_topic_slug(topic)}__{model}"
             print(f"    {model:<40} {_probe_gemini_prompt(client, model, prompt, stem, out_dir)}")
@@ -445,13 +473,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--topics", type=int, default=_BAKEOFF_TOPIC_COUNT, metavar="N",
         help=f"how many Mentor topics to run in --bakeoff (default: {_BAKEOFF_TOPIC_COUNT})")
+    parser.add_argument(
+        "--crafted", action="store_true",
+        help="--bakeoff: send the real production prompt (model-written + appended "
+             "constraints) instead of the static fallback. Non-deterministic, so use "
+             "it to check a prompt change, not to compare models")
     args = parser.parse_args(argv)
 
     if args.bakeoff:
         models = [m.strip() for m in args.bakeoff_models.split(",") if m.strip()]
         if not models:
             parser.error("--bakeoff-models resolved to no models")
-        _run_bakeoff(args.out, models, max(1, args.topics))
+        _run_bakeoff(args.out, models, max(1, args.topics), args.crafted)
         if args.out:
             print(f"\nImages written to {args.out}")
         return 0
