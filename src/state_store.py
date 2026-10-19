@@ -610,18 +610,46 @@ def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) ->
 # KNOWN AND DELIBERATELY NOT FIXED: claims are never pruned by age. Unlike
 # `links`, which is capped at SEEN_LINKS_WINDOW and rotates, a claim only leaves
 # `pending_broadcast` when a run settles it or the MAX_BROADCAST_RESERVATIONS cap
-# pushes it out. In practice a stale claim costs nothing, because
-# `fetch_single_feed` only selects entries published within the last two days
-# (src/news.py) and the claim outlives that window with nothing left to suppress.
-# The exception: a feed that re-issues the SAME canonical URL with a fresh date —
-# an updated article, a feed that bumps `updated_parsed` — puts the story back
-# inside the two-day window, where the stale claim blocks it again. Real, and
-# marginal. Do not "fix" it with age-based pruning: the age at which a claim
-# stops mattering is exactly the age at which the post it may be protecting is
-# still the most recent thing on the account, so expiring claims reopens the
-# repost window this whole mechanism exists to close (assessment, 2026-10-19).
+# pushes it out.
+#
+# A stranded claim is not free. It suppresses its URL on every Curator run until
+# that entry's PUBLISHED date crosses `fetch_single_feed`'s two-day cutoff
+# (src/news.py) — at two scheduled runs a day, as many as four of them. That is
+# the same order of cost as keeping an `uncertain` claim, and it is the price of
+# the suppression being unconditional. What ages out is the claim's EFFECT, not
+# the claim: once the entry leaves the window the record sits in the state with
+# nothing left to suppress.
+#
+# That inert tail is what pruning would clean up, and it is also why the one
+# vector worth naming is NOT the tail: a feed that re-issues the SAME canonical
+# URL with a fresh date — an updated article, a feed that bumps
+# `updated_parsed` — puts the story back inside the two-day window, where the
+# long-inert claim blocks it again. Real, and marginal.
+#
+# Do not "fix" it with age-based pruning, which cannot be both safe and useful.
+# A claim suppresses a story only while that story is still selectable, so a TTL
+# SHORTER than the two-day window drops claims that are still doing their job —
+# that is the repost window, reopened, and reopened precisely in the case the
+# claim exists for (a run that posted and died, where the post is by definition
+# recent). A TTL LONGER than the window drops only claims that could no longer
+# suppress anything, which is tidiness, not a fix. And neither setting touches
+# the vector above: a re-issued URL arrives with a FRESH date against an OLD
+# claim, so the TTL that would clear it is bounded by the gap between the first
+# publication and the re-issue — a feed-side number this code cannot know
+# (assessment, 2026-10-19).
 RESERVATION_STAGE_PENDING = "pending"
 RESERVATION_STAGE_UNCERTAIN = "uncertain"
+
+# The one storage tier whose accepted write nothing can shadow, and so the one
+# that may be trusted WITHOUT a read-back. `_save_gist_state` is the first step
+# of `save_seen_articles` and `_load_gist_state_strict` is the first step of
+# `load_seen_articles_strict`, so a claim the Gist accepted is the claim the next
+# read returns. Every other tier is reached only because a higher one refused the
+# write, and a higher tier that later answers reads hides what the lower one
+# holds. This must be kept in step with the order of those two functions; it is
+# the only tier inference in this module, and it is a fact about them rather than
+# about the environment.
+_UNSHADOWABLE_TIER = "gist"
 
 
 def reserved_links(seen_data: Dict[str, Any]) -> List[str]:
@@ -792,11 +820,38 @@ def reserve_broadcast(link: str) -> bool:
     # (assessment, 2026-10-19).
     seen_after, read_trusted = load_seen_articles_strict()
     if not read_trusted:
-        # Cannot verify, so do not conclude. The durability guards above have
-        # already established that the write was accepted by a tier reads
-        # consult, which makes the claim almost certainly stored; aborting on
-        # top of that trades a near-certain success for a certain silent
-        # failure. Proceed, and say in the log that the proof is missing.
+        # Cannot verify. What may be concluded without a read depends entirely
+        # on WHICH tier took the write, and "any tier that is not None" is not
+        # good enough (Codex review, 2026-10-19).
+        #
+        # An untrusted read means a Gist is configured and unreadable — that is
+        # the only way `load_seen_articles_strict` reaches `trusted=False`. So:
+        #
+        #   tier == "gist"  — the PATCH succeeded against the same Gist whose GET
+        #                     failed. Nothing precedes it in either chain, so when
+        #                     it answers again it answers with this claim.
+        #   tier == "store" — the Gist PATCH FAILED and the fallback took the
+        #                     write, while GIST_ID is still set. The moment the
+        #                     Gist recovers, its older seen_articles.json is
+        #                     returned and the store is never consulted: the claim
+        #                     is invisible and the story can be reposted. That is
+        #                     the window this whole mechanism exists to close, so
+        #                     it is refused even though refusing costs the run.
+        #   tier == "local" — already refused above when a remote tier is
+        #                     configured, which an untrusted read guarantees.
+        if tier != _UNSHADOWABLE_TIER:
+            SafeLogger.error(
+                "broadcast_reservation_shadowable",
+                "Claim went to a fallback tier a recovering Gist would shadow, and the read to check it failed",
+                reserved_link=canonical,
+                storage_tier=tier,
+            )
+            _release_claim(canonical, reason="shadowable_tier")
+            return False
+        # Cannot verify, but the tier that took the write is the tier reads ask
+        # first, so the claim is almost certainly stored. Aborting on top of that
+        # trades a near-certain success for a certain silent failure. Proceed,
+        # and say in the log that the proof is missing.
         SafeLogger.warn(
             "broadcast_reservation_unverified",
             "State read was untrusted, so the reservation could not be read back; broadcasting on the stored write",

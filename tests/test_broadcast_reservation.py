@@ -942,6 +942,58 @@ def test_an_unverifiable_read_proceeds_with_the_broadcast(monkeypatch):
     assert state_store.reserved_links(state) == ["https://a.example.com/x"]
 
 
+def test_an_unverifiable_claim_on_a_shadowable_tier_is_refused(monkeypatch):
+    """Proceeding unverified is safe for the Gist and ONLY for the Gist
+    (Codex, 2026-10-19).
+
+    An untrusted read means GIST_ID is set and the Gist is unreadable — that is
+    the only route to `trusted=False`. If the claim is sitting in the fallback
+    store, the Gist PATCH must have failed, so the moment the Gist recovers its
+    older seen_articles.json answers reads and the store is never consulted. The
+    claim is invisible, the next run reselects the story, and it goes out twice.
+    That is the window the reservation exists to close, so this one is refused
+    even though refusing costs the run.
+    """
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
+    events = _events(monkeypatch)
+    state = {"links": [], "recent_topics": [], "pending_broadcast": []}
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m(state), "store")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, False),
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert "broadcast_reservation_shadowable" in events
+    # Not the Gist path: nothing is broadcast on an unverified fallback write.
+    assert "broadcast_reservation_unverified" not in events
+
+
+def test_an_unverifiable_claim_on_the_gist_is_not_treated_as_shadowable(monkeypatch):
+    """The other side of the same branch, so it cannot drift into refusing
+    everything: the Gist took the write, and nothing precedes it in either the
+    read or the write chain."""
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
+    events = _events(monkeypatch)
+    state = {"links": [], "recent_topics": [], "pending_broadcast": []}
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, False),
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is True
+    assert "broadcast_reservation_shadowable" not in events
+
+
 def test_a_non_durable_reservation_also_releases_its_claim(monkeypatch):
     """Same cleanup on the ephemeral-runner rejection."""
     monkeypatch.setenv("GIST_ID", "abc123")
