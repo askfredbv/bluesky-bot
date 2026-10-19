@@ -17,7 +17,17 @@ on:
         default: ""
 
 concurrency:
-  group: daily-post-${{ github.ref }}
+  # Deliberately NOT scoped by github.ref. The state this workflow serialises on
+  # — the seen-articles Gist, and the pre-broadcast reservation inside it — is a
+  # single remote object shared by every ref, while the file lock in
+  # src/state_store.py only coordinates processes on one runner. Scoped by ref, a
+  # scheduled run on main and a manual validation run on a branch could both read
+  # the state before either claim existed, both write it, both read their own
+  # claim back, and both post the same story. The reservation is a crash-recovery
+  # record, not a distributed mutex: the Gist API offers no conditional write to
+  # build one from, so overlap is prevented here, where it can be.
+  # (Codex review, 2026-10-19.)
+  group: daily-post
   cancel-in-progress: false
 
 jobs:

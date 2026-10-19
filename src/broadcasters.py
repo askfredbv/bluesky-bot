@@ -292,6 +292,15 @@ async def post_to_bluesky(
     sent_uris: List[str] = []
     delivered: List[str] = []
     total_posts = len(content_list)
+    # Did we enter the send call at all? Everything above the first
+    # _send_with_thread_retry below — the blob upload, the embed and facet
+    # construction — runs inside the same try, so a raise there returns an
+    # empty sent_uris that is indistinguishable from a failed send unless we
+    # record this. The pre-broadcast reservation needs the difference: a
+    # story nothing tried to post was definitely not posted (Codex review,
+    # 2026-10-19). Set immediately before the call, so a raise INSIDE it
+    # still counts as attempted — it may have reached the wire.
+    attempted_send = False
 
     # Per-thread retry budgets — shared across every post in the thread.
     rate_limit_attempts = 0
@@ -389,6 +398,7 @@ async def post_to_bluesky(
                 async def _do_send():
                     return await client.send_post(text=post_text, reply_to=reply_ref, facets=facets)
 
+            attempted_send = True
             post = await _send_with_thread_retry(_do_send)
 
             if root_ref is None:
@@ -422,11 +432,13 @@ async def post_to_bluesky(
             error_type=type(e).__name__,
         )
         return BroadcastResult(
-            client=client, sent_uris=sent_uris, error=e, delivered_texts=delivered
+            client=client, sent_uris=sent_uris, error=e, delivered_texts=delivered,
+            attempted=attempted_send,
         )
 
     return BroadcastResult(
-        client=client, sent_uris=sent_uris, error=None, delivered_texts=delivered
+        client=client, sent_uris=sent_uris, error=None, delivered_texts=delivered,
+        attempted=attempted_send,
     )
 
 async def post_to_mastodon(
@@ -486,6 +498,14 @@ async def post_to_mastodon(
     last_id = None
     sent_ids: List[str] = []
     delivered: List[str] = []
+    # The same flag Bluesky carries, for symmetry of meaning rather than because
+    # this path needs it today: unlike Bluesky's, Mastodon's pre-wire work sits
+    # OUTSIDE the broadcast try — the media upload below has its own catch and
+    # posts without the image — so nothing currently reachable raises between
+    # that try and the first send. Keeping the flag means the invariant holds if
+    # pre-wire work is ever added inside it, which is how the Bluesky path
+    # acquired the bug in the first place.
+    attempted_send = False
 
     # Upload image for first-post attachment (if provided and within size cap)
     media_ids = None
@@ -584,6 +604,7 @@ async def post_to_mastodon(
             async def _do_send(pt=post_text, rid=last_id, m=attach, key=post_key):
                 return await _status_post_with_timeout(pt, rid, media=m, idempotency_key=key)
 
+            attempted_send = True
             status = await _send_with_thread_retry(_do_send)
             last_id = status.get('id') if isinstance(status, dict) else getattr(status, "id", None)
             if last_id is not None:
@@ -615,11 +636,13 @@ async def post_to_mastodon(
             error_type=type(e).__name__,
         )
         return BroadcastResult(
-            client=None, sent_uris=sent_ids, error=e, delivered_texts=delivered
+            client=None, sent_uris=sent_ids, error=e, delivered_texts=delivered,
+            attempted=attempted_send,
         )
 
     return BroadcastResult(
-        client=None, sent_uris=sent_ids, error=None, delivered_texts=delivered
+        client=None, sent_uris=sent_ids, error=None, delivered_texts=delivered,
+        attempted=attempted_send
     )
 
 

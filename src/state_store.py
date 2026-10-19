@@ -641,6 +641,43 @@ def _prune_reservations(
     return kept
 
 
+def _release_claim(canonical: str, *, reason: str) -> None:
+    """Drop a claim for a story that will definitely not be broadcast.
+
+    Called when the reservation is refused AFTER its write landed. The caller
+    aborts the broadcast, so nothing can have been posted — and because claims
+    are never pruned by age, leaving this one ``pending`` would suppress the
+    story on every future run. A transient read-back failure would silently cost
+    an article forever, which is the same over-suppression the ``attempted``
+    distinction removed from settlement (Codex review, 2026-10-19).
+
+    Best-effort, and loud when it fails: if this write is refused too, the claim
+    stays and that story is out of the pool until the reservation cap pushes it
+    out.
+    """
+    def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
+        current["pending_broadcast"] = _prune_reservations(
+            current.get("pending_broadcast"), drop_link=canonical
+        )
+        return current
+
+    _, tier = update_seen_articles_checked(_apply)
+    if tier is None:
+        SafeLogger.error(
+            "broadcast_claim_release_failed",
+            "Could not release the claim on a story that was never broadcast",
+            reserved_link=canonical,
+            release_reason=reason,
+        )
+        return
+    SafeLogger.info(
+        "broadcast_claim_released",
+        "Released the claim on a story that was never broadcast",
+        reserved_link=canonical,
+        release_reason=reason,
+    )
+
+
 def reserve_broadcast(link: str) -> bool:
     """Claim ``link`` before it is broadcast. True only if the claim is stored.
 
@@ -678,6 +715,7 @@ def reserve_broadcast(link: str) -> bool:
             reserved_link=canonical,
             storage_tier=tier,
         )
+        _release_claim(canonical, reason="not_durable")
         return False
     # Read the claim back through the very chain the next run will use, rather
     # than reasoning about which tier ought to be authoritative. Two rounds of
@@ -695,6 +733,7 @@ def reserve_broadcast(link: str) -> bool:
             reserved_link=canonical,
             storage_tier=tier,
         )
+        _release_claim(canonical, reason="not_readable")
         return False
     SafeLogger.info(
         "broadcast_reserved",

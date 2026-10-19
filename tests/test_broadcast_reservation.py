@@ -507,6 +507,52 @@ def test_broadcasters_mark_the_pre_wire_bailouts_as_not_attempted(monkeypatch):
     assert masto.attempted is False
 
 
+def test_a_bluesky_raise_before_the_first_send_is_not_attempted(monkeypatch):
+    """Everything above the first send — blob upload, embed and facet building —
+    runs inside the same try, so a raise there returned an empty id list that
+    looked like a failed send (Codex, 2026-10-19)."""
+    import asyncio
+
+    from src import broadcasters
+
+    def _boom(*args, **kwargs):
+        raise ValueError("malformed OpenGraph metadata")
+
+    # build_facets runs for every post, before the send call.
+    monkeypatch.setattr(broadcasters, "build_facets", _boom)
+
+    result = asyncio.run(broadcasters.post_to_bluesky("client", ["a post"], None))
+
+    assert result.sent_uris == []
+    assert result.error is not None
+    assert result.attempted is False  # definitively pre-wire
+
+
+def test_a_bluesky_raise_inside_the_send_counts_as_attempted(monkeypatch):
+    """The ambiguous case: it may have raised after reaching the wire, so the
+    claim must still be held."""
+    import asyncio
+
+    from src import broadcasters
+
+    class _FailingClient:
+        async def send_post(self, **kwargs):
+            raise RuntimeError("connection reset mid-send")
+
+    async def _reraise(attempts, exc, **kwargs):
+        raise exc  # no backoff sleeps in the suite
+
+    monkeypatch.setattr(broadcasters, "build_facets", lambda text: None)
+    monkeypatch.setattr(broadcasters, "sleep_for_transient", _reraise)
+
+    result = asyncio.run(
+        broadcasters.post_to_bluesky(_FailingClient(), ["a post"], None)
+    )
+
+    assert result.sent_uris == []
+    assert result.attempted is True
+
+
 def test_a_delivered_broadcast_reports_attempted(monkeypatch):
     """The default must stay True for every normal return path."""
     from src.metrics import BroadcastResult
@@ -629,6 +675,80 @@ def test_reservation_succeeds_when_the_read_falls_through_to_the_store(monkeypat
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is True
+
+
+def test_a_refused_reservation_releases_the_claim_it_wrote(monkeypatch):
+    """Write lands, read-back fails transiently (Codex, 2026-10-19).
+
+    The caller aborts the broadcast and never reaches settlement, so a claim left
+    behind here would suppress — forever, since claims are not pruned by age — a
+    story that definitively never posted.
+    """
+    monkeypatch.setenv("GIST_ID", "abc123")
+    events = _events(monkeypatch)
+    state = {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [],
+    }
+
+    def _fake(mutator):
+        return mutator(state), "gist"
+
+    monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
+    # The verification read fails: it sees state without the claim.
+    monkeypatch.setattr(
+        state_store, "load_seen_articles", lambda: {"links": [], "recent_topics": []}
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert "broadcast_reservation_not_readable" in events
+    assert "broadcast_claim_released" in events
+    # The story is back in the pool, not silently lost.
+    assert state_store.reserved_links(state) == []
+
+
+def test_a_non_durable_reservation_also_releases_its_claim(monkeypatch):
+    """Same cleanup on the ephemeral-runner rejection."""
+    monkeypatch.setenv("GIST_ID", "abc123")
+    events = _events(monkeypatch)
+    state = {"links": [], "recent_topics": [], "pending_broadcast": []}
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m(state), "local")
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert "broadcast_claim_released" in events
+    assert state_store.reserved_links(state) == []
+
+
+def test_a_failed_release_is_loud(monkeypatch):
+    """If the cleanup write is refused too, the story IS stuck — say so."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(state_store, "update_seen_articles_checked", lambda m: ({}, None))
+
+    state_store._release_claim("https://a.example.com/x", reason="not_readable")
+
+    assert "broadcast_claim_release_failed" in events
+    assert "broadcast_claim_released" not in events
+
+
+def test_release_leaves_other_claims_alone(monkeypatch):
+    state = {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [
+            {"link": "https://keep.example.com/a", "stage": "uncertain"},
+            {"link": "https://a.example.com/x", "stage": "pending"},
+        ],
+    }
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+    )
+
+    state_store._release_claim("https://a.example.com/x", reason="not_readable")
+
+    assert state_store.reserved_links(state) == ["https://keep.example.com/a"]
 
 
 def test_reservation_reads_back_through_the_real_chain(monkeypatch, tmp_path):
