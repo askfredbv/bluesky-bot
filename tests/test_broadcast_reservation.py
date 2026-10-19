@@ -46,17 +46,24 @@ def _state(monkeypatch, initial):
     the one the write lands in, and the read-back is served from the same
     in-memory value, so a reservation here is accepted and nothing touches the
     network.
+
+    ``box["trusted"]`` is what the verifying strict read reports; set it to False
+    to simulate a Gist GET that failed while the write itself had landed.
     """
     monkeypatch.setenv("GIST_ID", "abc123")
     monkeypatch.delenv("STATE_STORE_URL", raising=False)
-    box = {"value": dict(initial), "tier": "gist"}
+    box = {"value": dict(initial), "tier": "gist", "trusted": True}
 
     def _fake(mutator):
         box["value"] = mutator(box["value"])
         return box["value"], box["tier"]
 
     monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
-    monkeypatch.setattr(state_store, "load_seen_articles", lambda: box["value"])
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: (box["value"], box["trusted"]),
+    )
     return box
 
 
@@ -149,6 +156,42 @@ async def test_unstorable_reservation_aborts_the_broadcast(monkeypatch):
     assert payload.mastodon_sent_ids == []
     # Nothing to settle: no claim was ever stored.
     assert settled == []
+
+
+@pytest.mark.asyncio
+async def test_an_unverifiable_read_still_broadcasts(monkeypatch):
+    """The abort above is right for a REFUSED claim and wrong for an unreadable
+    one, and this is the stage-level difference (assessment, 2026-10-19).
+
+    Driving the real `reserve_broadcast` with a verifying read that failed: the
+    write landed in the Gist, the read-back cannot see it, and the run must post
+    anyway. Refusing here cost the run both halves — nothing broadcast, and the
+    claim still in the Gist to suppress the story on the next healthy run.
+    """
+    attempted = _stub_broadcast(monkeypatch, bsky_uris=["at://x"], mastodon_ids=["1"])
+    settled = []
+    monkeypatch.setenv("GIST_ID", "abc123")
+    state = {"links": [], "recent_topics": [], "pending_broadcast": []}
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, False),
+    )
+    monkeypatch.setattr(main, "reserve_broadcast", state_store.reserve_broadcast)
+    monkeypatch.setattr(
+        main, "settle_broadcast", lambda link, *, delivered, **kw: settled.append(delivered)
+    )
+
+    payload = await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
+
+    assert attempted == {"bsky": 1, "mastodon": 1}
+    assert payload.bsky_sent_uris == ["at://x"]
+    assert payload.mastodon_sent_ids == ["1"]
+    # And the claim is settled, which the abort path never reached.
+    assert settled == [True]
 
 
 @pytest.mark.asyncio
@@ -413,12 +456,17 @@ def test_a_shadowed_release_is_reported_not_claimed_as_settled(monkeypatch):
     # What reads actually come back with: the stale Gist, claim still in it.
     monkeypatch.setattr(
         state_store,
-        "load_seen_articles",
-        lambda: {
-            "links": [],
-            "recent_topics": [],
-            "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
-        },
+        "load_seen_articles_strict",
+        lambda: (
+            {
+                "links": [],
+                "recent_topics": [],
+                "pending_broadcast": [
+                    {"link": "https://a.example.com/x", "stage": "pending"}
+                ],
+            },
+            True,
+        ),
     )
 
     state_store.settle_broadcast(
@@ -438,12 +486,17 @@ def test_a_shadowed_keep_or_promote_is_not_flagged(monkeypatch):
     )
     monkeypatch.setattr(
         state_store,
-        "load_seen_articles",
-        lambda: {
-            "links": [],
-            "recent_topics": [],
-            "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
-        },
+        "load_seen_articles_strict",
+        lambda: (
+            {
+                "links": [],
+                "recent_topics": [],
+                "pending_broadcast": [
+                    {"link": "https://a.example.com/x", "stage": "pending"}
+                ],
+            },
+            True,
+        ),
     )
 
     state_store.settle_broadcast("https://a.example.com/x", delivered=True)
@@ -452,6 +505,82 @@ def test_a_shadowed_keep_or_promote_is_not_flagged(monkeypatch):
     )
 
     assert "broadcast_release_not_readable" not in events
+    assert events.count("broadcast_settled") == 2
+
+
+def test_an_unverifiable_release_is_reported_as_unverified(monkeypatch):
+    """The log-only half of the same bug, in the opposite direction
+    (assessment, 2026-10-19).
+
+    The release write was accepted. The verifying read then fails, and the
+    non-strict wrapper's empty default made the surviving claim look gone — so
+    the check that exists to catch a shadowed release logged
+    `broadcast_settled` instead, reporting a release it could not confirm.
+    """
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+    )
+    # The read that would confirm the release failed: empty, and untrusted.
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, False),
+    )
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert "broadcast_release_unverified" in events
+    # Neither of the two things it is NOT: a confirmed settlement, or a
+    # confirmed shadowed release.
+    assert "broadcast_settled" not in events
+    assert "broadcast_release_not_readable" not in events
+
+
+def test_a_confirmed_release_is_reported_as_settled(monkeypatch):
+    """The positive side of the pair: a read the code CAN trust, showing the
+    claim gone, is the one case that may say `broadcast_settled`."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "gist")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, True),
+    )
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert "broadcast_settled" in events
+    assert "broadcast_release_unverified" not in events
+    assert "broadcast_release_not_readable" not in events
+
+
+def test_an_unverifiable_read_does_not_touch_the_other_two_outcomes(monkeypatch):
+    """Promote and keep are not verified at all, trusted read or not — they
+    fail safe, and flagging them would be the over-correction the shadowed-keep
+    test already pins."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, False),
+    )
+
+    state_store.settle_broadcast("https://a.example.com/x", delivered=True)
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=True
+    )
+
+    assert "broadcast_release_unverified" not in events
     assert events.count("broadcast_settled") == 2
 
 
@@ -697,7 +826,9 @@ def test_reservation_fails_when_the_claim_does_not_read_back(monkeypatch):
     )
     # What a later read comes back with: the stale Gist, no claim in it.
     monkeypatch.setattr(
-        state_store, "load_seen_articles", lambda: {"links": [], "recent_topics": []}
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": []}, True),
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
@@ -719,23 +850,31 @@ def test_reservation_succeeds_when_the_read_falls_through_to_the_store(monkeypat
     )
     monkeypatch.setattr(
         state_store,
-        "load_seen_articles",
-        lambda: {
-            "links": [],
-            "recent_topics": [],
-            "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
-        },
+        "load_seen_articles_strict",
+        lambda: (
+            {
+                "links": [],
+                "recent_topics": [],
+                "pending_broadcast": [
+                    {"link": "https://a.example.com/x", "stage": "pending"}
+                ],
+            },
+            True,
+        ),
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is True
 
 
 def test_a_refused_reservation_releases_the_claim_it_wrote(monkeypatch):
-    """Write lands, read-back fails transiently (Codex, 2026-10-19).
+    """Write lands, and a read the code CAN trust does not show the claim
+    (Codex, 2026-10-19).
 
     The caller aborts the broadcast and never reaches settlement, so a claim left
     behind here would suppress — forever, since claims are not pruned by age — a
-    story that definitively never posted.
+    story that definitively never posted. The trust flag is what separates this
+    from the unverifiable read below: a trusted read saying "absent" is evidence,
+    and it still refuses.
     """
     monkeypatch.setenv("GIST_ID", "abc123")
     events = _events(monkeypatch)
@@ -751,7 +890,9 @@ def test_a_refused_reservation_releases_the_claim_it_wrote(monkeypatch):
     monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
     # The verification read fails: it sees state without the claim.
     monkeypatch.setattr(
-        state_store, "load_seen_articles", lambda: {"links": [], "recent_topics": []}
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": []}, True),
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
@@ -759,6 +900,46 @@ def test_a_refused_reservation_releases_the_claim_it_wrote(monkeypatch):
     assert "broadcast_claim_released" in events
     # The story is back in the pool, not silently lost.
     assert state_store.reserved_links(state) == []
+
+
+def test_an_unverifiable_read_proceeds_with_the_broadcast(monkeypatch):
+    """The hole the strict read closes (assessment, 2026-10-19).
+
+    The claim was written and accepted by the Gist. The verifying read then
+    fails, and the non-strict wrapper handed that back as the empty default —
+    indistinguishable from "the claim is not there". The old code refused,
+    released (a release whose own strict read was untrusted too, so it wrote
+    nothing), and aborted the broadcast: the claim stayed in the Gist, nothing
+    was posted, and the next healthy run skipped the story. One transient GET
+    did all of it.
+
+    An unreadable state is not evidence of anything. The durability guards above
+    have already established the write reached a tier reads consult, so the
+    claim is almost certainly stored — proceed, and say the proof is missing.
+    """
+    monkeypatch.setenv("GIST_ID", "abc123")
+    events = _events(monkeypatch)
+    state = {"links": [], "recent_topics": [], "pending_broadcast": []}
+
+    def _fake(mutator):
+        return mutator(state), "gist"
+
+    monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
+    # The Gist GET failed: the empty default, flagged as NOT trustworthy.
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_strict",
+        lambda: ({"links": [], "recent_topics": [], "pioneer_recent": []}, False),
+    )
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is True
+    assert "broadcast_reservation_unverified" in events
+    # Not the trusted-absent path: nothing is refused and nothing is released.
+    assert "broadcast_reservation_not_readable" not in events
+    assert "broadcast_claim_released" not in events
+    assert "broadcast_claim_release_failed" not in events
+    # The claim the run is broadcasting under is still standing.
+    assert state_store.reserved_links(state) == ["https://a.example.com/x"]
 
 
 def test_a_non_durable_reservation_also_releases_its_claim(monkeypatch):
