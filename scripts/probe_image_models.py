@@ -26,7 +26,7 @@ import base64
 import binascii
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import httpx
 from google import genai
@@ -62,18 +62,23 @@ _IMAGEN_CANDIDATES = [
 # Cloudflare Workers AI text-to-image candidates. Schnell is the one the review
 # costs out; the others are here so one dispatch shows whether a better-looking
 # model on the same account is reachable.
+#
+# (model, steps_param, steps). Both fields vary by model family and neither can
+# be sniffed, so they are declared per candidate:
+#   - Schnell takes `steps` (default 4, max 8). Billing is per step, so on that
+#     model this is also the cost knob — see the review's pricing table.
+#   - The SDXL pair takes `num_steps` (default and max 20). Sending `steps` to
+#     them is silently ignored, and sending Schnell's 4 would misrepresent them
+#     in a comparison that is about how the output LOOKS.
 _CLOUDFLARE_CANDIDATES = [
-    "@cf/black-forest-labs/flux-1-schnell",
-    "@cf/stabilityai/stable-diffusion-xl-base-1.0",
-    "@cf/bytedance/stable-diffusion-xl-lightning",
+    ("@cf/black-forest-labs/flux-1-schnell", "steps", 4),
+    ("@cf/stabilityai/stable-diffusion-xl-base-1.0", "num_steps", 20),
+    ("@cf/bytedance/stable-diffusion-xl-lightning", "num_steps", 20),
 ]
-# Schnell's default; 8 is the documented maximum. Billing is per step, so this
-# is also the cost knob — see the review's pricing table.
-_CLOUDFLARE_STEPS = 4
 _CLOUDFLARE_TIMEOUT_SECONDS = 60.0
 
 
-def _save(out_dir: Optional[str], name: str, data: bytes) -> str:
+def _save(out_dir: Optional[str], name: str, data: bytes, ext: str = "png") -> str:
     """Write probe output for eyeballing. Returns a ' -> path' suffix, or ''.
 
     Never raises: a failed write must not turn a working model into an ERROR
@@ -82,17 +87,18 @@ def _save(out_dir: Optional[str], name: str, data: bytes) -> str:
     if not out_dir or not data:
         return ""
     safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in name)
+    safe_ext = "".join(c for c in ext if c.isalnum()) or "png"
     try:
         path = Path(out_dir)
         path.mkdir(parents=True, exist_ok=True)
-        target = path / f"{safe}.png"
+        target = path / f"{safe}.{safe_ext}"
         target.write_bytes(data)
         return f"  -> {target}"
     except OSError as exc:
         return f"  (save failed: {type(exc).__name__}: {str(exc)[:120]})"
 
 
-def _cloudflare_creds() -> tuple:
+def _cloudflare_creds() -> Tuple[str, str]:
     account = (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip()
     token = (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip()
     if not account or not token:
@@ -103,21 +109,33 @@ def _cloudflare_creds() -> tuple:
 
 
 def _probe_cloudflare(
-    client: httpx.Client, account_id: str, model: str, out_dir: Optional[str] = None
+    client: httpx.Client,
+    account_id: str,
+    model: str,
+    out_dir: Optional[str] = None,
+    steps_param: str = "steps",
+    steps: int = 4,
 ) -> str:
     """Probe one Workers AI text-to-image model. Same verdict vocabulary as the
-    Gemini probes: OK only when real decoded image bytes came back.
+    Gemini probes: OK only when real image bytes came back.
 
-    Workers AI answers with the standard Cloudflare envelope
-    ``{"result": {"image": "<base64>"}, "success": bool, "errors": [...]}``.
-    Three ways that is not an image, all of which used to read as success if you
-    only checked the status code: ``success: false`` with an errors array, a
-    result with no ``image`` field, and a base64 payload that will not decode.
+    **Two wire contracts, dispatched on the response content type.** Schnell
+    answers with the standard Cloudflare envelope
+    ``{"result": {"image": "<base64>"}, "success": bool, "errors": [...]}``;
+    the SDXL models answer with a raw ``image/*`` stream and no envelope at all.
+    Sniffing the content type rather than keying off the model name means a model
+    that changes its shape, or a new candidate added to the list, is still read
+    correctly instead of being reported as ERROR with no artifact.
+
+    Ways a 200 is still not an image, none of which a status-code check catches:
+    an ``image/*`` stream with an empty body, ``success: false`` with an errors
+    array, a result with no ``image`` field, and a base64 payload that will not
+    decode.
     """
     try:
         resp = client.post(
             f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
-            json={"prompt": _PROMPT, "steps": _CLOUDFLARE_STEPS},
+            json={"prompt": _PROMPT, steps_param: steps},
             timeout=_CLOUDFLARE_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
@@ -125,6 +143,14 @@ def _probe_cloudflare(
 
     if resp.status_code != 200:
         return f"ERROR     HTTP {resp.status_code}: {resp.text[:140]}"
+
+    content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type.startswith("image/"):
+        data = resp.content
+        if not data:
+            return "NO_IMAGE  (empty image stream)"
+        ext = content_type.split("/", 1)[1] or "png"
+        return f"OK        image={len(data)} bytes{_save(out_dir, model, data, ext)}"
 
     try:
         payload = resp.json()
@@ -306,10 +332,12 @@ def _run_gemini(out_dir: Optional[str]) -> None:
 
 def _run_cloudflare(out_dir: Optional[str]) -> None:
     account_id, token = _cloudflare_creds()
-    print(f"\n=== Cloudflare Workers AI (steps={_CLOUDFLARE_STEPS}) ===")
+    print("\n=== Cloudflare Workers AI (each model at its own default steps) ===")
     with httpx.Client(headers={"Authorization": f"Bearer {token}"}) as client:
-        for model in _CLOUDFLARE_CANDIDATES:
-            print(f"  {model:<46} {_probe_cloudflare(client, account_id, model, out_dir)}")
+        for model, steps_param, steps in _CLOUDFLARE_CANDIDATES:
+            verdict = _probe_cloudflare(
+                client, account_id, model, out_dir, steps_param, steps)
+            print(f"  {model:<46} {steps_param}={steps:<3} {verdict}")
     print("\nThe decision this informs is how the images LOOK, not whether the call "
           "works — read the saved files, not the byte counts.")
 

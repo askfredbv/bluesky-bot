@@ -66,12 +66,17 @@ def test_imagen_empty_result_is_no_image():
 # answers 200 with success=false on a model error, so the status code alone is
 # not a verdict.
 
-def _cf_client(status=200, payload=None, text="", exc=None):
+def _cf_client(status=200, payload=None, text="", exc=None, content_type="application/json",
+               content=b"", sent=None):
     class _Client:
-        def post(self, *_, **__):
+        def post(self, _url, json=None, **__):
+            if sent is not None:
+                sent.append(json)
             if exc:
                 raise exc
-            resp = SimpleNamespace(status_code=status, text=text)
+            resp = SimpleNamespace(
+                status_code=status, text=text, content=content,
+                headers={"content-type": content_type})
             resp.json = (lambda: payload) if payload is not None else _raise_value
             return resp
 
@@ -125,6 +130,53 @@ def test_cloudflare_transport_error_is_error():
 def test_cloudflare_empty_decoded_payload_is_no_image():
     payload = {"success": True, "result": {"image": ""}}
     assert probe._probe_cloudflare(_cf_client(payload=payload), "acct", "m").startswith("NO_IMAGE")
+
+
+# Two wire contracts on the same endpoint: Schnell returns base64 in the
+# Cloudflare envelope, the SDXL pair returns a raw image stream with no
+# envelope. Keying off the model name would misreport a model that changes
+# shape, so the probe sniffs the content type — these pin that.
+
+def test_cloudflare_image_stream_is_ok_without_an_envelope():
+    out = probe._probe_cloudflare(
+        _cf_client(content_type="image/png", content=b"\x89PNG1234"), "acct", "m")
+    assert out.startswith("OK") and "8 bytes" in out
+
+
+def test_cloudflare_image_stream_tolerates_content_type_params():
+    out = probe._probe_cloudflare(
+        _cf_client(content_type="image/jpeg; charset=binary", content=b"\xff\xd8ab"), "acct", "m")
+    assert out.startswith("OK")
+
+
+def test_cloudflare_empty_image_stream_is_no_image():
+    out = probe._probe_cloudflare(_cf_client(content_type="image/png", content=b""), "acct", "m")
+    assert out.startswith("NO_IMAGE") and "stream" in out
+
+
+def test_cloudflare_stream_extension_follows_content_type(tmp_path):
+    probe._probe_cloudflare(
+        _cf_client(content_type="image/jpeg", content=b"\xff\xd8ab"), "acct", "m",
+        out_dir=str(tmp_path))
+    assert [p.name for p in tmp_path.iterdir()] == ["m.jpeg"]
+
+
+def test_cloudflare_sends_the_models_own_steps_parameter():
+    sent = []
+    probe._probe_cloudflare(
+        _cf_client(payload=_cf_ok(), sent=sent), "acct", "m",
+        steps_param="num_steps", steps=20)
+    assert sent == [{"prompt": probe._PROMPT, "num_steps": 20}]
+
+
+def test_candidate_table_declares_a_steps_param_and_value_per_model():
+    # SDXL takes num_steps (default/max 20); Schnell takes steps (default 4).
+    # A candidate added without its own entry would silently get Schnell's.
+    table = {model: (param, value) for model, param, value in probe._CLOUDFLARE_CANDIDATES}
+    assert table["@cf/black-forest-labs/flux-1-schnell"] == ("steps", 4)
+    for model, (param, value) in table.items():
+        if "stable-diffusion-xl" in model:
+            assert (param, value) == ("num_steps", 20), model
 
 
 # --- image saving ----------------------------------------------------------
