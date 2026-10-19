@@ -17,6 +17,7 @@ from src.config import (
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY, Mode,
     LANGUAGE_OPTIONS, IMAGE_MODEL, MAX_OUTPUT_TOKENS, IMAGE_GENERATION_TIMEOUT_SECONDS,
+    FALLBACK_VISUAL_PROMPT, VISUAL_PROMPT_CONSTRAINTS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
@@ -1368,6 +1369,11 @@ async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Option
     Gives the image generator something specific to work with rather than a
     static template. Capped at 10 s — must not block the broadcast path.
     """
+    # These constraints keep the WRITER from describing a captioned or peopled
+    # scene. They are not what keeps them out of the picture — build_visual_prompt
+    # appends VISUAL_PROMPT_CONSTRAINTS to the result for that, because until
+    # 2026-10-19 this instruction was the only place they appeared and the image
+    # model consequently never saw them.
     instruction = (
         "You produce image generation prompts for editorial illustrations. "
         "Output ONE sentence, under 60 words. No text, no people, no hands. "
@@ -1391,8 +1397,30 @@ async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Option
             "visual_prompt_craft_failed",
             "Falling back to static image prompt",
             error_type=type(exc).__name__,
+            # AGENTS.md §3: the type alone cannot tell quota from auth from
+            # content filter from a deprecated model, and this path degrades
+            # silently — the post still ships, with the weaker static prompt.
+            error_msg=str(exc)[:200],
         )
         return None
+
+
+async def build_visual_prompt(
+    api_key: str, topic: str, summary: str = ""
+) -> str:
+    """The whole prompt the image model receives: crafted-or-static, plus the
+    constraints that must survive to the image call.
+
+    One builder because the constraints have to be appended LAST, after the
+    crafted prompt comes back. Putting them in the crafting instruction is what
+    broke: the prompt-writer obeyed them and the image model never heard them.
+
+    Also the entry point a diagnostic should call, so that what gets checked is
+    production's prompt rather than a reconstruction of it.
+    """
+    crafted = await _craft_visual_prompt(api_key, topic, summary)
+    base = crafted or FALLBACK_VISUAL_PROMPT.format(topic=topic)
+    return base.rstrip() + VISUAL_PROMPT_CONSTRAINTS
 
 
 async def generate_post_image(
@@ -1408,12 +1436,7 @@ async def generate_post_image(
     Only called for Mentor and Strategist modes — Curator uses a link card.
     """
     summary = " ".join(thread_posts or [])[:800]
-    visual_prompt = await _craft_visual_prompt(api_key, topic, summary)
-    if not visual_prompt:
-        visual_prompt = (
-            f"A clean, minimal editorial illustration representing the concept: '{topic}'. "
-            "No text, no people, flat design style, muted modern palette."
-        )
+    visual_prompt = await build_visual_prompt(api_key, topic, summary)
     try:
         image = await asyncio.wait_for(
             asyncio.to_thread(_sync_generate_image, api_key, visual_prompt),
