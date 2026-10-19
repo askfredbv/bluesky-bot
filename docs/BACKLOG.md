@@ -3,24 +3,82 @@
 Living list of pending work and parked ideas. Bot is shipping at **v4.30.0** (2026-10-14). Release notes for every version live on the [GitHub releases page](https://github.com/askfredbv/bluesky-bot/releases) — this file does not duplicate them.
 
 > **Before working on this project, read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md).** Six weeks of infrastructure landed on top of a hardcoded fallback that was shipping placeholder posts to production the whole time. The retro names the pattern (metrics-as-substitute-for-reading) and the corrective (open the live feed first). Don't repeat it.
+>
+> **It has been repeated twice since.** The 2026-10-12 cold read (2 of 20 posts clearing the bar) and the 2026-10-19 image-prompt finding (six months of captioned images, found by opening three files) are the same pattern. Both were found by looking at output and could not have been found any other way. The corrective has been written down three times and automated zero times — see corrective 3 in the 2026-10-19 finding, which is the attempt to fix that.
 
 ---
 
 ## Priority order
 
-Updated 2026-10-10. Items 1 and 2 are closed by v4.28.0 and item 3 by the wiki push of
-2026-10-10; item 4 is now the next action, still gated on a week of
-`keyword_substring_only_matches` data.
+Updated 2026-10-19. Items 1-3 are closed. **The three correctives in the 2026-10-19
+finding below are the next actions** — two of them are an afternoon's work between
+them. Item 4 remains gated on `keyword_substring_only_matches` data and item 5 is
+time-boxed; neither is blocked by the new items.
+
+**FINDING 2026-10-19 — our review effort is aimed at `.py`, and that is not where the
+bugs were.**
+
+A security scan on 2026-10-14 (#189-#195, four P1s closed) did not prevent a run of
+defects five days later. Most of that is not the scan's fault and the distinction is the
+useful part:
+
+- The workflow-injection P1, the committed `seen_articles.json.bak` P1 and the eight
+  reservation P2s were all in code written **that same day**. A scan certifies a commit,
+  not a repository; its half-life here is days. The review loop caught all of them.
+- **The exception is the one that counts.** `git log -S` dates the image-prompt bug to
+  **2026-04-18 (v4.11.0)**. Six months, through the scan, through every release since,
+  through a green test suite and a clean mypy. `No text, no people, no hands` was in the
+  instruction to the prompt-*writing* model; the prompt it produced reached the image
+  model carrying nothing. Live posts on 10-17 and 10-18 rendered captions, one reading
+  `USER: ADNIN > LDAD`. No scanner looks for "this instruction went to the wrong model".
+  What found it was opening three images.
+
+**This is the third occurrence of the same meta-lesson.** `RETRO_2026-05-08` (six weeks
+on top of a placeholder fallback; corrective: *open the live feed first*) and the
+2026-10-12 cold read (2 of 20) say the same thing. It has been written down twice and
+automated zero times, so it only fires when somebody happens to look.
+
+**The structural read:** every finding that day outside the reservation work was in
+something that is **not source code** — a `.yml`, a `.bak`, a `.png`. The scan, Codex,
+pytest and mypy are all aimed at `.py`. The highest-severity item was found by reading a
+*file list*. The three correctives below close that gap in the three places it opened.
+They are deliberately unnumbered: the numbered list under them is the standing
+priority order and renumbering it to insert these would break every reference to it.
+
+**Corrective 1 — lint the workflows.** There is no `actionlint` or `zizmor` step in
+CI — checked 2026-10-19. The self-inflicted P1 that day was `${{ inputs.topics }}` interpolated
+into a `run:` block, which GitHub substitutes into the script text before bash parses
+it: a dispatcher supplying `$(...)` would have executed it in a step holding
+`GEMINI_API_KEY` and both Cloudflare secrets. That is a textbook class a linter
+catches permanently for one CI step. **Cheapest item here and the only one that closes
+a class rather than an instance.**
+
+**Corrective 2 — fail CI on a tracked state artifact.** No test asserts this —
+checked 2026-10-19. A test run wrote `seen_articles.json.bak`, `.gitignore` covered only the bare name, and
+it was committed. A committed `.bak` defeats the 2026-09-11 stray-`.bak` guard
+specifically: `_load_json_with_repair_strict` returns `from_file=True` for a restored
+backup, so an empty-but-**trusted** state would overwrite the real Gist and erase every
+seen link, topic and Pioneer cooldown. The patterns are fixed (#200), but the class is
+not: roughly ten lines asserting `git ls-files` returns nothing state-shaped turns a
+human noticing into a gate. A human noticing is what we got, and only by luck.
+
+**Corrective 3 — look at the output on a schedule.** The only possible detector for
+the item that actually shipped damage for six months. `voice-audit.yml` already does this for text;
+the gap is visual. A monthly job that pulls the last N post images into an artifact for
+a two-minute human look has no recurring cost, which matters under the operating goal —
+and it is the automation the retro's corrective has been missing twice. Design it so
+the human step is *looking*, not reading a report about looking; a metric here would
+repeat the mistake the retro names.
 
 1. **[DONE 2026-10-08] Live-verify the 2026-10-06 scoring changes.** Read on the 07:00 UTC
-   runs of 10-07 and 10-08. Both beat the baselines (a primary source in the shortlist in
-   2 of 21 runs before; 13 of 21 runs offering one publisher; 79 of 105 slots arXiv):
-   10-07 offered four distinct publishers including two tier-1, 10-08 three including two
-   tier-1, and `tier1_source_promoted` fired on 10-08. `recent_topics` now records
-   `General`, so the cooldown washes through as designed.
-   `keyword_substring_only_matches` put a number on the loose matching across the whole
-   pool, not just titles: 311 of 1165 items on 10-07 and 338 of 1328 on 10-08, almost all
-   of it the three-letter `app`. That is the data item 4 is gated on.
+runs of 10-07 and 10-08. Both beat the baselines (a primary source in the shortlist in
+2 of 21 runs before; 13 of 21 runs offering one publisher; 79 of 105 slots arXiv):
+10-07 offered four distinct publishers including two tier-1, 10-08 three including two
+tier-1, and `tier1_source_promoted` fired on 10-08. `recent_topics` now records
+`General`, so the cooldown washes through as designed.
+`keyword_substring_only_matches` put a number on the loose matching across the whole
+pool, not just titles: 311 of 1165 items on 10-07 and 338 of 1328 on 10-08, almost all
+of it the three-letter `app`. That is the data item 4 is gated on.
 2. **[DONE 2026-10-08] Cut the release.** v4.28.0, seventeen commits since v4.27.1.
 
 **OPEN TRIAL — Sonnet as primary. Opened 2026-10-12, DECIDE BY 2026-10-26.**
@@ -48,48 +106,48 @@ separately — see the note under item 5.
 *On 2026-10-26, write KEEP or REVERT here with the reason.* An open trial with no dated
 decision is just an undocumented config change.
 3. **[DONE 2026-10-10] Wiki debt.** Wiki `bc7e2e6..f83dc21`, verified on the rendered
-   pages rather than the raw files: `Home.md` (tests 980 → 998, the model chain now
-   ending in `claude-haiku-5-5`), `Configuration.md` (the optional `ANTHROPIC_API_KEY`
-   secret and `ANTHROPIC_FALLBACK_MODELS`), `Troubleshooting.md`
-   (`fallback_provider_armed`), `Architecture.md` (`src/llm.py`, `fallback-probe.yml`,
-   the dispatch rule and the append-after-`filter_available_models` ordering).
+pages rather than the raw files: `Home.md` (tests 980 → 998, the model chain now
+ending in `claude-haiku-5-5`), `Configuration.md` (the optional `ANTHROPIC_API_KEY`
+secret and `ANTHROPIC_FALLBACK_MODELS`), `Troubleshooting.md`
+(`fallback_provider_armed`), `Architecture.md` (`src/llm.py`, `fallback-probe.yml`,
+the dispatch rule and the append-after-`filter_available_models` ordering).
 
-   **Most of this list was already written and the item was stale.** The scoring
-   constants (`TOPIC_REPEAT_*`, `TIME_DECAY_*`, `TIER1_SOURCE_SCORE`,
-   `MIN`/`MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`), the monthly `MOMENTUM_PRODUCTS`
-   note, the four v4.28.0 log events, source-mixed `select_candidates` and the host
-   matching were all present before today — only the fallback entries and the test
-   count were genuinely missing. The v4.28.0 release recorded itself as having updated
-   Home only, so the ledger over-reported the debt for two releases.
-   **Lesson for `RELEASING.md` §3: check each page before carrying a debt list forward.**
-   An item that overstates what is outstanding gets deferred as if it were large, which
-   is how this one survived three releases.
+**Most of this list was already written and the item was stale.** The scoring
+constants (`TOPIC_REPEAT_*`, `TIME_DECAY_*`, `TIER1_SOURCE_SCORE`,
+`MIN`/`MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`), the monthly `MOMENTUM_PRODUCTS`
+note, the four v4.28.0 log events, source-mixed `select_candidates` and the host
+matching were all present before today — only the fallback entries and the test
+count were genuinely missing. The v4.28.0 release recorded itself as having updated
+Home only, so the ledger over-reported the debt for two releases.
+**Lesson for `RELEASING.md` §3: check each page before carrying a debt list forward.**
+An item that overstates what is outstanding gets deferred as if it were large, which
+is how this one survived three releases.
 4. **De-bias phase 2 — bound the keyword magnitudes.** `PRODUCT` (+5) and `GROUNDBREAKING`
-   (+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
-   provenance. **Deliberately gated on a week of item 1's
-   `keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
-   which is what the abandoned landmark gate (§3) teaches against doing without data.
+(+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
+provenance. **Deliberately gated on a week of item 1's
+`keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
+which is what the abandoned landmark gate (§3) teaches against doing without data.
 5. **Re-run the Curator judgement test, ~2026-10-20.** Position entropy cannot tell a wise
-   choice from an arbitrary one; tier capture when candidate quality *varies within a
-   batch* can (framing from an outside review, 2026-10-06). Currently unanswerable: only
-   **5 of 21** batches posed a real test at all, and the model captured the top-tier item
-   in 1 of those 5 — n too small to mean anything. Item 1's fix is what makes the metric
-   meaningful.
+choice from an arbitrary one; tier capture when candidate quality *varies within a
+batch* can (framing from an outside review, 2026-10-06). Currently unanswerable: only
+**5 of 21** batches posed a real test at all, and the model captured the top-tier item
+in 1 of those 5 — n too small to mean anything. Item 1's fix is what makes the metric
+meaningful.
 
-   **Data point, 2026-10-10 (n=1, human):** during the fallback model trial, `ttok 1.0`
-   scored **12.1**, second-highest of that day's pool, and Frederik — reading five models'
-   posts about it blind — reported he "didn't quite catch the second article as being
-   interesting" and could not judge voice on it. So a near-top score bought an item the
-   author found unpostable. That is the gap this item is about, observed from the human
-   side rather than from tier capture: the scorer ranks *provenance and keywords*, and
-   nothing in it ranks whether there is a "so what". One observation on one article
-   proves nothing on its own; it is recorded so the 10-20 re-run has something concrete
-   to look for, and because the same pool's top item (`Python 3.15`, 8.8) read fine.
+**Data point, 2026-10-10 (n=1, human):** during the fallback model trial, `ttok 1.0`
+scored **12.1**, second-highest of that day's pool, and Frederik — reading five models'
+posts about it blind — reported he "didn't quite catch the second article as being
+interesting" and could not judge voice on it. So a near-top score bought an item the
+author found unpostable. That is the gap this item is about, observed from the human
+side rather than from tier capture: the scorer ranks *provenance and keywords*, and
+nothing in it ranks whether there is a "so what". One observation on one article
+proves nothing on its own; it is recorded so the 10-20 re-run has something concrete
+to look for, and because the same pool's top item (`Python 3.15`, 8.8) read fine.
 
-   **Measured 2026-10-12, and it is bigger than this item.** See the cold-read finding
-   immediately below: the thing that predicts a postable Curator post is whether the
-   item carries a *contestable claim*, and no scoring signal rewards that. Tuning
-   keyword magnitudes (item 4) optimises a different axis.
+**Measured 2026-10-12, and it is bigger than this item.** See the cold-read finding
+immediately below: the thing that predicts a postable Curator post is whether the
+item carries a *contestable claim*, and no scoring signal rewards that. Tuning
+keyword magnitudes (item 4) optimises a different axis.
 
 **FINDING 2026-10-12 — the prompt is the binding constraint, not the model. Mentor is 0/10.**
 
@@ -142,15 +200,15 @@ explain and no age-fair comparison to make. One mildly encouraging number: 12 of
 at least one interaction, against the historic 41-of-42-zero baseline in `AGENTS.md`.
 
 6. **Explicit `--mode`.** `main.py` picks the mode from `current_hour < 11`, so a dispatch
-   delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
-   observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it
-   needs a four-hour delay, so this is cheap insurance, not a live defect. The workflow
-   already has a `force_mode` input; the cron dispatches just do not pass it.
+delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
+observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it
+needs a four-hour delay, so this is cheap insurance, not a live defect. The workflow
+already has a `force_mode` input; the cron dispatches just do not pass it.
 7. **Remaining open issues** — fix when convenient (see §2)
 8. **Observational items** — wait for more runs, then decide (see §3)
 9. **The plan** — `PLAN_engagement.md` covers everything else (see §4). Phase 2 and 3 stay
-   data-gated. Phase 4b is code-complete and **parked by decision**, not merely dormant
-   (see §1).
+data-gated. Phase 4b is code-complete and **parked by decision**, not merely dormant
+(see §1).
 
 **CLOSED 2026-10-06 — voice: the em-dash rule works, no follow-up needed.** The 2026-09-12
 rule said to add reject-and-regenerate only if `em_dash_detected` did not fall to ~0. Across
