@@ -1,0 +1,60 @@
+name: Workflow Lint
+
+# Audits .github/workflows/ for the security classes that CI's Python linting
+# cannot see. Added 2026-10-19 after a P1 of our own making: `${{ inputs.topics }}`
+# was interpolated straight into a `run:` block in image-probe.yml. GitHub
+# substitutes those expressions into the script TEXT before bash parses it, so a
+# dispatcher supplying `$(...)` would have executed it in a step holding
+# GEMINI_API_KEY and both Cloudflare secrets. Codex caught it; nothing in the
+# repo would have. ruff and mypy only ever look at .py.
+#
+# zizmor flags exactly that pattern as error[template-injection] at High
+# confidence — verified against a repro of the real bug before this was added,
+# not assumed.
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install zizmor
+        # Pinned, like every other dependency here. Deliberately NOT in
+        # requirements-dev.txt: it is a CI-only auditor with no place in a
+        # production or local install, and adding it there would drag the
+        # lockfile check into every version bump of a linter.
+        run: python -m pip install --disable-pip-version-check zizmor==1.31.1
+
+      - name: Audit workflows
+        # --offline: no token, no network, hermetic and reproducible.
+        #
+        # --min-confidence high is the gate, and it is deliberate. On the
+        # workflows as they stand (2026-10-19) zizmor reports 19 findings, every
+        # one of them LOW confidence: 14 `artipacked` (checkout without
+        # persist-credentials: false) and 5 informational `template-injection`
+        # in non-shell contexts. The real P1 was HIGH confidence. Gating on
+        # confidence therefore separates signal from noise exactly, while
+        # leaving every audit switched on — unlike suppressing `artipacked`,
+        # which would also blind us to a future high-confidence instance of it.
+        #
+        # The 14 artipacked findings are real hardening debt, not false
+        # positives; they are tracked separately rather than silenced. If this
+        # gate ever starts passing something it should have caught, raise the
+        # bar here before reaching for an ignore rule.
+        run: zizmor --offline --min-confidence high .github/workflows/

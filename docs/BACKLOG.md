@@ -10,10 +10,13 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.30.0** (20
 
 ## Priority order
 
-Updated 2026-10-19. Items 1-3 are closed. **The three correctives in the 2026-10-19
-finding below are the next actions** — two of them are an afternoon's work between
-them. Item 4 remains gated on `keyword_substring_only_matches` data and item 5 is
-time-boxed; neither is blocked by the new items.
+Updated 2026-10-19. Items 1-3 are closed. **Correctives 1 and 2 of the 2026-10-19
+finding shipped the same day; corrective 3 is tracked as #203.** Item 4 remains gated
+on `keyword_substring_only_matches` data and item 5 is time-boxed; neither is blocked.
+
+*Anything recorded here that is meant to be built gets a GitHub issue, not a bullet.
+A bullet has no state and nothing closes it — which is how the corrective in
+`RETRO_2026-05-08` sat unautomated through three occurrences of the same bug.*
 
 **FINDING 2026-10-19 — our review effort is aimed at `.py`, and that is not where the
 bugs were.**
@@ -45,16 +48,24 @@ pytest and mypy are all aimed at `.py`. The highest-severity item was found by r
 They are deliberately unnumbered: the numbered list under them is the standing
 priority order and renumbering it to insert these would break every reference to it.
 
-**Corrective 1 — lint the workflows.** There is no `actionlint` or `zizmor` step in
-CI — checked 2026-10-19. The self-inflicted P1 that day was `${{ inputs.topics }}` interpolated
+**[DONE 2026-10-19] Corrective 1 — lint the workflows.** `workflow-lint.yml` runs
+`zizmor --offline --min-confidence high` on every PR. Verified against a repro of the
+real bug before shipping, not assumed: zizmor flags it `error[template-injection]` at
+High confidence, and the gate passes on the workflows as they stand. The confidence
+threshold is the deliberate part — all 19 current findings are Low confidence (14
+`artipacked`, now tracked as #204) while the P1 was High, so gating on confidence
+separates them exactly without switching any audit off. Original note: The self-inflicted P1 that day was `${{ inputs.topics }}` interpolated
 into a `run:` block, which GitHub substitutes into the script text before bash parses
 it: a dispatcher supplying `$(...)` would have executed it in a step holding
 `GEMINI_API_KEY` and both Cloudflare secrets. That is a textbook class a linter
 catches permanently for one CI step. **Cheapest item here and the only one that closes
 a class rather than an instance.**
 
-**Corrective 2 — fail CI on a tracked state artifact.** No test asserts this —
-checked 2026-10-19. A test run wrote `seen_articles.json.bak`, `.gitignore` covered only the bare name, and
+**[DONE 2026-10-19] Corrective 2 — fail CI on a tracked state artifact.**
+`tests/test_repo_hygiene.py` asserts no state file or sibling is tracked, and that
+`.gitignore` still carries the patterns — the second test catches the edit that would
+let the next one through, which is the failure that actually happened. Proved by
+force-adding a `.bak` and watching it fail, then pass again once removed. Original note: A test run wrote `seen_articles.json.bak`, `.gitignore` covered only the bare name, and
 it was committed. A committed `.bak` defeats the 2026-09-11 stray-`.bak` guard
 specifically: `_load_json_with_repair_strict` returns `from_file=True` for a restored
 backup, so an empty-but-**trusted** state would overwrite the real Gist and erase every
@@ -62,8 +73,8 @@ seen link, topic and Pioneer cooldown. The patterns are fixed (#200), but the cl
 not: roughly ten lines asserting `git ls-files` returns nothing state-shaped turns a
 human noticing into a gate. A human noticing is what we got, and only by luck.
 
-**Corrective 3 — look at the output on a schedule.** The only possible detector for
-the item that actually shipped damage for six months. `voice-audit.yml` already does this for text;
+**[TRACKED → #203] Corrective 3 — look at the output on a schedule.** The only
+possible detector for the item that actually shipped damage for six months. `voice-audit.yml` already does this for text;
 the gap is visual. A monthly job that pulls the last N post images into an artifact for
 a two-minute human look has no recurring cost, which matters under the operating goal —
 and it is the automation the retro's corrective has been missing twice. Design it so
