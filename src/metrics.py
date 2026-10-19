@@ -50,6 +50,14 @@ class BroadcastResult:
     # shipped — the metrics row must read this, not the pre-broadcast text,
     # or ``hashtag_count`` reports 0 for every tagged Mastodon post.
     delivered_texts: List[str] = field(default_factory=list)
+    # Did this platform get as far as its first send? False only on the paths
+    # that bail BEFORE the wire — no access token, or the length invariant
+    # refusing the content — which otherwise return exactly what a send that
+    # failed returns: an empty ``sent_uris`` and no ``error``. The pre-broadcast
+    # reservation has to tell those apart: a story nothing even tried to post was
+    # definitely not posted, so holding its claim suppresses it for nothing
+    # (Codex review, 2026-10-19). True by default, which is the safe reading.
+    attempted: bool = True
 
 
 @dataclass

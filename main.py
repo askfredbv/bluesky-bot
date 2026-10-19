@@ -267,6 +267,25 @@ def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
     return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
 
 
+def _platform_attempted(scheduled: bool, result: Any) -> bool:
+    """Did this platform get as far as its first send?
+
+    Reads ``BroadcastResult.attempted``, with two cases the result cannot carry:
+    a platform whose task was never scheduled at all (no Bluesky session) did not
+    try, and a task that raised has no result to read — which is ambiguous, since
+    it may have raised after something reached the wire, so it counts as tried.
+
+    Only the reservation uses this, to tell "nothing tried" from "tried and no id
+    came back". Everything else downstream reads the sent-id lists, where an
+    empty list means the same thing either way.
+    """
+    if not scheduled:
+        return False
+    if result is None:
+        return True
+    return bool(getattr(result, "attempted", True))
+
+
 def _should_attempt_curator_fallback_image(force_image: bool) -> bool:
     """Whether to generate a fallback card image for a thumbnail-less Curator post.
 
@@ -542,13 +561,22 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Settle the claim as soon as the platforms have answered, before the metrics
     # and automation stages get a chance to hang. Either platform returning an id
     # means the post is public — a partially delivered thread included — so the
-    # claim becomes an ordinary seen-link. A run where neither answered keeps its
-    # claim as "uncertain" rather than clearing it: a send that landed and lost
-    # its response is indistinguishable from one that never landed, and of the two
-    # readings only the suppressing one is safe (see src/state_store.py).
+    # claim becomes an ordinary seen-link. A run where a platform TRIED and
+    # nothing came back keeps its claim as "uncertain" rather than clearing it: a
+    # send that landed and lost its response is indistinguishable from one that
+    # never landed, and of the two readings only the suppressing one is safe.
+    #
+    # A run where nothing tried is the third case and releases the claim. Holding
+    # it would suppress a story that definitively never reached a platform, for
+    # nothing, indefinitely (see src/state_store.py).
     if posted_link:
         settle_broadcast(
-            posted_link, delivered=bool(bsky_sent_uris or mastodon_sent_ids)
+            posted_link,
+            delivered=bool(bsky_sent_uris or mastodon_sent_ids),
+            attempted=(
+                _platform_attempted(bsky_client is not None, bsky_result)
+                or _platform_attempted(True, mastodon_result)
+            ),
         )
 
     # Step 4: assemble the per-post metadata that capture_post_metrics_stage

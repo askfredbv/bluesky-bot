@@ -440,30 +440,19 @@ def load_seen_articles() -> Dict[str, Any]:
     return load_seen_articles_strict()[0]
 
 
-def _readable_state_tier() -> str:
-    """The one tier a later read of the seen state will come back from.
+def _remote_state_configured() -> bool:
+    """Is either remote state tier configured at all?
 
-    ``load_seen_articles_strict`` tries Gist, then ``STATE_STORE_URL``, then the
-    local file — and a Gist that parses wins unconditionally, so it never reaches
-    the tiers below it. A write that lands in a LOWER tier than the highest
-    configured one is therefore invisible to every subsequent read, which for a
-    reservation is worse than a plain write failure: during a Gist write-only
-    outage the write "succeeds" to the fallback store, the next run reloads the
-    unchanged Gist, never sees the claim, and reposts the story the reservation
-    was taken to prevent. (Codex review, 2026-10-19 — the first version of this
-    guard only rejected the local tier and missed the same shadowing one level
-    up.)
-
-    Also the reason a local write is not durable on a GitHub Actions runner: the
-    local tier is only reached there when both remote tiers refused, and that
-    file dies with the job. In local development it is the only tier there is,
-    and so the readable one.
+    The one thing a read-back cannot discover: on a GitHub Actions runner the
+    local tier is reached only when both remote tiers refused the write, and that
+    file is thrown away with the job — so the claim reads back fine in THIS
+    process and is gone by the next run. In local development the local file is
+    the only tier there is, and a reservation on it is perfectly real.
     """
-    if os.environ.get("GIST_ID", "").strip():
-        return "gist"
-    if os.environ.get("STATE_STORE_URL", "").strip():
-        return "store"
-    return "local"
+    return bool(
+        os.environ.get("GIST_ID", "").strip()
+        or os.environ.get("STATE_STORE_URL", "").strip()
+    )
 
 
 def save_seen_articles(seen_data: Dict[str, Any]) -> Optional[str]:
@@ -599,16 +588,24 @@ def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) ->
 #   "pending"   — written before the broadcast. A run that settles overwrites or
 #                 removes it, so finding one means the run never got that far:
 #                 the post may well be live. Suppressing it is the whole point.
-#   "uncertain" — written when the run completed and NO platform returned an id.
-#                 Not the same as "nothing was posted": a send that lands and
-#                 then loses its response looks identical from here, which is
-#                 why the claim is kept rather than cleared.
+#   "uncertain" — written when a platform TRIED and no id came back. Not the same
+#                 as "nothing was posted": a send that lands and then loses its
+#                 response looks identical from here, which is why the claim is
+#                 kept rather than cleared.
 #
 # Keeping an uncertain claim costs one candidate story. Clearing it would reopen
 # the window this exists to close, and a repost is the failure this project
 # cannot take back; the suppression is also an order of magnitude smaller than
 # the one deliberately removed from `persistence_stage` (four candidates on
 # every SUCCESSFUL run, against one on a total-failure run).
+#
+# A run where no platform even tried is the third outcome, and it keeps no claim
+# at all. "Uncertain" is justified only by the ambiguity of a send whose response
+# was lost; where there was no send — Mastodon switched off, Bluesky with no
+# session, content the length invariant refused — there is no ambiguity to
+# protect against, and holding the claim would suppress a story for nothing,
+# indefinitely. That is why `attempted` exists on BroadcastResult rather than
+# being inferred from an empty id list (Codex review, 2026-10-19).
 RESERVATION_STAGE_PENDING = "pending"
 RESERVATION_STAGE_UNCERTAIN = "uncertain"
 
@@ -674,17 +671,29 @@ def reserve_broadcast(link: str) -> bool:
             reserved_link=canonical,
         )
         return False
-    readable = _readable_state_tier()
-    if tier != readable:
-        # The write landed, but in a tier no later read will select, so the claim
-        # may as well not exist. Treating it as stored would be the same false
-        # positive the _STATE_STORE_WRITE_OK comment above warns about.
+    if tier == "local" and _remote_state_configured():
         SafeLogger.error(
             "broadcast_reservation_not_durable",
-            "Reservation landed in a tier later reads will not select",
+            "Reservation reached only a local file that will not survive this job",
             reserved_link=canonical,
             storage_tier=tier,
-            readable_tier=readable,
+        )
+        return False
+    # Read the claim back through the very chain the next run will use, rather
+    # than reasoning about which tier ought to be authoritative. Two rounds of
+    # that reasoning were wrong in opposite directions: the first accepted a
+    # write to the fallback store that a readable Gist would shadow, and the
+    # second rejected a write to that same store in the configuration where the
+    # Gist is reachable but holds no seen_articles.json and the read genuinely
+    # does fall through to it (Codex review, 2026-10-19). The question is only
+    # ever "will the next run see this claim?", and a read answers it directly —
+    # immune to any later change in the read precedence, which inference is not.
+    if canonical not in reserved_links(load_seen_articles()):
+        SafeLogger.error(
+            "broadcast_reservation_not_readable",
+            "Reservation did not read back through the normal state chain",
+            reserved_link=canonical,
+            storage_tier=tier,
         )
         return False
     SafeLogger.info(
@@ -696,13 +705,21 @@ def reserve_broadcast(link: str) -> bool:
     return True
 
 
-def settle_broadcast(link: str, *, delivered: bool) -> None:
+def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> None:
     """Close out the reservation for ``link`` once the broadcast has returned.
 
-    ``delivered=True`` — any platform returned an id, partial threads included —
-    converts the claim into the ordinary ``links`` entry and drops it.
-    ``delivered=False`` marks it ``uncertain`` and KEEPS it; see the note above
-    this function's section for why that is not the same as clearing it.
+    Three outcomes:
+
+    - ``delivered=True`` — any platform returned an id, partial threads included.
+      The claim becomes the ordinary ``links`` entry and is dropped.
+    - ``delivered=False, attempted=True`` — a platform tried and nothing came
+      back. The claim is marked ``uncertain`` and KEPT; see the note above this
+      function's section for why that is not the same as clearing it.
+    - ``delivered=False, attempted=False`` — nothing tried, so nothing can have
+      been posted. The claim is released and the story is free to run next time.
+
+    ``attempted`` defaults to True because that is the suppressing reading, and a
+    caller that cannot tell should get the safe one.
 
     Best-effort by design, and needs no readable-tier check of its own: whether
     this write fails outright or lands in a tier reads will not select, what a
@@ -724,7 +741,7 @@ def settle_broadcast(link: str, *, delivered: bool) -> None:
             None,
         )
         entries = _prune_reservations(current.get("pending_broadcast"), drop_link=canonical)
-        if not delivered:
+        if not delivered and attempted:
             base = claimed if claimed is not None else {"link": canonical, "reserved_at": settled_at}
             entries.append({
                 **base,
@@ -752,7 +769,10 @@ def settle_broadcast(link: str, *, delivered: bool) -> None:
         "Reservation settled",
         reserved_link=canonical,
         delivered=delivered,
-        reservation_stage=None if delivered else RESERVATION_STAGE_UNCERTAIN,
+        attempted=attempted,
+        reservation_stage=(
+            RESERVATION_STAGE_UNCERTAIN if (not delivered and attempted) else None
+        ),
     )
 
 

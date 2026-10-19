@@ -282,8 +282,10 @@ async def post_to_bluesky(
     SafeLogger.info("broadcast_started", "Broadcasting to Bluesky", platform="bluesky")
 
     if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_BSKY, "Bluesky"):
-        # Invariant violated; skip broadcast, preserve client for downstream
-        return BroadcastResult(client=client, sent_uris=[], error=None)
+        # Invariant violated; skip broadcast, preserve client for downstream.
+        # attempted=False: nothing reached the wire, so a reservation on this
+        # story can be released rather than held as uncertain.
+        return BroadcastResult(client=client, sent_uris=[], error=None, attempted=False)
 
     parent_ref = None
     root_ref = None
@@ -458,7 +460,8 @@ async def post_to_mastodon(
     text when the generated text does not already include it.
     """
     if not access_token:
-        return BroadcastResult(client=None, sent_uris=[], error=None)
+        # Mastodon switched off entirely — not a failed send.
+        return BroadcastResult(client=None, sent_uris=[], error=None, attempted=False)
 
     # Mastodon-only mechanics, in this order, all BEFORE the length invariant so
     # it measures the text that actually ships:
@@ -474,8 +477,8 @@ async def post_to_mastodon(
         content_list = apply_mastodon_tags(content_list, tags)
 
     if not _enforce_post_length_invariant(content_list, MAX_POST_LENGTH_MASTODON, "Mastodon"):
-        # Invariant violated; skip broadcast.
-        return BroadcastResult(client=None, sent_uris=[], error=None)
+        # Invariant violated; skip broadcast. attempted=False, as above.
+        return BroadcastResult(client=None, sent_uris=[], error=None, attempted=False)
 
     mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
     total_posts = len(content_list)

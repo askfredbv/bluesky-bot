@@ -43,8 +43,9 @@ def _state(monkeypatch, initial):
     Replaces the locked read-modify-write wholesale so these tests pin the
     mutator's decisions rather than the storage chain, which
     test_state_store_gaps.py already covers. The Gist is the configured tier and
-    the one the write lands in, so the readable-tier guard is satisfied and these
-    tests see a reservation that was accepted.
+    the one the write lands in, and the read-back is served from the same
+    in-memory value, so a reservation here is accepted and nothing touches the
+    network.
     """
     monkeypatch.setenv("GIST_ID", "abc123")
     monkeypatch.delenv("STATE_STORE_URL", raising=False)
@@ -55,6 +56,7 @@ def _state(monkeypatch, initial):
         return box["value"], box["tier"]
 
     monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
+    monkeypatch.setattr(state_store, "load_seen_articles", lambda: box["value"])
     return box
 
 
@@ -136,7 +138,7 @@ async def test_unstorable_reservation_aborts_the_broadcast(monkeypatch):
     settled = []
     monkeypatch.setattr(main, "reserve_broadcast", lambda link: False)
     monkeypatch.setattr(
-        main, "settle_broadcast", lambda link, *, delivered: settled.append(delivered)
+        main, "settle_broadcast", lambda link, *, delivered, **kw: settled.append(delivered)
     )
 
     payload = await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
@@ -154,7 +156,7 @@ async def test_abort_leaves_post_dependent_state_untouched(monkeypatch):
     """The abort must look like any other undelivered run to persistence."""
     _stub_broadcast(monkeypatch, bsky_uris=["at://x"], mastodon_ids=["1"])
     monkeypatch.setattr(main, "reserve_broadcast", lambda link: False)
-    monkeypatch.setattr(main, "settle_broadcast", lambda link, *, delivered: None)
+    monkeypatch.setattr(main, "settle_broadcast", lambda link, *, delivered, **kw: None)
 
     payload = await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
     automation = main.build_automation_payload(payload)
@@ -197,7 +199,7 @@ async def test_a_reservation_is_taken_before_anything_is_posted(monkeypatch):
     monkeypatch.setattr(main, "generate_mastodon_tags", lambda *a, **k: _none())
     monkeypatch.setattr(main.random, "choice", lambda seq: list(seq)[0])
     monkeypatch.setattr(main, "reserve_broadcast", fake_reserve)
-    monkeypatch.setattr(main, "settle_broadcast", lambda link, *, delivered: order.append("settle"))
+    monkeypatch.setattr(main, "settle_broadcast", lambda link, *, delivered, **kw: order.append("settle"))
 
     await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
 
@@ -212,7 +214,7 @@ async def test_mentor_mode_takes_no_reservation(monkeypatch):
     _stub_broadcast(monkeypatch, bsky_uris=["at://x"], mastodon_ids=["1"])
     reserved = []
     monkeypatch.setattr(main, "reserve_broadcast", lambda link: reserved.append(link) or True)
-    monkeypatch.setattr(main, "settle_broadcast", lambda link, *, delivered: None)
+    monkeypatch.setattr(main, "settle_broadcast", lambda link, *, delivered, **kw: None)
 
     prep = main.ContentPrepPayload(
         mode="mentor",
@@ -304,7 +306,7 @@ async def test_partial_delivery_settles_as_delivered(monkeypatch):
     monkeypatch.setattr(
         main,
         "settle_broadcast",
-        lambda link, *, delivered: settled.append((link, delivered)),
+        lambda link, *, delivered, **kw: settled.append((link, delivered)),
     )
 
     await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
@@ -321,7 +323,7 @@ async def test_total_failure_settles_as_not_delivered(monkeypatch):
     monkeypatch.setattr(
         main,
         "settle_broadcast",
-        lambda link, *, delivered: settled.append((link, delivered)),
+        lambda link, *, delivered, **kw: settled.append((link, delivered)),
     )
 
     payload = await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
@@ -379,6 +381,138 @@ def test_settlement_after_total_failure_keeps_the_claim_as_uncertain(monkeypatch
     assert entry["settled_at"]
     # Still suppresses, which is the whole reason for keeping it.
     assert state_store.reserved_links(box["value"]) == ["https://a.example.com/x"]
+
+
+def test_settlement_releases_the_claim_when_nothing_tried(monkeypatch):
+    """Nothing attempted means nothing can have been posted, so there is no
+    ambiguity to protect against and the story goes back in the pool
+    (Codex, 2026-10-19)."""
+    box = _state(monkeypatch, {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
+    })
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert box["value"]["pending_broadcast"] == []
+    assert box["value"]["links"] == []  # not posted, so not a seen-link either
+    assert state_store.reserved_links(box["value"]) == []
+
+
+def test_settlement_defaults_to_the_suppressing_reading(monkeypatch):
+    """A caller that does not pass `attempted` must get the safe behaviour."""
+    box = _state(monkeypatch, {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
+    })
+
+    state_store.settle_broadcast("https://a.example.com/x", delivered=False)
+
+    assert state_store.reserved_links(box["value"]) == ["https://a.example.com/x"]
+
+
+@pytest.mark.asyncio
+async def test_no_usable_platform_releases_the_claim(monkeypatch):
+    """Bluesky session failed and Mastodon switched off: the only scheduled
+    broadcaster returns without posting, so the claim must not be held."""
+    monkeypatch.setattr(main, "reserve_broadcast", lambda link: True)
+    settled = []
+    monkeypatch.setattr(
+        main,
+        "settle_broadcast",
+        lambda link, *, delivered, attempted: settled.append((delivered, attempted)),
+    )
+    _stub_broadcast(monkeypatch, bsky_uris=[], mastodon_ids=[])
+
+    # No Mastodon token, and no Bluesky client to schedule a task with.
+    async def fake_mastodon(access_token, *args, **kwargs):
+        from src.metrics import BroadcastResult
+        return BroadcastResult(client=None, sent_uris=[], attempted=False)
+
+    monkeypatch.setattr(main, "post_to_mastodon", fake_mastodon)
+
+    class _NoClient:
+        def __init__(self, *a, **k):
+            raise RuntimeError("no session")
+
+    monkeypatch.setattr("atproto.AsyncClient", _NoClient)
+    prep = _curator_prep()
+    prep = main.ContentPrepPayload(
+        mode=prep.mode,
+        seen_data=prep.seen_data,
+        news_items=prep.news_items,
+        link_meta=prep.link_meta,
+        bsky_client=None,  # preflight failed
+        recent_posts=[],
+        source_domain=prep.source_domain,
+    )
+
+    await main.broadcasting_stage(prep, _settings(), _creds(mastodon_token=""))
+
+    assert settled == [(False, False)]
+
+
+@pytest.mark.asyncio
+async def test_a_platform_that_tried_and_failed_keeps_the_claim(monkeypatch):
+    """The ambiguous case must still settle as attempted."""
+    monkeypatch.setattr(main, "reserve_broadcast", lambda link: True)
+    settled = []
+    monkeypatch.setattr(
+        main,
+        "settle_broadcast",
+        lambda link, *, delivered, attempted: settled.append((delivered, attempted)),
+    )
+    _stub_broadcast(monkeypatch, bsky_uris=[], mastodon_ids=[])
+
+    await main.broadcasting_stage(_curator_prep(), _settings(), _creds())
+
+    assert settled == [(False, True)]
+
+
+def test_platform_attempted_reads_the_result_and_the_two_cases_it_cannot_carry():
+    """Not scheduled = did not try. A raised task has no result and counts as
+    tried, because it may have raised after reaching the wire."""
+    from src.metrics import BroadcastResult
+
+    assert main._platform_attempted(False, None) is False
+    assert main._platform_attempted(False, BroadcastResult(attempted=True)) is False
+    assert main._platform_attempted(True, None) is True  # task raised: ambiguous
+    assert main._platform_attempted(True, BroadcastResult(attempted=False)) is False
+    assert main._platform_attempted(True, BroadcastResult(attempted=True)) is True
+
+
+def test_broadcasters_mark_the_pre_wire_bailouts_as_not_attempted(monkeypatch):
+    """The three paths that return an empty id list WITHOUT sending must say so,
+    or the reservation cannot tell them from a failed send."""
+    import asyncio
+
+    from src import broadcasters
+
+    # Mastodon with no token: switched off, never tried.
+    result = asyncio.run(broadcasters.post_to_mastodon("", "https://masto", ["a post"]))
+    assert result.sent_uris == []
+    assert result.attempted is False
+
+    # Length invariant refusing the content, both platforms.
+    monkeypatch.setattr(broadcasters, "_enforce_post_length_invariant", lambda *a: False)
+    bsky = asyncio.run(broadcasters.post_to_bluesky("client", ["a post"], None))
+    assert bsky.attempted is False
+    masto = asyncio.run(
+        broadcasters.post_to_mastodon("token", "https://masto", ["a post"])
+    )
+    assert masto.attempted is False
+
+
+def test_a_delivered_broadcast_reports_attempted(monkeypatch):
+    """The default must stay True for every normal return path."""
+    from src.metrics import BroadcastResult
+
+    assert BroadcastResult().attempted is True
+    assert BroadcastResult(sent_uris=["at://x"]).attempted is True
 
 
 def test_settlement_after_total_failure_records_a_claim_that_went_missing(monkeypatch):
@@ -447,13 +581,14 @@ def test_reservation_fails_when_only_the_local_file_took_it_on_a_runner(monkeypa
     assert "broadcast_reservation_not_durable" in events
 
 
-def test_reservation_fails_when_the_gist_shadows_the_tier_that_took_it(monkeypatch):
+def test_reservation_fails_when_the_claim_does_not_read_back(monkeypatch):
     """A Gist write-only outage with a healthy fallback store (Codex, 2026-10-19).
 
     `load_seen_articles_strict` returns a parseable Gist payload unconditionally,
-    so a claim written only to STATE_STORE_URL is never read back: the next run
-    reloads the unchanged Gist, misses the claim, and reposts the story. The
-    write succeeded and the reservation must still be refused.
+    so a claim written only to STATE_STORE_URL is shadowed: the next run reloads
+    the unchanged Gist, misses the claim, and reposts the story. The write
+    succeeded and the reservation must still be refused — which the read-back
+    detects without needing to know which tier is authoritative.
     """
     monkeypatch.setenv("GIST_ID", "abc123")
     monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
@@ -461,38 +596,50 @@ def test_reservation_fails_when_the_gist_shadows_the_tier_that_took_it(monkeypat
     monkeypatch.setattr(
         state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
     )
+    # What a later read comes back with: the stale Gist, no claim in it.
+    monkeypatch.setattr(
+        state_store, "load_seen_articles", lambda: {"links": [], "recent_topics": []}
+    )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
-    assert "broadcast_reservation_not_durable" in events
+    assert "broadcast_reservation_not_readable" in events
 
 
-def test_reservation_succeeds_on_the_store_when_no_gist_shadows_it(monkeypatch):
-    """With only STATE_STORE_URL configured, the store IS what reads select."""
-    monkeypatch.delenv("GIST_ID", raising=False)
+def test_reservation_succeeds_when_the_read_falls_through_to_the_store(monkeypatch):
+    """The configuration the tier-inference guard got wrong (Codex, 2026-10-19).
+
+    A reachable Gist that holds no seen_articles.json makes the strict read fall
+    through to STATE_STORE_URL, so a claim written there IS observable. Inferring
+    "the Gist is authoritative" from GIST_ID alone rejected it and aborted every
+    Curator broadcast in that configuration; the read-back accepts it.
+    """
+    monkeypatch.setenv("GIST_ID", "abc123")
     monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
     monkeypatch.setattr(
         state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles",
+        lambda: {
+            "links": [],
+            "recent_topics": [],
+            "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
+        },
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is True
 
 
-def test_readable_tier_follows_the_read_precedence(monkeypatch):
-    """The guard is only correct while it mirrors load_seen_articles_strict's
-    order, so pin the order itself."""
-    monkeypatch.setenv("GIST_ID", "abc123")
-    monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
-    assert state_store._readable_state_tier() == "gist"
+def test_reservation_reads_back_through_the_real_chain(monkeypatch, tmp_path):
+    """End to end on the local tier: write, then prove the claim is readable by
+    the same call the next run makes."""
+    _local_only(monkeypatch, tmp_path)
 
-    monkeypatch.delenv("GIST_ID", raising=False)
-    assert state_store._readable_state_tier() == "store"
-
-    monkeypatch.delenv("STATE_STORE_URL", raising=False)
-    assert state_store._readable_state_tier() == "local"
-
-    # Blank is not configured — the whole module reads these with .strip().
-    monkeypatch.setenv("GIST_ID", "   ")
-    assert state_store._readable_state_tier() == "local"
+    assert state_store.reserve_broadcast("https://a.example.com/x") is True
+    assert "https://a.example.com/x" in state_store.reserved_links(
+        state_store.load_seen_articles()
+    )
 
 
 def test_reservation_succeeds_on_the_local_tier_in_local_development(monkeypatch, tmp_path):

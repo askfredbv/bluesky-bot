@@ -35,7 +35,7 @@ def _stub_broadcast_reservation(monkeypatch):
     def _reserved(link):
         return True
 
-    def _settled(link, *, delivered):
+    def _settled(link, *, delivered, attempted=True):
         return None
 
     monkeypatch.setattr("main.reserve_broadcast", _reserved, raising=False)
