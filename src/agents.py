@@ -1415,8 +1415,8 @@ async def build_visual_prompt(
     crafted prompt comes back. Putting them in the crafting instruction is what
     broke: the prompt-writer obeyed them and the image model never heard them.
 
-    Also the entry point the bake-off uses, so the probe exercises production's
-    prompt rather than a reconstruction of it.
+    Also the entry point a diagnostic should call, so that what gets checked is
+    production's prompt rather than a reconstruction of it.
     """
     crafted = await _craft_visual_prompt(api_key, topic, summary)
     base = crafted or FALLBACK_VISUAL_PROMPT.format(topic=topic)

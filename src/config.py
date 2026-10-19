@@ -478,10 +478,10 @@ IMAGE_GENERATION_TIMEOUT_SECONDS: float = 30.0
 IMAGE_MODEL: str = "gemini-3.1-flash-image"
 
 # The static visual prompt, used when the model-written one (_craft_visual_prompt)
-# comes back empty. Lifted out of agents.py on 2026-10-19 so the model bake-off in
-# scripts/probe_image_models.py can send the string the bot actually sends: a probe
-# comparing image models on a copy of the prompt is comparing the copy, and the two
-# drift apart silently the first time one is edited.
+# comes back empty. Lifted out of agents.py on 2026-10-19 so that a diagnostic can
+# send the string the bot actually sends: a tool that compares image models on a
+# COPY of the prompt is comparing the copy, and the two drift apart silently the
+# first time one of them is edited.
 FALLBACK_VISUAL_PROMPT: str = (
     "A clean, minimal editorial illustration representing the concept: '{topic}'."
 )
@@ -497,8 +497,11 @@ FALLBACK_VISUAL_PROMPT: str = (
 #
 # Enumerated rather than "no text": the static fallback already said "No text" and
 # still produced a captioned comparison layout for a topic phrased "X vs Y", so the
-# single negation is too weak on its own. Whether the longer list actually holds is
-# a question for the bake-off (--crafted), not something to assume here.
+# single negation is too weak on its own. The enumerated version was checked before
+# shipping — five Mentor topics through the real crafted path on 2026-10-19, all five
+# clean — but five is five: the standing check is the live feed. If a captioned image
+# appears again the next lever is the crafter's split-composition habit, not a longer
+# list of negations.
 VISUAL_PROMPT_CONSTRAINTS: str = (
     " Flat modern design, muted palette. No text, no words, no letters, no numbers, "
     "no labels, no captions, no signage, no watermark. No people, no hands, no faces."
