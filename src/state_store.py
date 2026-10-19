@@ -15,9 +15,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import httpx
 
-from src.config import PIONEER_COOLDOWN_DAYS, REPLIED_FILE, SEEN_FILE
+from src.config import (
+    MAX_BROADCAST_RESERVATIONS,
+    PIONEER_COOLDOWN_DAYS,
+    REPLIED_FILE,
+    SEEN_FILE,
+    SEEN_LINKS_WINDOW,
+)
 from src.file_lock import file_lock
 from src.logger import SafeLogger
+from src.net_safety import canonical_url
 
 T = TypeVar("T")
 STATE_STORE_TIMEOUT_SECONDS = 10.0
@@ -433,16 +440,41 @@ def load_seen_articles() -> Dict[str, Any]:
     return load_seen_articles_strict()[0]
 
 
-def save_seen_articles(seen_data: Dict[str, Any]) -> None:
+def _remote_state_configured() -> bool:
+    """Is either remote state tier configured at all?
+
+    The one thing a read-back cannot discover: on a GitHub Actions runner the
+    local tier is reached only when both remote tiers refused the write, and that
+    file is thrown away with the job — so the claim reads back fine in THIS
+    process and is gone by the next run. In local development the local file is
+    the only tier there is, and a reservation on it is perfectly real.
+    """
+    return bool(
+        os.environ.get("GIST_ID", "").strip()
+        or os.environ.get("STATE_STORE_URL", "").strip()
+    )
+
+
+def save_seen_articles(seen_data: Dict[str, Any]) -> Optional[str]:
+    """Persist the seen state, returning WHICH tier accepted the write.
+
+    ``"gist"`` / ``"store"`` / ``"local"``, or None when the value is stored
+    nowhere. Callers that only need the side effect can ignore the return, as
+    every caller did before the pre-broadcast reservation arrived: that one has
+    to abort the broadcast when its claim did not land, so "it was written" is
+    no longer a question the function can decline to answer.
+    """
     if _save_gist_state("seen_articles.json", seen_data):
-        return
+        return "gist"
     if _save_state_to_store("seen_articles", seen_data):
-        return
+        return "store"
     try:
         _atomic_write_json(SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".bak"), seen_data)
         _atomic_write_json(SEEN_FILE, seen_data)
+        return "local"
     except Exception as e:
         SafeLogger.error("seen_articles_save_failed", "Failed to save seen articles", exception=e)
+        return None
 def load_replied_to_strict() -> Tuple[List[str], bool]:
     """Load replied_to state, plus whether the result is safe to write back.
 
@@ -494,7 +526,9 @@ def save_replied_to(replied_ids: List[str]) -> None:
         _atomic_write_json(REPLIED_FILE, replied_ids)
     except Exception as e:
         SafeLogger.error("replied_to_save_failed", "Failed to save replied state", exception=e)
-def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
+def update_seen_articles_checked(
+    mutator: Callable[[Dict[str, Any]], Dict[str, Any]]
+) -> Tuple[Dict[str, Any], Optional[str]]:
     """Lock-protected read-modify-write for seen_articles.json.
 
     Skips the write entirely when the read could not be trusted. An untrusted
@@ -506,6 +540,12 @@ def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) ->
     The mutator is handed the state just read under the lock. Callers must apply
     their changes to THAT value rather than returning a snapshot captured earlier
     in the run — a stale snapshot defeats both the lock and this guard.
+
+    Returns ``(state, tier)``, where ``tier`` is the storage tier that accepted
+    the write (see ``save_seen_articles``) and None means the mutation is stored
+    nowhere — either because the read was untrusted and the write was skipped, or
+    because every tier refused it. ``update_seen_articles`` drops the tier for
+    callers that do not need it.
     """
     lock_path = SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".lock")
     with _file_lock(lock_path):
@@ -515,10 +555,319 @@ def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) ->
                 "seen_articles_update_skipped",
                 "Seen-state read was untrusted; skipping the write rather than erasing history",
             )
-            return current
+            return current, None
         updated = mutator(current)
-        save_seen_articles(updated)
-    return updated
+        tier = save_seen_articles(updated)
+    return updated, tier
+
+
+def update_seen_articles(mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
+    """``update_seen_articles_checked`` without the storage-tier flag, for the
+    callers whose behaviour does not depend on whether the write landed."""
+    return update_seen_articles_checked(mutator)[0]
+
+
+# --- Pre-broadcast reservations ---------------------------------------------
+#
+# `persistence_stage` records a published story's dedup entry AFTER delivery, so
+# a run that posted and then died — a cancelled workflow, an evicted runner, a
+# hang in one of the stages that follow the post — left the post live and
+# unrecorded, and the next run twelve hours later could select and post the same
+# story again. The window was narrow (the `links` cap plus the two-day
+# feed-fetch window) and was never observed firing, but it was real.
+#
+# A reservation closes it by reversing the order: claim the URL first, broadcast
+# second, settle third. The claim lives in the same `seen_articles` state as
+# `links`, in `pending_broadcast`, and is read as already-seen at selection time
+# (`reserved_links`), so an unsettled claim suppresses the story exactly as a
+# `links` entry would.
+#
+# Two stages, and the difference between them is diagnostic rather than
+# behavioural — both suppress, neither is pruned by age:
+#
+#   "pending"   — written before the broadcast. A run that settles overwrites or
+#                 removes it, so finding one means the run never got that far:
+#                 the post may well be live. Suppressing it is the whole point.
+#   "uncertain" — written when a platform TRIED and no id came back. Not the same
+#                 as "nothing was posted": a send that lands and then loses its
+#                 response looks identical from here, which is why the claim is
+#                 kept rather than cleared.
+#
+# Keeping an uncertain claim costs one candidate story. Clearing it would reopen
+# the window this exists to close, and a repost is the failure this project
+# cannot take back; the suppression is also an order of magnitude smaller than
+# the one deliberately removed from `persistence_stage` (four candidates on
+# every SUCCESSFUL run, against one on a total-failure run).
+#
+# A run where no platform even tried is the third outcome, and it keeps no claim
+# at all. "Uncertain" is justified only by the ambiguity of a send whose response
+# was lost; where there was no send — Mastodon switched off, Bluesky with no
+# session, content the length invariant refused — there is no ambiguity to
+# protect against, and holding the claim would suppress a story for nothing,
+# indefinitely. That is why `attempted` exists on BroadcastResult rather than
+# being inferred from an empty id list (Codex review, 2026-10-19).
+RESERVATION_STAGE_PENDING = "pending"
+RESERVATION_STAGE_UNCERTAIN = "uncertain"
+
+
+def reserved_links(seen_data: Dict[str, Any]) -> List[str]:
+    """Canonical URLs held by a live reservation, for the seen-link filter.
+
+    Reads `pending_broadcast` defensively: a state file written before this field
+    existed simply has no reservations, which needs no migration step, and a
+    malformed entry is skipped rather than crashing selection.
+    """
+    links: List[str] = []
+    for entry in seen_data.get("pending_broadcast") or []:
+        if not isinstance(entry, dict):
+            continue
+        link = entry.get("link")
+        if isinstance(link, str) and link:
+            links.append(link)
+    return links
+
+
+def _prune_reservations(
+    entries: Any, *, drop_link: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Well-formed reservation entries, optionally minus one link."""
+    kept: List[Dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not entry.get("link"):
+            continue
+        if drop_link is not None and entry.get("link") == drop_link:
+            continue
+        kept.append(entry)
+    return kept
+
+
+def _release_claim(canonical: str, *, reason: str) -> None:
+    """Drop a claim for a story that will definitely not be broadcast.
+
+    Called when the reservation is refused AFTER its write landed. The caller
+    aborts the broadcast, so nothing can have been posted — and because claims
+    are never pruned by age, leaving this one ``pending`` would suppress the
+    story on every future run. A transient read-back failure would silently cost
+    an article forever, which is the same over-suppression the ``attempted``
+    distinction removed from settlement (Codex review, 2026-10-19).
+
+    Best-effort, and loud when it fails: if this write is refused too, the claim
+    stays and that story is out of the pool until the reservation cap pushes it
+    out.
+
+    Unlike the release in ``settle_broadcast``, this one needs no read-back of
+    its own. Both callers reach it only AFTER establishing that the claim is not
+    visible through the read chain — one because the read-back found nothing, the
+    other because the write reached only a local file that reads do not consult —
+    so the story is not being suppressed either way, and this is tidying up a
+    write that may not be observable in the first place.
+    """
+    def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
+        current["pending_broadcast"] = _prune_reservations(
+            current.get("pending_broadcast"), drop_link=canonical
+        )
+        return current
+
+    _, tier = update_seen_articles_checked(_apply)
+    if tier is None:
+        SafeLogger.error(
+            "broadcast_claim_release_failed",
+            "Could not release the claim on a story that was never broadcast",
+            reserved_link=canonical,
+            release_reason=reason,
+        )
+        return
+    SafeLogger.info(
+        "broadcast_claim_released",
+        "Released the claim on a story that was never broadcast",
+        reserved_link=canonical,
+        release_reason=reason,
+    )
+
+
+def reserve_broadcast(link: str) -> bool:
+    """Claim ``link`` before it is broadcast. True only if the claim is ours.
+
+    False means the caller must NOT broadcast: an unstored claim is the hole this
+    exists to close, so posting anyway would publish a story with no record that
+    it was published. Logged at ERROR per AGENTS.md principle 4 — this is
+    critical state, not best-effort bookkeeping.
+
+    Acquisition is a claim on an UNCLAIMED, UNSEEN story. A URL that the state
+    read under the lock already carries — as a reservation or as a ``links``
+    entry — is a failed acquisition, not a retry: there is no owner token that
+    could prove the existing claim belongs to this run, so the only safe reading
+    is that it belongs to another one. This matters because selection runs on the
+    non-strict read: one transient Gist failure hands ``content_prep_stage`` the
+    empty default, which can reselect a story a crashed run already claimed, and
+    an earlier version of this function then deleted that claim and replaced it
+    with its own — verification passed, and the story was reposted. The hole this
+    whole mechanism exists to close, reachable through the mechanism itself
+    (Codex review, 2026-10-19).
+    """
+    canonical = canonical_url(link)
+    conflict: Dict[str, Optional[str]] = {"reason": None}
+
+    def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
+        if canonical in (current.get("links") or []):
+            conflict["reason"] = "already_seen"
+            return current
+        entries = _prune_reservations(current.get("pending_broadcast"))
+        if any(entry.get("link") == canonical for entry in entries):
+            conflict["reason"] = "already_claimed"
+            return current
+        entries.append({
+            "link": canonical,
+            "stage": RESERVATION_STAGE_PENDING,
+            "reserved_at": datetime.now(timezone.utc).isoformat(),
+        })
+        current["pending_broadcast"] = entries[-MAX_BROADCAST_RESERVATIONS:]
+        return current
+
+    _, tier = update_seen_articles_checked(_apply)
+    # Checked before the storage outcome, and never followed by a release: the
+    # claim in the way is someone else's and must survive this run.
+    if conflict["reason"] is not None:
+        SafeLogger.error(
+            "broadcast_reservation_conflict",
+            "Story was already claimed or already seen in the state read under the lock",
+            reserved_link=canonical,
+            conflict=conflict["reason"],
+        )
+        return False
+    if tier is None:
+        SafeLogger.error(
+            "broadcast_reservation_failed",
+            "Could not store the pre-broadcast reservation",
+            reserved_link=canonical,
+        )
+        return False
+    if tier == "local" and _remote_state_configured():
+        SafeLogger.error(
+            "broadcast_reservation_not_durable",
+            "Reservation reached only a local file that will not survive this job",
+            reserved_link=canonical,
+            storage_tier=tier,
+        )
+        _release_claim(canonical, reason="not_durable")
+        return False
+    # Read the claim back through the very chain the next run will use, rather
+    # than reasoning about which tier ought to be authoritative. Two rounds of
+    # that reasoning were wrong in opposite directions: the first accepted a
+    # write to the fallback store that a readable Gist would shadow, and the
+    # second rejected a write to that same store in the configuration where the
+    # Gist is reachable but holds no seen_articles.json and the read genuinely
+    # does fall through to it (Codex review, 2026-10-19). The question is only
+    # ever "will the next run see this claim?", and a read answers it directly —
+    # immune to any later change in the read precedence, which inference is not.
+    if canonical not in reserved_links(load_seen_articles()):
+        SafeLogger.error(
+            "broadcast_reservation_not_readable",
+            "Reservation did not read back through the normal state chain",
+            reserved_link=canonical,
+            storage_tier=tier,
+        )
+        _release_claim(canonical, reason="not_readable")
+        return False
+    SafeLogger.info(
+        "broadcast_reserved",
+        "Story reserved ahead of the broadcast",
+        reserved_link=canonical,
+        storage_tier=tier,
+    )
+    return True
+
+
+def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> None:
+    """Close out the reservation for ``link`` once the broadcast has returned.
+
+    Three outcomes:
+
+    - ``delivered=True`` — any platform returned an id, partial threads included.
+      The claim becomes the ordinary ``links`` entry and is dropped.
+    - ``delivered=False, attempted=True`` — a platform tried and nothing came
+      back. The claim is marked ``uncertain`` and KEPT; see the note above this
+      function's section for why that is not the same as clearing it.
+    - ``delivered=False, attempted=False`` — nothing tried, so nothing can have
+      been posted. The claim is released and the story is free to run next time.
+
+    ``attempted`` defaults to True because that is the suppressing reading, and a
+    caller that cannot tell should get the safe one.
+
+    The first two outcomes need no readable-tier check: if this write fails or
+    lands in a tier reads will not select, a later read still sees the
+    ``pending`` claim, which suppresses the story just as firmly as the entry
+    this would have written. Both fail safe. Still logged at ERROR, because the
+    state is then carrying a claim nobody will ever settle.
+
+    The release does NOT fail safe, and is verified. Its whole purpose is for the
+    claim to be GONE, so a shadowed write leaves the story suppressed while this
+    reports success — the same over-suppression, now hidden behind a log line
+    saying the opposite (Codex review, 2026-10-19). Verification can only detect
+    it, not repair it: a retry would take the same shadowed path.
+    """
+    canonical = canonical_url(link)
+    settled_at = datetime.now(timezone.utc).isoformat()
+
+    def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
+        current.setdefault("links", [])
+        claimed = next(
+            (
+                entry
+                for entry in _prune_reservations(current.get("pending_broadcast"))
+                if entry.get("link") == canonical
+            ),
+            None,
+        )
+        entries = _prune_reservations(current.get("pending_broadcast"), drop_link=canonical)
+        if not delivered and attempted:
+            base = claimed if claimed is not None else {"link": canonical, "reserved_at": settled_at}
+            entries.append({
+                **base,
+                "stage": RESERVATION_STAGE_UNCERTAIN,
+                "settled_at": settled_at,
+            })
+        current["pending_broadcast"] = entries[-MAX_BROADCAST_RESERVATIONS:]
+        # persistence_stage records the same link moments later; both writes are
+        # idempotent so the entry cannot be double-counted against the window.
+        if delivered and canonical not in current["links"]:
+            current["links"] = (current["links"] + [canonical])[-SEEN_LINKS_WINDOW:]
+        return current
+
+    _, tier = update_seen_articles_checked(_apply)
+    if tier is None:
+        SafeLogger.error(
+            "broadcast_settlement_failed",
+            "Could not settle the pre-broadcast reservation; it stays pending",
+            reserved_link=canonical,
+            delivered=delivered,
+        )
+        return
+    if not delivered and not attempted and canonical in reserved_links(load_seen_articles()):
+        # The release was accepted by some tier and is invisible to the one that
+        # answers reads, so the claim is still suppressing a story nothing tried
+        # to post. Nothing to retry — the write would take the same path — so the
+        # job here is to be loud rather than to report a success that did not
+        # happen.
+        SafeLogger.error(
+            "broadcast_release_not_readable",
+            "Released claim still reads back; story stays suppressed although nothing was posted",
+            reserved_link=canonical,
+            storage_tier=tier,
+        )
+        return
+    SafeLogger.info(
+        "broadcast_settled",
+        "Reservation settled",
+        reserved_link=canonical,
+        delivered=delivered,
+        attempted=attempted,
+        reservation_stage=(
+            RESERVATION_STAGE_UNCERTAIN if (not delivered and attempted) else None
+        ),
+    )
+
+
 def update_replied_to(mutator: Callable[[List[str]], List[str]]) -> List[str]:
     """Lock-protected read-modify-write for replied_to.json.
 

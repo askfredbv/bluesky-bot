@@ -14,10 +14,13 @@ from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
     ANTHROPIC_MODELS, ANTHROPIC_CHAIN_POSITION,
-    RECENT_TOPICS_WINDOW,
+    RECENT_TOPICS_WINDOW, SEEN_LINKS_WINDOW,
 )
 from src.utils import get_link_metadata, compress_image, is_usable_image
-from src.state_store import load_seen_articles, update_seen_articles, prune_pioneer_recent
+from src.state_store import (
+    load_seen_articles, update_seen_articles, prune_pioneer_recent,
+    reserve_broadcast, reserved_links, settle_broadcast,
+)
 from src.news import fetch_news
 from src.net_safety import canonical_url
 from src.llm import compose_model_chain
@@ -156,7 +159,13 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
     link_meta = None
     source_domain: Optional[str] = None
     if mode == Mode.CURATOR:
-        news_items = await fetch_news(seen_data["links"], seen_data["recent_topics"])
+        # A live reservation counts as already-seen. Without this the whole
+        # pre-broadcast claim is inert: the next run would re-select the story a
+        # crashed run had already claimed, which is the repost the reservation
+        # exists to prevent.
+        news_items = await fetch_news(
+            seen_data["links"] + reserved_links(seen_data), seen_data["recent_topics"]
+        )
         if len(news_items) < 3:
             SafeLogger.warn("news_volume_low", "Low high-signal news volume, shifting mode", mode=mode, selected_items=len(news_items))
             mode = Mode.STRATEGIST
@@ -256,6 +265,25 @@ def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
     if mode == Mode.CURATOR:
         return False
     return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
+
+
+def _platform_attempted(scheduled: bool, result: Any) -> bool:
+    """Did this platform get as far as its first send?
+
+    Reads ``BroadcastResult.attempted``, with two cases the result cannot carry:
+    a platform whose task was never scheduled at all (no Bluesky session) did not
+    try, and a task that raised has no result to read — which is ambiguous, since
+    it may have raised after something reached the wire, so it counts as tried.
+
+    Only the reservation uses this, to tell "nothing tried" from "tried and no id
+    came back". Everything else downstream reads the sent-id lists, where an
+    empty list means the same thing either way.
+    """
+    if not scheduled:
+        return False
+    if result is None:
+        return True
+    return bool(getattr(result, "attempted", True))
 
 
 def _should_attempt_curator_fallback_image(force_image: bool) -> bool:
@@ -405,6 +433,35 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
             )
             bsky_client = None
 
+    # Claim the story before anything goes on the wire. persistence_stage writes
+    # the dedup entry only after delivery, so a run that posted and then died
+    # left the post live and unrecorded, and the next run could select and post
+    # it again. Reserved here rather than earlier in the stage so a crash during
+    # image generation does not leave a claim on a story that never reached the
+    # broadcast at all.
+    #
+    # Only the Curator has a URL to claim; Mentor and Strategist dedup on
+    # recent_mode_topics, which is a topic memory, not a per-story claim.
+    if posted_link and not reserve_broadcast(posted_link):
+        SafeLogger.error(
+            "broadcast_aborted_unreserved",
+            "Story could not be reserved; skipping the broadcast rather than posting unrecorded",
+            platform="multi",
+            mode=mode,
+            topic=chosen_topic,
+            reserved_link=posted_link,
+        )
+        return BroadcastPayload(
+            mode=mode,
+            seen_data=content_prep.seen_data,
+            news_items=news_items,
+            content_list=[],
+            chosen_topic=chosen_topic,
+            thread_pause_profile=thread_pause_profile,
+            bsky_broadcast_client=bsky_client,
+            pioneer_entry=content_prep.pioneer_entry,
+        )
+
     SafeLogger.info("broadcast_started", "Initiating concurrent delivery", platform="multi")
 
     broadcast_tasks = []
@@ -500,6 +557,27 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     mastodon_delivered_texts = (
         list(mastodon_result.delivered_texts) if mastodon_result is not None else []
     )
+
+    # Settle the claim as soon as the platforms have answered, before the metrics
+    # and automation stages get a chance to hang. Either platform returning an id
+    # means the post is public — a partially delivered thread included — so the
+    # claim becomes an ordinary seen-link. A run where a platform TRIED and
+    # nothing came back keeps its claim as "uncertain" rather than clearing it: a
+    # send that landed and lost its response is indistinguishable from one that
+    # never landed, and of the two readings only the suppressing one is safe.
+    #
+    # A run where nothing tried is the third case and releases the claim. Holding
+    # it would suppress a story that definitively never reached a platform, for
+    # nothing, indefinitely (see src/state_store.py).
+    if posted_link:
+        settle_broadcast(
+            posted_link,
+            delivered=bool(bsky_sent_uris or mastodon_sent_ids),
+            attempted=(
+                _platform_attempted(bsky_client is not None, bsky_result)
+                or _platform_attempted(True, mastodon_result)
+            ),
+        )
 
     # Step 4: assemble the per-post metadata that capture_post_metrics_stage
     # writes alongside each sent URI. Built once here because the values are
@@ -857,7 +935,14 @@ async def persistence_stage(automation: AutomationPayload) -> None:
             # an earlier news_items[:5] slice; no commit records it as a decision.)
             posted_link = automation.posted_link or news_items[0].get("link")
             if posted_link:
-                current["links"] = (current["links"] + [canonical_url(posted_link)])[-200:]
+                # Already present whenever settle_broadcast ran moments ago; the
+                # membership check keeps this write idempotent so the same story
+                # cannot spend two slots of the window. Kept rather than removed
+                # because it also covers the fallback-to-top-item path, which has
+                # no reservation behind it.
+                canonical = canonical_url(posted_link)
+                if canonical not in current["links"]:
+                    current["links"] = (current["links"] + [canonical])[-SEEN_LINKS_WINDOW:]
 
             # Record the category of the item actually written about, resolved in
             # broadcasting_stage alongside the link card. Falls back to the top item
