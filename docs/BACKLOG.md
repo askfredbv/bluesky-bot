@@ -73,13 +73,22 @@ seen link, topic and Pioneer cooldown. The patterns are fixed (#200), but the cl
 not: roughly ten lines asserting `git ls-files` returns nothing state-shaped turns a
 human noticing into a gate. A human noticing is what we got, and only by luck.
 
-**[TRACKED → #203] Corrective 3 — look at the output on a schedule.** The only
-possible detector for the item that actually shipped damage for six months. `voice-audit.yml` already does this for text;
-the gap is visual. A monthly job that pulls the last N post images into an artifact for
-a two-minute human look has no recurring cost, which matters under the operating goal —
-and it is the automation the retro's corrective has been missing twice. Design it so
-the human step is *looking*, not reading a report about looking; a metric here would
-repeat the mistake the retro names.
+**[DONE 2026-10-19 → #203] Corrective 3 — look at the output on a schedule.** The only
+possible detector for the item that actually shipped damage for six months.
+`voice-audit.yml` already did this for the text; the gap was visual.
+`image-audit.yml` now runs on the 1st of each month and opens an issue whose body **is**
+the pictures — GitHub renders the Bluesky CDN URLs inline, so the human step is scrolling
+images, not reading a report about images. Both halves of the visual surface are in it:
+the generated illustrations (an unambiguous `app.bsky.embed.images`) and the Curator link
+cards, whose thumb may be the article's own or one the bot generated — the public feed
+cannot tell them apart, so the report says so instead of guessing. The images also ride
+along as an artifact, for full resolution and for after a post is deleted.
+
+Deliberately **no score, no dashboard, no pass/fail**, and
+`test_report_renders_one_image_per_item` fails if the output ever becomes a summary
+instead of pictures. A number would have read green for all six months; what found the
+bug was opening three images. Two minutes a month, which is what the operating goal
+allows.
 
 1. **[DONE 2026-10-08] Live-verify the 2026-10-06 scoring changes.** Read on the 07:00 UTC
 runs of 10-07 and 10-08. Both beat the baselines (a primary source in the shortlist in
