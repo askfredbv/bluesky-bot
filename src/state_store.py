@@ -654,6 +654,13 @@ def _release_claim(canonical: str, *, reason: str) -> None:
     Best-effort, and loud when it fails: if this write is refused too, the claim
     stays and that story is out of the pool until the reservation cap pushes it
     out.
+
+    Unlike the release in ``settle_broadcast``, this one needs no read-back of
+    its own. Both callers reach it only AFTER establishing that the claim is not
+    visible through the read chain — one because the read-back found nothing, the
+    other because the write reached only a local file that reads do not consult —
+    so the story is not being suppressed either way, and this is tidying up a
+    write that may not be observable in the first place.
     """
     def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
         current["pending_broadcast"] = _prune_reservations(
@@ -679,19 +686,36 @@ def _release_claim(canonical: str, *, reason: str) -> None:
 
 
 def reserve_broadcast(link: str) -> bool:
-    """Claim ``link`` before it is broadcast. True only if the claim is stored.
+    """Claim ``link`` before it is broadcast. True only if the claim is ours.
 
     False means the caller must NOT broadcast: an unstored claim is the hole this
     exists to close, so posting anyway would publish a story with no record that
     it was published. Logged at ERROR per AGENTS.md principle 4 — this is
     critical state, not best-effort bookkeeping.
+
+    Acquisition is a claim on an UNCLAIMED, UNSEEN story. A URL that the state
+    read under the lock already carries — as a reservation or as a ``links``
+    entry — is a failed acquisition, not a retry: there is no owner token that
+    could prove the existing claim belongs to this run, so the only safe reading
+    is that it belongs to another one. This matters because selection runs on the
+    non-strict read: one transient Gist failure hands ``content_prep_stage`` the
+    empty default, which can reselect a story a crashed run already claimed, and
+    an earlier version of this function then deleted that claim and replaced it
+    with its own — verification passed, and the story was reposted. The hole this
+    whole mechanism exists to close, reachable through the mechanism itself
+    (Codex review, 2026-10-19).
     """
     canonical = canonical_url(link)
+    conflict: Dict[str, Optional[str]] = {"reason": None}
 
     def _apply(current: Dict[str, Any]) -> Dict[str, Any]:
-        # Replace any earlier claim on the same URL rather than stacking a
-        # second one: a retry of the same story is one claim, not two.
-        entries = _prune_reservations(current.get("pending_broadcast"), drop_link=canonical)
+        if canonical in (current.get("links") or []):
+            conflict["reason"] = "already_seen"
+            return current
+        entries = _prune_reservations(current.get("pending_broadcast"))
+        if any(entry.get("link") == canonical for entry in entries):
+            conflict["reason"] = "already_claimed"
+            return current
         entries.append({
             "link": canonical,
             "stage": RESERVATION_STAGE_PENDING,
@@ -701,6 +725,16 @@ def reserve_broadcast(link: str) -> bool:
         return current
 
     _, tier = update_seen_articles_checked(_apply)
+    # Checked before the storage outcome, and never followed by a release: the
+    # claim in the way is someone else's and must survive this run.
+    if conflict["reason"] is not None:
+        SafeLogger.error(
+            "broadcast_reservation_conflict",
+            "Story was already claimed or already seen in the state read under the lock",
+            reserved_link=canonical,
+            conflict=conflict["reason"],
+        )
+        return False
     if tier is None:
         SafeLogger.error(
             "broadcast_reservation_failed",
@@ -760,11 +794,17 @@ def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> N
     ``attempted`` defaults to True because that is the suppressing reading, and a
     caller that cannot tell should get the safe one.
 
-    Best-effort by design, and needs no readable-tier check of its own: whether
-    this write fails outright or lands in a tier reads will not select, what a
-    later read still sees is the ``pending`` claim, which suppresses the story
-    just as firmly. Every way this can go wrong fails safe. Still logged at
-    ERROR, because the state is then carrying a claim nobody will ever settle.
+    The first two outcomes need no readable-tier check: if this write fails or
+    lands in a tier reads will not select, a later read still sees the
+    ``pending`` claim, which suppresses the story just as firmly as the entry
+    this would have written. Both fail safe. Still logged at ERROR, because the
+    state is then carrying a claim nobody will ever settle.
+
+    The release does NOT fail safe, and is verified. Its whole purpose is for the
+    claim to be GONE, so a shadowed write leaves the story suppressed while this
+    reports success — the same over-suppression, now hidden behind a log line
+    saying the opposite (Codex review, 2026-10-19). Verification can only detect
+    it, not repair it: a retry would take the same shadowed path.
     """
     canonical = canonical_url(link)
     settled_at = datetime.now(timezone.utc).isoformat()
@@ -801,6 +841,19 @@ def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> N
             "Could not settle the pre-broadcast reservation; it stays pending",
             reserved_link=canonical,
             delivered=delivered,
+        )
+        return
+    if not delivered and not attempted and canonical in reserved_links(load_seen_articles()):
+        # The release was accepted by some tier and is invisible to the one that
+        # answers reads, so the claim is still suppressing a story nothing tried
+        # to post. Nothing to retry — the write would take the same path — so the
+        # job here is to be loud rather than to report a success that did not
+        # happen.
+        SafeLogger.error(
+            "broadcast_release_not_readable",
+            "Released claim still reads back; story stays suppressed although nothing was posted",
+            reserved_link=canonical,
+            storage_tier=tier,
         )
         return
     SafeLogger.info(

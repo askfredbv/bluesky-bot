@@ -402,6 +402,59 @@ def test_settlement_releases_the_claim_when_nothing_tried(monkeypatch):
     assert state_store.reserved_links(box["value"]) == []
 
 
+def test_a_shadowed_release_is_reported_not_claimed_as_settled(monkeypatch):
+    """The release is the one settlement outcome that does NOT fail safe
+    (Codex, 2026-10-19): a write accepted by a tier reads do not select leaves
+    the story suppressed while the log says it was freed."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+    )
+    # What reads actually come back with: the stale Gist, claim still in it.
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles",
+        lambda: {
+            "links": [],
+            "recent_topics": [],
+            "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
+        },
+    )
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert "broadcast_release_not_readable" in events
+    assert "broadcast_settled" not in events
+
+
+def test_a_shadowed_keep_or_promote_is_not_flagged(monkeypatch):
+    """Those two DO fail safe — the surviving pending claim suppresses a story
+    that was posted, or that a platform tried to post. No false alarm."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles",
+        lambda: {
+            "links": [],
+            "recent_topics": [],
+            "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
+        },
+    )
+
+    state_store.settle_broadcast("https://a.example.com/x", delivered=True)
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=True
+    )
+
+    assert "broadcast_release_not_readable" not in events
+    assert events.count("broadcast_settled") == 2
+
+
 def test_settlement_defaults_to_the_suppressing_reading(monkeypatch):
     """A caller that does not pass `attempted` must get the safe behaviour."""
     box = _state(monkeypatch, {
@@ -786,13 +839,82 @@ def test_reservation_canonicalises_the_link(monkeypatch):
     ]
 
 
-def test_reserving_the_same_story_twice_keeps_one_claim(monkeypatch):
-    box = _state(monkeypatch, {"links": [], "recent_topics": []})
+def test_an_existing_claim_is_a_failed_acquisition_not_a_retry(monkeypatch):
+    """The sharpest version of the bug this PR exists to fix (Codex, 2026-10-19).
 
-    state_store.reserve_broadcast("https://a.example.com/x")
-    state_store.reserve_broadcast("https://a.example.com/x")
+    Selection runs on the NON-strict read, so one transient Gist failure hands
+    content_prep_stage the empty default and it can reselect a story a crashed
+    run already claimed. An earlier version replaced that claim with its own,
+    passed verification, and reposted the story. With no owner token there is no
+    way to prove the claim is ours, so an existing one must refuse.
+    """
+    events = _events(monkeypatch)
+    box = _state(monkeypatch, {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [
+            {"link": "https://a.example.com/x", "stage": "pending", "reserved_at": "t0"}
+        ],
+    })
 
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert "broadcast_reservation_conflict" in events
+    # The other run's claim survives, untouched.
+    entries = box["value"]["pending_broadcast"]
+    assert len(entries) == 1
+    assert entries[0]["reserved_at"] == "t0"
+
+
+def test_an_uncertain_claim_also_refuses(monkeypatch):
+    """Not just `pending` — any live claim blocks acquisition."""
+    box = _state(monkeypatch, {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "uncertain"}],
+    })
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
     assert state_store.reserved_links(box["value"]) == ["https://a.example.com/x"]
+
+
+def test_a_story_already_in_links_refuses(monkeypatch):
+    """The same stale-selection path can surface a URL already posted."""
+    events = _events(monkeypatch)
+    box = _state(monkeypatch, {
+        "links": ["https://a.example.com/x"],
+        "recent_topics": [],
+    })
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert "broadcast_reservation_conflict" in events
+    assert state_store.reserved_links(box["value"]) == []  # no claim written
+
+
+def test_a_conflict_does_not_release_the_other_runs_claim(monkeypatch):
+    """The release paths must not fire on a conflict — that claim is not ours."""
+    events = _events(monkeypatch)
+    _state(monkeypatch, {
+        "links": [],
+        "recent_topics": [],
+        "pending_broadcast": [{"link": "https://a.example.com/x", "stage": "pending"}],
+    })
+
+    state_store.reserve_broadcast("https://a.example.com/x")
+
+    assert "broadcast_claim_released" not in events
+    assert "broadcast_claim_release_failed" not in events
+
+
+def test_reserving_an_unclaimed_story_still_succeeds(monkeypatch):
+    """The conflict check must not block the normal path."""
+    box = _state(monkeypatch, {
+        "links": ["https://other.example.com/a"],
+        "recent_topics": [],
+        "pending_broadcast": [{"link": "https://other.example.com/b", "stage": "pending"}],
+    })
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is True
+    assert "https://a.example.com/x" in state_store.reserved_links(box["value"])
 
 
 def test_reservations_are_capped(monkeypatch):
