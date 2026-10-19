@@ -254,6 +254,15 @@ These are judgement calls, not data questions. Engagement at this scale cannot s
 
 ## §4 — The plans
 
+**`docs/REVIEW_blubot_2026-10-19.md`** (added 2026-10-19) — what to take from Shreyas's
+BluBot after his 2026-10-17/18 batch (#184–#195). Splits **could** from **should**.
+Short version: the should-list is two items — a two-phase pre-broadcast reservation
+(we write the dedup entry only *after* delivery, so a crash mid-broadcast can repost)
+and feed backoff with automatic recovery on top of the health data we already collect.
+Everything else is could-with-a-trigger or rejected. **None of his twelve PRs touches
+the binding constraint** (the 2026-10-12 cold read: 2 of 20, Mentor 0 of 10), so none of
+it jumps the priority order above.
+
 **`docs/PLAN_provider_agnostic.md`** (added 2026-10-10) — the BHAG: choose which AI
 platform writes the bot, plus a failover, and have it report what that choice costs you.
 **Planning only; nothing built, nothing queued**, and deliberately *not* ahead of item 4
