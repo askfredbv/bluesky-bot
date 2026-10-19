@@ -31,6 +31,15 @@ replied_to.json.*
 feed_health.json.*
 post_metrics.json.*
 growth.json.*
+# `_atomic_write_json` names its temp file with a LEADING dot
+# (`prefix=f".{file_path.name}."`), so it is `.seen_articles.json.<rand>.tmp`
+# and the patterns above do not match it. One line each rather than a blanket
+# `*.tmp`, which would hide temp files this repo has nothing to do with.
+.seen_articles.json.*
+.replied_to.json.*
+.feed_health.json.*
+.post_metrics.json.*
+.growth.json.*
 .claude/
 docs/WATCHLIST_AUDIT.md
 
