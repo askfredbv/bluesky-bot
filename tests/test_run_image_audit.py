@@ -257,3 +257,113 @@ def test_main_saves_images_when_asked(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert "saved 1 image" in captured.err
     assert "saved 1 image" not in captured.out
+
+
+# --- what the Codex review on #206 caught -----------------------------------
+
+class _Hostile(dict):
+    """A mapping that raises on access — stands in for a shape nobody foresaw."""
+
+    def get(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("bad", [
+    None,
+    "a string where an object belongs",
+    {"post": "not a dict"},
+    {"post": {"uri": "at://x/app.bsky.feed.post/1", "record": "not a dict"}},
+    {"post": {"record": {}, "embed": {"$type": "app.bsky.embed.images#view",
+                                      "images": "not a list"}}},
+    {"post": {"record": {}, "embed": {"$type": "app.bsky.embed.external#view",
+                                      "external": None}}},
+    _Hostile(),
+])
+def test_one_malformed_entry_does_not_cost_the_whole_audit(bad):
+    """A bad record costs one picture, never the month.
+
+    An AttributeError escaping classify_feed fails the workflow step under
+    `set -e`, so there is no artifact and no issue at all — the audit silently
+    skipped. AGENTS.md section 4: best-effort work catches, logs, continues.
+    """
+    illustrations, cards = audit.classify_feed([bad, _image_post()], "askfred.be")
+    assert len(illustrations) == 1
+    assert cards == []
+
+
+def test_a_raising_entry_is_diagnosed_on_stderr(capsys):
+    """Captured with the message, not just the type (AGENTS.md section 3)."""
+    audit.classify_feed([_Hostile()], "askfred.be")
+    err = capsys.readouterr().err
+    assert "malformed feed entry" in err
+    assert "RuntimeError: boom" in err
+
+
+def test_the_hard_rule_is_scoped_to_the_generated_section():
+    """An article's own thumbnail is entitled to its text, logo and people.
+
+    Stating the no-text rule over the whole sheet would manufacture a finding
+    every month, and a rule that cries wolf monthly is one the reader learns to
+    skip — which would cost exactly the attention this workflow exists to buy.
+    """
+    _, cards = audit.classify_feed([_card_post()], "askfred.be")
+    cards_only = audit.render_report([], cards, posts_scanned=1)
+    assert "is a defect" not in cards_only
+    assert "does not apply to the section" in cards_only
+
+    illustrations, _ = audit.classify_feed([_image_post()], "askfred.be")
+    images_only = audit.render_report(illustrations, [], posts_scanned=1)
+    assert "The hard rule applies here" in images_only
+    assert "is a defect" in images_only
+
+
+def test_default_window_covers_a_31_day_month():
+    """62 posts fit in a 31-day month at the twice-daily cadence.
+
+    The job runs on the 1st and does not page back to the previous audit's
+    boundary, so anything outside the window is not looked at late — it is not
+    looked at at all.
+    """
+    assert audit.DEFAULT_LIMIT >= 62
+    assert audit.DEFAULT_LIMIT <= audit._MAX_LIMIT
+
+
+def test_the_sheet_is_trimmed_to_fit_a_github_issue():
+    """An over-limit body is rejected outright — a month with no audit at all.
+
+    Found by running the real thing: 92 pictures came to ~45,000 characters,
+    which is 69% of GitHub's 65,536 limit with no guard behind it.
+    """
+    many = [audit.AuditItem(created_at="2026-10-19T00:00:00Z", text="x" * 150,
+                            image_url=f"https://cdn.bsky.app/img/{n}", post_url="p")
+            for n in range(400)]
+    report = audit.render_report(many[:200], many[200:], posts_scanned=400)
+    assert len(report) <= 65_536
+    assert "are not shown above" in report
+    assert "`post-images` artifact" in report
+
+
+def test_link_cards_are_dropped_before_illustrations():
+    """The generated images are the surface the bug was on; a publisher's
+    thumbnail is the part a reader can skip."""
+    big = [audit.AuditItem(created_at="2026-10-19T00:00:00Z", text="x" * 150,
+                           image_url=f"https://cdn.bsky.app/img/{n}", post_url="p")
+           for n in range(300)]
+    kept_illustrations, kept_cards, dropped = audit._trim_to_budget(big[:150], big[150:])
+    assert dropped > 0
+    assert len(kept_cards) < 150        # cards are what gets dropped
+    assert len(kept_illustrations) == 150  # untouched while any card remains
+
+    # Only once the cards are gone does it start on the illustrations.
+    kept_illustrations, kept_cards, dropped = audit._trim_to_budget(big, [])
+    assert kept_cards == []
+    assert 1 <= len(kept_illustrations) < 300
+    assert dropped == 300 - len(kept_illustrations)
+
+
+def test_a_sheet_that_fits_is_left_alone():
+    illustrations, cards = audit.classify_feed(
+        [_image_post(), _card_post()], "askfred.be")
+    report = audit.render_report(illustrations, cards, posts_scanned=2)
+    assert "are not shown above" not in report
+    assert report.count("![](") == 2

@@ -25,9 +25,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Posts to scan (max 100; 60 is about a month)'
+        description: 'Posts to scan (max 100, which is about 50 days)'
         required: false
-        default: '60'
+        default: '100'
 
 permissions:
   contents: read
@@ -62,7 +62,11 @@ jobs:
         # workflow-lint.yml exists. The script clamps the value itself, and
         # argparse rejects a non-integer.
         env:
-          AUDIT_LIMIT: ${{ inputs.limit || '60' }}
+          # 100 is the endpoint's own cap and ~50 days. A 31-day month holds 62
+          # posts at the twice-daily cadence, and this job does not page back to
+          # the previous audit, so a tighter window would drop the oldest posts
+          # permanently. The windows overlap on purpose.
+          AUDIT_LIMIT: ${{ inputs.limit || '100' }}
         run: |
           set -euo pipefail
           python -m scripts.run_image_audit \

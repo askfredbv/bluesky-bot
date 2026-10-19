@@ -22,6 +22,15 @@ in the output and there should never be one.
 
 Reads nothing secret: the feed and the images are public. Best-effort — it
 always exits 0, because a flaky audit should not page anyone.
+
+Known gap, recorded rather than closed: this reads Bluesky only, so an image
+that reached Mastodon alone is not in the sheet. That happens when the Bluesky
+blob upload fails (``post_to_bluesky`` logs ``image_upload_failed`` and posts
+without the embed) while Mastodon's independent upload succeeds. It is a
+sampling gap, not a blind spot — the same prompt produces both, so a defect in
+the generator shows on the Bluesky side on other days — and closing it would
+mean a second API path and cross-platform dedup for a rare case. Revisit if a
+defect is ever found on Mastodon that this sheet had missed.
 """
 
 from __future__ import annotations
@@ -42,11 +51,17 @@ DEFAULT_ACTOR = "askfred.be"
 
 _FEED_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"
 
-#: One page only. The endpoint caps ``limit`` at 100, which is ~50 days of a
-#: twice-daily cadence — comfortably more than a monthly audit needs. Paging
-#: would add a failure mode for range nobody is asking for.
+#: One page only — the endpoint caps ``limit`` at 100, and paging would add a
+#: failure mode for range nobody is asking for.
 _MAX_LIMIT = 100
-DEFAULT_LIMIT = 60
+
+#: The whole page, deliberately. Two posts a day over a 31-day month is 62, so
+#: a 60-post window would drop the oldest two *permanently*: the job runs on
+#: the 1st and does not page back to the previous audit's boundary, so what
+#: falls off the end is never looked at. 100 is ~50 days, which overlaps the
+#: previous audit instead of leaving a hole. Seeing a picture twice costs
+#: nothing; never seeing it is the failure this whole workflow exists to stop.
+DEFAULT_LIMIT = _MAX_LIMIT
 
 #: Images are only ever fetched from the Bluesky CDN. The URLs come from the
 #: AppView rather than from a feed we scraped, so this is belt-and-braces, but
@@ -60,6 +75,13 @@ _TEXT_PREVIEW_CHARS = 180
 #: A generated illustration is ~1 MB before compression; 8 MB is slack.
 _IMAGE_BYTE_CAP = 8 * 1024 * 1024
 
+#: GitHub rejects an issue body over 65,536 characters outright, and a rejected
+#: body is a month with no audit at all — the same silent skip as a crash. A
+#: live run at ``limit=100`` (44 illustrations, 48 cards) came to ~45,000, so
+#: this is a backstop with headroom, not a squeeze. Measured, not assumed:
+#: trusting "it will fit" is the shape of reasoning that cost six months.
+_BODY_BUDGET_CHARS = 60_000
+
 
 @dataclass(frozen=True)
 class AuditItem:
@@ -70,6 +92,15 @@ class AuditItem:
     image_url: str
     post_url: str
     source_uri: Optional[str] = None
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """``value`` if it is a mapping, else an empty one.
+
+    Every field below comes off a public API response, so a shape that is not
+    the documented one is an input, not a bug to crash on.
+    """
+    return value if isinstance(value, dict) else {}
 
 
 def _post_web_url(at_uri: str, handle: str) -> str:
@@ -117,29 +148,41 @@ def classify_feed(
     cards: List[AuditItem] = []
 
     for item in feed or []:
-        if item.get("reason"):
-            continue
-        post = item.get("post") or {}
-        record = post.get("record") or {}
-        embed = post.get("embed") or {}
-        shared = {
-            "created_at": record.get("createdAt") or post.get("indexedAt") or "",
-            "text": _preview(record.get("text") or ""),
-            "post_url": _post_web_url(post.get("uri") or "", handle),
-        }
+        # One malformed entry must cost one picture, not the month. An
+        # AttributeError escaping here would fail the workflow step under
+        # `set -e`, so there would be no artifact and no issue — the audit
+        # silently skipped for a null record. AGENTS.md §4: best-effort work
+        # catches, logs and continues.
+        try:
+            entry = _as_dict(item)
+            if entry.get("reason"):
+                continue
+            post = _as_dict(entry.get("post"))
+            record = _as_dict(post.get("record"))
+            embed = _as_dict(post.get("embed"))
+            shared = {
+                "created_at": record.get("createdAt") or post.get("indexedAt") or "",
+                "text": _preview(record.get("text") or ""),
+                "post_url": _post_web_url(post.get("uri") or "", handle),
+            }
 
-        embed_type = embed.get("$type") or ""
-        if embed_type.startswith("app.bsky.embed.images"):
-            for image in embed.get("images") or []:
-                url = image.get("fullsize") or image.get("thumb") or ""
-                if url:
-                    illustrations.append(AuditItem(image_url=url, **shared))
-        elif embed_type.startswith("app.bsky.embed.external"):
-            external = embed.get("external") or {}
-            thumb = external.get("thumb") or ""
-            if thumb:
-                cards.append(AuditItem(
-                    image_url=thumb, source_uri=external.get("uri") or None, **shared))
+            embed_type = embed.get("$type") or ""
+            if embed_type.startswith("app.bsky.embed.images"):
+                images = embed.get("images")
+                for image in images if isinstance(images, list) else []:
+                    url = _as_dict(image).get("fullsize") or _as_dict(image).get("thumb")
+                    if url:
+                        illustrations.append(AuditItem(image_url=url, **shared))
+            elif embed_type.startswith("app.bsky.embed.external"):
+                external = _as_dict(embed.get("external"))
+                thumb = external.get("thumb") or ""
+                if thumb:
+                    cards.append(AuditItem(
+                        image_url=thumb, source_uri=external.get("uri") or None,
+                        **shared))
+        except Exception as exc:  # noqa: BLE001 - one bad entry, not the run
+            print(f"skipped a malformed feed entry: "
+                  f"{type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
 
     return illustrations, cards
 
@@ -160,10 +203,32 @@ def _render_item(item: AuditItem) -> str:
     return "\n".join(block)
 
 
+def _trim_to_budget(
+    illustrations: List[AuditItem], cards: List[AuditItem]
+) -> Tuple[List[AuditItem], List[AuditItem], int]:
+    """Drop the oldest pictures if the sheet would not fit in a GitHub issue.
+
+    Link cards go first and the illustrations last: the generated images are
+    the surface the bug was on, and a publisher's thumbnail is the part a
+    reader can skip. Every picture is still in the artifact either way, and the
+    report says how many it is not showing rather than quietly ending early.
+    """
+    kept_illustrations = list(illustrations)
+    kept_cards = list(cards)
+    total = sum(len(_render_item(i)) for i in kept_illustrations + kept_cards)
+    dropped = 0
+    while total > _BODY_BUDGET_CHARS and (kept_cards or len(kept_illustrations) > 1):
+        victim = kept_cards.pop() if kept_cards else kept_illustrations.pop()
+        total -= len(_render_item(victim))
+        dropped += 1
+    return kept_illustrations, kept_cards, dropped
+
+
 def render_report(
     illustrations: List[AuditItem], cards: List[AuditItem], posts_scanned: int
 ) -> str:
     """The contact sheet. Pictures, no score — see the module docstring."""
+    illustrations, cards, dropped = _trim_to_budget(illustrations, cards)
     out: List[str] = [
         "## The pictures the bot posted — look at them",
         "",
@@ -171,10 +236,10 @@ def render_report(
         f"thumbnails, from the last {posts_scanned} posts as the public feed serves "
         "them. Nothing here is scored or graded. Scroll the pictures._",
         "",
-        "**The question: would you have posted this picture?** Rendered text of any "
-        "kind — words, letters, numbers, labels, captions, signage, a watermark — is "
-        "a defect, and so are people, hands and faces. The image prompt forbids all "
-        "of them (`VISUAL_PROMPT_CONSTRAINTS`, `src/config.py`).",
+        "**The question: would you have posted this picture?** It has a hard answer "
+        "for one of the two sections below and a judgement answer for the other; each "
+        "says which, because applying the strict rule to a publisher's own artwork "
+        "would manufacture a finding every month and teach you to ignore the rule.",
         "",
         "Why this issue exists: a prompt bug put captions into these images from "
         "2026-04-18 to 2026-10-19. `USER: ADNIN > LDAD` went out on 2026-10-18. For "
@@ -201,8 +266,12 @@ def render_report(
             "",
             f"### Generated illustrations ({len(illustrations)})",
             "",
-            "Every one of these came out of the image model. This is the surface the "
-            "bug was on.",
+            "Every one of these came out of the image model, and this is the surface "
+            "the bug was on. **The hard rule applies here**: rendered text of any kind "
+            "— words, letters, numbers, labels, captions, signage, a watermark — is a "
+            "defect, and so are people, hands and faces. The prompt forbids all of "
+            "them (`VISUAL_PROMPT_CONSTRAINTS`, `src/config.py`), so anything you see "
+            "here is the prompt not reaching the model.",
             "",
         ]
         out += [_render_item(item) for item in illustrations]
@@ -215,11 +284,26 @@ def render_report(
             "",
             "A Curator card carries the article's own thumbnail — or one the bot "
             "generated, when the article had none. **The public feed does not say "
-            "which is which**, so both are here. The generated ones are under the "
-            "same no-text, no-people constraint as the section above.",
+            "which is which**, so both are here, and the hard rule above does not "
+            "apply to the section: a publisher's own image is entitled to its text, "
+            "its logo and the people in it. Ask the looser question instead — does "
+            "this picture embarrass the post it rode with? A flat illustration that "
+            "carries lettering is the one to flag; it is ours, and you can tell by "
+            "looking.",
             "",
         ]
         out += [_render_item(item) for item in cards]
+
+    if dropped:
+        out += [
+            "---",
+            "",
+            f"**{dropped} older picture(s) are not shown above.** The sheet reached "
+            "GitHub's issue-body limit, and a body over it is rejected outright — "
+            "which would have meant no audit at all this month. Every picture is in "
+            "the run's `post-images` artifact.",
+            "",
+        ]
 
     out += [
         "---",
