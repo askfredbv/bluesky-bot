@@ -137,30 +137,34 @@ def _save_state_to_store(key: str, data: Any) -> bool:
             state_key=key,
         )
         return False
-def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
-    """Load a JSON state file from a private Gist, distinguishing a
-    TRUSTWORTHY empty from an UNTRUSTED one.
+# How the Gist tier answered a read. The bool that `_load_gist_state_strict`
+# returns is `status == GIST_READ_OK`, which is the right question for a writer
+# — "may I overwrite what is there?" — and too coarse for a reader asking "is
+# what I just wrote the thing a later read will get?".
+#
+# UNREACHABLE is the absence of evidence: transport, HTTP or auth failure, so
+# the stored content is unknown and quite possibly exactly what we wrote.
+# CORRUPT is evidence: the Gist answered, and what it holds cannot be parsed —
+# so reads fall through PAST it to older tiers, and anything written to the Gist
+# is invisible for as long as that lasts. Collapsing the two is what let a
+# reservation broadcast on a Gist whose content no read can use (Codex review,
+# 2026-10-19).
+GIST_READ_OK = "ok"
+GIST_READ_UNREACHABLE = "unreachable"
+GIST_READ_CORRUPT = "corrupt"
 
-    Returns ``(value, trusted)``:
-      - ``trusted=True``  — the result is safe to act on. Either the file
-        loaded fine (value = parsed JSON), or the read genuinely found no
-        such state (value = None) because no Gist is configured (local dev)
-        or the Gist is reachable but the file has never been written.
-      - ``trusted=False`` — the read itself failed (transport / HTTP / auth /
-        corrupt-content). value = None, but that None means "could not read",
-        NOT "no state exists". Callers must NOT overwrite real state on this.
 
-    Why this matters: ``_load_gist_state`` collapses every failure to ``None``,
-    so a transient Gist read failure is indistinguishable from genuinely-absent
-    state. For append-only / approval state (``pending_replies.json``) that
-    ambiguity is destructive — a save after a failed read overwrites real
-    pending/posted/rejected history. This strict variant lets those callers
-    skip work instead. (Flagged by the Codex review on 2026-06-12; see
-    AGENTS.md "fail loud on critical state".)
+def _load_gist_state_checked(filename: str) -> Tuple[Optional[Any], str]:
+    """``_load_gist_state_strict``, reporting HOW the Gist tier answered.
+
+    Returns ``(value, status)`` with status one of ``GIST_READ_OK`` (parsed
+    content, a genuinely absent file, or no Gist configured),
+    ``GIST_READ_UNREACHABLE`` (the request failed) or ``GIST_READ_CORRUPT``
+    (the request succeeded and the content could not be parsed).
     """
     gist_id = os.environ.get("GIST_ID", "").strip()
     if not gist_id:
-        return None, True  # local dev, no Gist configured — empty is legitimate
+        return None, GIST_READ_OK  # local dev, no Gist configured — empty is legitimate
     token = os.environ.get("GIST_TOKEN", "").strip()
     headers: Dict[str, str] = {"Accept": "application/vnd.github+json"}
     if token:
@@ -184,14 +188,14 @@ def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
             error_msg=str(e)[:200],
             state_file=filename,
         )
-        return None, False
+        return None, GIST_READ_UNREACHABLE
     files = payload.get("files") if isinstance(payload, dict) else None
     if not isinstance(files, dict) or filename not in files:
         # Gist reachable, but this file has never been written. Genuinely
         # absent — trustworthy empty (e.g. the first proactive run).
-        return None, True
+        return None, GIST_READ_OK
     try:
-        return json.loads(files[filename]["content"]), True
+        return json.loads(files[filename]["content"]), GIST_READ_OK
     except Exception as e:
         # Stored content is corrupt/unparseable. Treat as untrusted rather
         # than silently clobbering it with an empty state.
@@ -202,7 +206,37 @@ def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
             error_msg=str(e)[:200],
             state_file=filename,
         )
-        return None, False
+        return None, GIST_READ_CORRUPT
+
+
+def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
+    """Load a JSON state file from a private Gist, distinguishing a
+    TRUSTWORTHY empty from an UNTRUSTED one.
+
+    Returns ``(value, trusted)``:
+      - ``trusted=True``  — the result is safe to act on. Either the file
+        loaded fine (value = parsed JSON), or the read genuinely found no
+        such state (value = None) because no Gist is configured (local dev)
+        or the Gist is reachable but the file has never been written.
+      - ``trusted=False`` — the read itself failed (transport / HTTP / auth /
+        corrupt-content). value = None, but that None means "could not read",
+        NOT "no state exists". Callers must NOT overwrite real state on this.
+
+    Why this matters: ``_load_gist_state`` collapses every failure to ``None``,
+    so a transient Gist read failure is indistinguishable from genuinely-absent
+    state. For append-only / approval state (``pending_replies.json``) that
+    ambiguity is destructive — a save after a failed read overwrites real
+    pending/posted/rejected history. This strict variant lets those callers
+    skip work instead. (Flagged by the Codex review on 2026-06-12; see
+    AGENTS.md "fail loud on critical state".)
+
+    Thin wrapper over ``_load_gist_state_checked``. It folds UNREACHABLE and
+    CORRUPT into one ``False``, which is correct for every caller asking "may I
+    overwrite what is there?" and too coarse for one asking "will a later read
+    see what I just wrote?" — that one wants the status.
+    """
+    value, status = _load_gist_state_checked(filename)
+    return value, status == GIST_READ_OK
 def _load_gist_state(filename: str) -> Optional[Any]:
     """Load a JSON state file from a private GitHub Gist.
 
@@ -394,10 +428,11 @@ def load_seen_articles_strict() -> Tuple[Dict[str, Any], bool]:
     return state, trusted
 
 
-def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, bool]:
-    """``load_seen_articles_strict``, plus whether the GIST TIER settled.
+def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, str]:
+    """``load_seen_articles_strict``, plus HOW THE GIST TIER answered.
 
-    Returns ``(state, trusted, gist_settled)``.
+    Returns ``(state, trusted, gist_status)``, the status being one of
+    ``GIST_READ_OK`` / ``GIST_READ_UNREACHABLE`` / ``GIST_READ_CORRUPT``.
 
     ``trusted`` is an aggregate: it says some tier supplied real state, so the
     value is safe to write back. That is the right question for a writer and the
@@ -405,12 +440,13 @@ def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, bool]:
     because this chain reads Gist -> store -> local and ``trusted`` is True the
     moment the STORE answers, even when the Gist GET failed on the way past.
 
-    ``gist_settled`` is the missing piece: True when the Gist tier gave a
-    definite answer — its content, "no such file", or "no Gist configured" — and
-    False only when the read itself failed (transport, HTTP, auth, corrupt
-    content). When it is False, nothing read from a lower tier can be relied on
-    to survive, because the Gist answers FIRST once it recovers and its older
-    content shadows whatever the store or the local file just reported.
+    ``gist_status`` is the missing piece. ``GIST_READ_OK`` means the Gist tier
+    gave a definite answer — its content, "no such file", or "no Gist
+    configured" — and only then can anything read from a LOWER tier be relied on
+    to survive, because the Gist answers FIRST and its content shadows whatever
+    the store or the local file reported. The other two statuses are both
+    "cannot rely on it", for opposite reasons: UNREACHABLE means the Gist's
+    content is unknown, CORRUPT means it is known and unusable.
 
     That distinction is what the pre-broadcast reservation verifies against: a
     claim written to the store while the Gist is merely unreadable reads back
@@ -420,17 +456,18 @@ def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, bool]:
     """
     default: Dict[str, Any] = {"links": [], "recent_topics": [], "pioneer_recent": []}
     # 1. Try Gist
-    gist_data, gist_trusted = _load_gist_state_strict("seen_articles.json")
+    gist_data, gist_status = _load_gist_state_checked("seen_articles.json")
     if isinstance(gist_data, dict) and "links" in gist_data and "recent_topics" in gist_data:
-        return _ensure_pioneer_field(gist_data), True, True
+        return _ensure_pioneer_field(gist_data), True, GIST_READ_OK
+    gist_trusted = gist_status == GIST_READ_OK
     # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("seen_articles")
     if isinstance(remote_data, dict) and "links" in remote_data and "recent_topics" in remote_data:
-        return _ensure_pioneer_field(remote_data), True, gist_trusted
+        return _ensure_pioneer_field(remote_data), True, gist_status
     if isinstance(remote_data, list):
         migrated = {"links": remote_data, "recent_topics": [], "pioneer_recent": []}
         _save_state_to_store("seen_articles", migrated)
-        return migrated, True, gist_trusted
+        return migrated, True, gist_status
     # 3. Local file fallback
     data, from_file = _load_json_with_repair_strict(
         SEEN_FILE,
@@ -443,7 +480,7 @@ def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, bool]:
         # trustworthy on its own; the default is only trustworthy if the Gist
         # read ahead of it actually succeeded. Deciding this from whether a file
         # exists let a stray .bak mark the default as real (fixed 2026-09-11).
-        return _ensure_pioneer_field(data), (from_file or gist_trusted), gist_trusted
+        return _ensure_pioneer_field(data), (from_file or gist_trusted), gist_status
     # 4. Nothing supplied real state. Whether the empty default is trustworthy
     #    depends entirely on whether the Gist read succeeded: a reachable Gist
     #    with no file yet is a legitimate first run, an unreachable one is not.
@@ -451,11 +488,12 @@ def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, bool]:
         SafeLogger.error(
             "seen_articles_read_untrusted",
             "Seen-state read failed and no fallback tier had state; treating empty as UNKNOWN",
+            gist_status=gist_status,
         )
-        return default, False, False
+        return default, False, gist_status
     SafeLogger.warn("seen_articles_format_repaired", "Unexpected seen_articles format detected; repairing to default shape")
     _atomic_write_json(SEEN_FILE, default)
-    return default, True, True
+    return default, True, GIST_READ_OK
 
 
 def load_seen_articles() -> Dict[str, Any]:
@@ -867,11 +905,31 @@ def reserve_broadcast(link: str) -> bool:
     # the read genuinely does fall through (Codex review, 2026-10-19). A settled
     # Gist that simply has no file still verifies a store claim, because the next
     # run's read falls through exactly the same way.
-    seen_after, _read_trusted, gist_settled = load_seen_articles_sourced()
-    if not gist_settled:
-        # Cannot verify, because the tier that answers first is in an unknown
-        # state. What may be concluded without that answer depends entirely on
-        # WHICH tier took the write, and "any tier that is not None" is not good
+    seen_after, _read_trusted, gist_status = load_seen_articles_sourced()
+    if gist_status == GIST_READ_CORRUPT:
+        # Not "I could not check" — a check that came back with an answer, and
+        # the answer is that the Gist holds content no read can parse. Every
+        # read falls PAST it to older store or local state, which has no claim
+        # in it, so the story is selectable again however well the PATCH went.
+        # A Gist-tier write does not save this: `_save_gist_state` writes valid
+        # JSON, so seeing corruption AFTER our own successful PATCH means
+        # something overwrote it or we are being served something other than
+        # what we wrote — either way, not our claim. Positive evidence of
+        # invisibility is a refusal, not an unverified success (Codex review,
+        # 2026-10-19).
+        SafeLogger.error(
+            "broadcast_reservation_gist_unparseable",
+            "Gist content cannot be parsed, so reads fall past the claim; refusing rather than broadcasting",
+            reserved_link=canonical,
+            storage_tier=tier,
+            gist_status=gist_status,
+        )
+        _release_claim(canonical, reason="gist_unparseable")
+        return False
+    if gist_status != GIST_READ_OK:
+        # Cannot verify, because the tier that answers first did not answer.
+        # What may be concluded without that answer depends entirely on WHICH
+        # tier took the write, and "any tier that is not None" is not good
         # enough (Codex review, 2026-10-19):
         #
         #   tier == "gist"  — the PATCH succeeded against the same Gist whose GET
@@ -893,15 +951,16 @@ def reserve_broadcast(link: str) -> bool:
         # Note what a successful Gist write already tells us: the strict read
         # INSIDE `update_seen_articles_checked` had to be trusted for the write
         # to happen at all, so the Gist answered a read moments ago. A `tier ==
-        # "gist"` write with an unsettled read-back therefore means the Gist went
-        # unreadable between the two, which is the transient case — not a Gist
-        # that has been down all along.
+        # "gist"` write with an unreachable read-back therefore means the Gist
+        # went unreachable between the two, which is the transient case — not a
+        # Gist that has been down all along.
         if tier != _UNSHADOWABLE_TIER:
             SafeLogger.error(
                 "broadcast_reservation_shadowable",
                 "Claim went to a fallback tier a recovering Gist would shadow, and the Gist did not answer the check",
                 reserved_link=canonical,
                 storage_tier=tier,
+                gist_status=gist_status,
             )
             _release_claim(canonical, reason="shadowable_tier")
             return False
@@ -914,6 +973,7 @@ def reserve_broadcast(link: str) -> bool:
             "Gist did not answer, so the reservation could not be read back; broadcasting on the Gist-tier write",
             reserved_link=canonical,
             storage_tier=tier,
+            gist_status=gist_status,
         )
         return True
     if canonical not in reserved_links(seen_after):
@@ -1009,13 +1069,19 @@ def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> N
         # one tier down, confirming from the store a release the recovering Gist
         # has not got (Codex review, 2026-10-19). Only a settled Gist makes
         # "the claim is gone" mean anything.
-        seen_after, _read_trusted, gist_settled = load_seen_articles_sourced()
-        if not gist_settled:
+        seen_after, _read_trusted, gist_status = load_seen_articles_sourced()
+        if gist_status != GIST_READ_OK:
+            # Unreachable and corrupt both land here, because the question this
+            # check asks — "is the claim gone from what reads return?" — is
+            # unanswerable either way. (Unlike the reservation, there is no
+            # safe-but-different action to take: this is detection only, and
+            # the honest report is that it could not detect.)
             SafeLogger.warn(
                 "broadcast_release_unverified",
-                "Gist did not answer, so the release could not be confirmed",
+                "Gist did not answer usably, so the release could not be confirmed",
                 reserved_link=canonical,
                 storage_tier=tier,
+                gist_status=gist_status,
             )
             return
         if canonical in reserved_links(seen_after):

@@ -160,7 +160,11 @@ def test_strict_seen_read_is_untrusted_when_the_gist_is_unreachable(monkeypatch,
     and STATE_STORE_URL is normally unset. One failed Gist GET therefore walks the
     whole chain to the empty default -- which must not be written back."""
     _no_local_state(monkeypatch, tmp_path)
-    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, False))
+    monkeypatch.setattr(
+        state_store,
+        "_load_gist_state_checked",
+        lambda _f: (None, state_store.GIST_READ_UNREACHABLE),
+    )
 
     data, trusted = state_store.load_seen_articles_strict()
 
@@ -172,7 +176,11 @@ def test_strict_seen_read_is_trusted_on_a_genuine_first_run(monkeypatch, tmp_pat
     """A reachable Gist with no file yet is a legitimate empty, and must stay
     writable -- otherwise the very first run could never persist anything."""
     _no_local_state(monkeypatch, tmp_path)
-    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: (None, True))
+    monkeypatch.setattr(
+        state_store,
+        "_load_gist_state_checked",
+        lambda _f: (None, state_store.GIST_READ_OK),
+    )
 
     data, trusted = state_store.load_seen_articles_strict()
 

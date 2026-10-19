@@ -275,7 +275,11 @@ def test_repair_loader_migrates_a_legacy_list_and_rewrites_the_file(tmp_path):
 
 def _seen_env(monkeypatch, tmp_path, gist=(None, True), remote=None):
     monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
-    monkeypatch.setattr(state_store, "_load_gist_state_strict", lambda _f: gist)
+    # The seen loader reads the Gist through the status-reporting variant; these
+    # fixtures still speak in trusted/untrusted, so map the flag onto a status.
+    value, trusted = gist
+    status = state_store.GIST_READ_OK if trusted else state_store.GIST_READ_UNREACHABLE
+    monkeypatch.setattr(state_store, "_load_gist_state_checked", lambda _f: (value, status))
     monkeypatch.setattr(state_store, "_load_state_from_store", lambda _k: remote)
     saved = []
     monkeypatch.setattr(state_store, "_save_state_to_store", lambda k, d: saved.append((k, d)) or True)
