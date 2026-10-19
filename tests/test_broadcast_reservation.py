@@ -61,7 +61,7 @@ def _state(monkeypatch, initial):
         "gist_status": state_store.GIST_READ_OK,
     }
 
-    def _fake(mutator):
+    def _fake(mutator, **kw):
         box["value"] = mutator(box["value"])
         return box["value"], box["tier"]
 
@@ -180,7 +180,7 @@ async def test_an_unverifiable_read_still_broadcasts(monkeypatch):
     monkeypatch.setenv("GIST_ID", "abc123")
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "gist")
     )
     monkeypatch.setattr(
         state_store,
@@ -462,7 +462,7 @@ def test_a_shadowed_release_is_reported_not_claimed_as_settled(monkeypatch):
     the story suppressed while the log says it was freed."""
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({"links": []}), "store")
     )
     # What reads actually come back with: the stale Gist, claim still in it.
     monkeypatch.setattr(
@@ -494,7 +494,7 @@ def test_a_shadowed_keep_or_promote_is_not_flagged(monkeypatch):
     that was posted, or that a platform tried to post. No false alarm."""
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({"links": []}), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -532,7 +532,7 @@ def test_an_unverifiable_release_is_reported_as_unverified(monkeypatch):
     """
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({"links": []}), "store")
     )
     # The read that would confirm the release failed: empty, and untrusted.
     monkeypatch.setattr(
@@ -567,7 +567,7 @@ def test_a_release_confirmed_only_by_the_store_is_not_reported_as_settled(monkey
     """
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({"links": []}), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -587,12 +587,115 @@ def test_a_release_confirmed_only_by_the_store_is_not_reported_as_settled(monkey
     assert "broadcast_settled" not in events
 
 
+def test_a_surviving_claim_under_a_corrupt_gist_is_an_error_not_a_warning(monkeypatch):
+    """Corruption makes the fallback read authoritative, not useless
+    (Codex, 2026-10-19).
+
+    Reads fall straight PAST a corrupt Gist, so what the store returned is
+    literally what a reader gets — and the claim is still in it. That is an
+    observed failed release: the story stays suppressed although nothing was
+    posted. Reporting it as "could not verify" hid a critical failure behind a
+    WARN, where the Actions UI surfaces ERROR.
+    """
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store,
+        "update_seen_articles_checked",
+        lambda m, **kw: (m({"links": []}), "store"),
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (
+            {
+                "links": [],
+                "recent_topics": [],
+                "pending_broadcast": [
+                    {"link": "https://a.example.com/x", "stage": "pending"}
+                ],
+            },
+            True,
+            state_store.GIST_READ_CORRUPT,
+        ),
+    )
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert "broadcast_release_not_readable" in events
+    assert "broadcast_release_unverified" not in events
+    assert "broadcast_settled" not in events
+
+
+def test_a_surviving_claim_under_an_unreachable_gist_stays_unverified(monkeypatch):
+    """The asymmetry that justifies keeping the two statuses apart: an
+    unreachable Gist answers first the moment it is back, so what the store
+    returned says nothing about what a reader will get — present or absent."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store,
+        "update_seen_articles_checked",
+        lambda m, **kw: (m({"links": []}), "store"),
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (
+            {
+                "links": [],
+                "recent_topics": [],
+                "pending_broadcast": [
+                    {"link": "https://a.example.com/x", "stage": "pending"}
+                ],
+            },
+            True,
+            state_store.GIST_READ_UNREACHABLE,
+        ),
+    )
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert "broadcast_release_unverified" in events
+    assert "broadcast_release_not_readable" not in events
+
+
+def test_a_corrupt_gist_with_the_claim_gone_is_still_only_unverified(monkeypatch):
+    """Corruption is authoritative about what reads return NOW, not about what
+    the Gist itself holds — so an absent claim there is not a confirmed
+    release."""
+    events = _events(monkeypatch)
+    monkeypatch.setattr(
+        state_store,
+        "update_seen_articles_checked",
+        lambda m, **kw: (m({"links": []}), "store"),
+    )
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (
+            {"links": [], "recent_topics": [], "pioneer_recent": []},
+            True,
+            state_store.GIST_READ_CORRUPT,
+        ),
+    )
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=False
+    )
+
+    assert "broadcast_release_unverified" in events
+    assert "broadcast_settled" not in events
+
+
 def test_a_confirmed_release_is_reported_as_settled(monkeypatch):
     """The positive side of the pair: a read the code CAN trust, showing the
     claim gone, is the one case that may say `broadcast_settled`."""
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "gist")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({"links": []}), "gist")
     )
     monkeypatch.setattr(
         state_store,
@@ -619,7 +722,7 @@ def test_an_unverifiable_read_does_not_touch_the_other_two_outcomes(monkeypatch)
     test already pins."""
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({"links": []}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({"links": []}), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -829,7 +932,7 @@ def test_failed_settlement_logs_an_error_and_leaves_the_claim_pending(monkeypatc
     settle, and a pending claim suppresses just as firmly as an uncertain one."""
     events = _events(monkeypatch)
 
-    def _fake(mutator):
+    def _fake(mutator, **kw):
         return {}, None
 
     monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
@@ -846,7 +949,7 @@ def test_failed_settlement_logs_an_error_and_leaves_the_claim_pending(monkeypatc
 
 def test_reservation_fails_when_no_tier_stored_it(monkeypatch):
     events = _events(monkeypatch)
-    monkeypatch.setattr(state_store, "update_seen_articles_checked", lambda m: ({}, None))
+    monkeypatch.setattr(state_store, "update_seen_articles_checked", lambda m, **kw: ({}, None))
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
     assert "broadcast_reservation_failed" in events
@@ -858,7 +961,7 @@ def test_reservation_fails_when_only_the_local_file_took_it_on_a_runner(monkeypa
     monkeypatch.setenv("GIST_ID", "abc123")
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({}), "local")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({}), "local")
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
@@ -878,7 +981,7 @@ def test_reservation_fails_when_the_claim_does_not_read_back(monkeypatch):
     monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({}), "store")
     )
     # What a later read comes back with: the stale Gist, no claim in it.
     monkeypatch.setattr(
@@ -902,7 +1005,7 @@ def test_reservation_succeeds_when_the_read_falls_through_to_the_store(monkeypat
     monkeypatch.setenv("GIST_ID", "abc123")
     monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({}), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -941,7 +1044,7 @@ def test_a_refused_reservation_releases_the_claim_it_wrote(monkeypatch):
         "pending_broadcast": [],
     }
 
-    def _fake(mutator):
+    def _fake(mutator, **kw):
         return mutator(state), "gist"
 
     monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
@@ -978,7 +1081,7 @@ def test_an_unverifiable_read_proceeds_with_the_broadcast(monkeypatch):
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
 
-    def _fake(mutator):
+    def _fake(mutator, **kw):
         return mutator(state), "gist"
 
     monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
@@ -1020,7 +1123,7 @@ def test_an_unverifiable_claim_on_a_shadowable_tier_is_refused(monkeypatch):
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -1056,7 +1159,7 @@ def test_a_store_claim_read_back_from_the_store_is_refused_while_the_gist_is_sil
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "store")
     )
     # Trusted, because the store answered with real state — and the claim IS in
     # it. The Gist, which reads ask first, did not answer at all.
@@ -1094,7 +1197,7 @@ def test_a_settled_gist_with_no_file_still_verifies_a_store_claim(monkeypatch):
     monkeypatch.setenv("STATE_STORE_URL", "https://state.example/bot")
     events = _events(monkeypatch)
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m({}), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m({}), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -1135,7 +1238,7 @@ def test_a_shadowable_refusal_whose_cleanup_also_fails_is_loud(monkeypatch):
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     writes = {"n": 0}
 
-    def _fake(mutator):
+    def _fake(mutator, **kw):
         writes["n"] += 1
         if writes["n"] == 1:
             return mutator(state), "store"
@@ -1176,7 +1279,7 @@ def test_a_corrupt_gist_refuses_even_a_gist_tier_claim(monkeypatch):
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "gist")
     )
     monkeypatch.setattr(
         state_store,
@@ -1201,7 +1304,7 @@ def test_an_unreachable_gist_is_not_treated_as_corrupt(monkeypatch):
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "gist")
     )
     monkeypatch.setattr(
         state_store,
@@ -1226,7 +1329,7 @@ def test_a_corrupt_gist_also_refuses_a_store_tier_claim(monkeypatch):
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "store")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "store")
     )
     monkeypatch.setattr(
         state_store,
@@ -1252,7 +1355,7 @@ def test_an_unverifiable_claim_on_the_gist_is_not_treated_as_shadowable(monkeypa
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "gist")
     )
     monkeypatch.setattr(
         state_store,
@@ -1274,7 +1377,7 @@ def test_a_non_durable_reservation_also_releases_its_claim(monkeypatch):
     events = _events(monkeypatch)
     state = {"links": [], "recent_topics": [], "pending_broadcast": []}
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "local")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "local")
     )
 
     assert state_store.reserve_broadcast("https://a.example.com/x") is False
@@ -1285,7 +1388,7 @@ def test_a_non_durable_reservation_also_releases_its_claim(monkeypatch):
 def test_a_failed_release_is_loud(monkeypatch):
     """If the cleanup write is refused too, the story IS stuck — say so."""
     events = _events(monkeypatch)
-    monkeypatch.setattr(state_store, "update_seen_articles_checked", lambda m: ({}, None))
+    monkeypatch.setattr(state_store, "update_seen_articles_checked", lambda m, **kw: ({}, None))
 
     state_store._release_claim("https://a.example.com/x", reason="not_readable")
 
@@ -1303,7 +1406,7 @@ def test_release_leaves_other_claims_alone(monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        state_store, "update_seen_articles_checked", lambda m: (m(state), "gist")
+        state_store, "update_seen_articles_checked", lambda m, **kw: (m(state), "gist")
     )
 
     state_store._release_claim("https://a.example.com/x", reason="not_readable")
@@ -1478,7 +1581,11 @@ def test_save_reports_none_when_even_the_local_write_fails(monkeypatch, tmp_path
 def test_untrusted_read_reports_no_storage_tier(monkeypatch):
     """An untrusted read skips the write, and the checked variant must say so —
     otherwise a reservation would believe a claim that was never written."""
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: ({"links": []}, False))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": []}, False, state_store.GIST_READ_UNREACHABLE),
+    )
     monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
 
     state, tier = state_store.update_seen_articles_checked(lambda c: c)
@@ -1489,6 +1596,129 @@ def test_untrusted_read_reports_no_storage_tier(monkeypatch):
 # ---------------------------------------------------------------------------
 # gist_status: what the aggregate trust flag cannot express
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# require_gist_read: a reservation must not decide blind and then overwrite
+# ---------------------------------------------------------------------------
+
+def test_a_reservation_write_is_skipped_when_the_gist_did_not_answer(monkeypatch):
+    """The hole `require_gist_read` closes (Codex, 2026-10-19).
+
+    `update_seen_articles_checked` writes on the AGGREGATE trust flag, so a
+    failed Gist GET with a healthy store still permits one. The mutator then
+    makes its decision against store state the Gist cannot be seen into — "is
+    this URL already claimed?" answered from a tier that cannot know — and the
+    write PATCHes that straight over the Gist, erasing the very claim that
+    would have said no. Another run's reservation is replaced with ours and the
+    story goes out twice: the hole 09a62ee closed on #198, through a different
+    door.
+    """
+    monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
+    saved = []
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        # Trusted — the store answered with real state. But it is state that
+        # cannot see the claim another run put in the Gist.
+        lambda: ({"links": [], "recent_topics": []}, True, state_store.GIST_READ_UNREACHABLE),
+    )
+
+    _state_out, tier = state_store.update_seen_articles_checked(
+        lambda c: c, require_gist_read=True
+    )
+
+    assert tier is None
+    assert saved == []  # nothing was written over the Gist
+
+
+def test_a_corrupt_gist_also_blocks_a_reservation_write(monkeypatch):
+    monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
+    saved = []
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": [], "recent_topics": []}, True, state_store.GIST_READ_CORRUPT),
+    )
+
+    _state_out, tier = state_store.update_seen_articles_checked(
+        lambda c: c, require_gist_read=True
+    )
+
+    assert tier is None
+    assert saved == []
+
+
+def test_bookkeeping_writes_are_not_subject_to_the_gist_requirement(monkeypatch):
+    """Opt-in, because it is only worth a missed write where the mutator's
+    decision depends on state the Gist might hold alone. The default path keeps
+    writing on aggregate trust, as every non-reservation caller expects."""
+    monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
+    saved = []
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "store")
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": [], "recent_topics": []}, True, state_store.GIST_READ_UNREACHABLE),
+    )
+
+    _state_out, tier = state_store.update_seen_articles_checked(lambda c: c)
+
+    assert tier == "store"
+    assert len(saved) == 1
+
+
+def test_no_gist_configured_does_not_block_a_reservation_write(monkeypatch):
+    """Local development and store-only deployments read GIST_READ_OK, so the
+    guard costs them nothing."""
+    monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: "local")
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": [], "recent_topics": []}, True, state_store.GIST_READ_OK),
+    )
+
+    _state_out, tier = state_store.update_seen_articles_checked(
+        lambda c: c, require_gist_read=True
+    )
+
+    assert tier == "local"
+
+
+def test_the_three_reservation_entry_points_require_the_gist_read(monkeypatch):
+    """Pinned as a set, so a fourth entry point or a dropped flag is visible."""
+    seen = []
+
+    def _fake(mutator, **kw):
+        seen.append(kw.get("require_gist_read", False))
+        return mutator({"links": [], "recent_topics": [], "pending_broadcast": []}), "gist"
+
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (
+            {
+                "links": [],
+                "recent_topics": [],
+                "pending_broadcast": [
+                    {"link": "https://a.example.com/x", "stage": "pending"}
+                ],
+            },
+            True,
+            state_store.GIST_READ_OK,
+        ),
+    )
+
+    state_store.reserve_broadcast("https://a.example.com/x")
+    state_store._release_claim("https://a.example.com/x", reason="test")
+    state_store.settle_broadcast("https://a.example.com/x", delivered=True)
+
+    assert seen == [True, True, True]
+
 
 class _Resp:
     def __init__(self, payload):

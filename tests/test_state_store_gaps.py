@@ -406,13 +406,21 @@ def test_save_replied_writes_the_backup_and_the_file_when_no_remote_takes_it(mon
 def test_update_seen_returns_the_read_when_it_skips(monkeypatch, tmp_path):
     monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
     current = {"links": ["x"], "recent_topics": [], "pioneer_recent": []}
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: (current, False))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: (current, False, state_store.GIST_READ_UNREACHABLE),
+    )
     assert state_store.update_seen_articles(lambda _c: {"links": []}) is current
 
 
 def test_update_seen_returns_what_it_saved(monkeypatch, tmp_path):
     monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
-    monkeypatch.setattr(state_store, "load_seen_articles_strict", lambda: ({"links": []}, True))
+    monkeypatch.setattr(
+        state_store,
+        "load_seen_articles_sourced",
+        lambda: ({"links": []}, True, state_store.GIST_READ_OK),
+    )
     monkeypatch.setattr(state_store, "save_seen_articles", lambda _d: None)
     assert state_store.update_seen_articles(lambda _c: {"links": ["new"]}) == {"links": ["new"]}
 
