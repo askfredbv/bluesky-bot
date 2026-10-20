@@ -448,12 +448,21 @@ def test_the_visual_prompt_call_uses_the_primary_model(monkeypatch, text, expect
 #: so every AI post the account made was the morning Curator. Dropping these
 #: should be a deliberate edit to this list, not a quiet deletion upstream.
 AI_PRACTICE_TERRITORIES = (
-    "the gap between a demo that works and a system someone depends on",
+    "the gap between an AI demo that works and a system someone depends on",
     "what AI makes faster, and what it quietly makes slower",
-    "reviewing work you did not write",
-    "where the bottleneck moves once the obvious part is automated",
-    "the tool works and the adoption fails",
-    "deciding what not to automate",
+    "reviewing code a model wrote, not a colleague",
+    "where the bottleneck moves once AI handles the obvious part",
+    "when the AI tool works and the adoption still fails",
+    "deciding what not to hand to a model",
+)
+
+#: The Strategist half, written for its longer-horizon task line.
+AI_HORIZON_TERRITORIES = (
+    "what a team forgets how to do once a model does it for them",
+    "which parts of a job AI removes and which it quietly relocates",
+    "the skills that get more valuable as the models get better",
+    "what in this AI wave becomes infrastructure and what stays a product",
+    "what the last technology that threatened a profession predicts about AI",
 )
 
 
@@ -463,6 +472,46 @@ def test_mentor_pool_can_still_produce_an_ai_post():
         f"MENTOR_TOPICS no longer offers these AI territories: {missing}. "
         "Without them the afternoon cannot produce an AI post at all, which "
         "was the state on 2026-10-20 on an AI-mentorship account."
+    )
+
+
+def test_strategist_pool_can_still_produce_an_ai_post():
+    missing = [t for t in AI_HORIZON_TERRITORIES if t not in SECONDARY_TOPICS]
+    assert not missing, f"SECONDARY_TOPICS no longer offers: {missing}"
+
+
+@pytest.mark.parametrize("topic", AI_PRACTICE_TERRITORIES + AI_HORIZON_TERRITORIES)
+def test_every_ai_territory_names_ai_outright(topic):
+    """A seed that only implies AI gets read as ordinary software.
+
+    The topic is pasted verbatim into the generic Mentor prompt, which adds no
+    AI context. The first draft of this list said "reviewing work you did not
+    write" and "deciding what not to automate": the first reads as human code
+    review — the theme the 2026-10-20 change exists to thin out — and the
+    second as scripting. Naming AI, a model or an agent is what makes the seed
+    do its job, so it is asserted rather than left to judgement.
+    """
+    words = topic.lower().replace(",", " ").split()
+    assert any(w in ("ai", "model", "models", "agent", "agents") for w in words), (
+        f"{topic!r} never names AI, a model or an agent, so the generic Mentor "
+        "prompt has nothing to anchor it to."
+    )
+
+
+def test_no_ai_territory_restates_the_human_code_review_topic():
+    """The seed that triggered this work must stay the only one of its kind."""
+    human_review = (
+        "code review dynamics: what changes when the reviewer is more senior "
+        "than the author"
+    )
+    assert human_review in MENTOR_TOPICS
+    overlapping = [
+        t for t in AI_PRACTICE_TERRITORIES
+        if "review" in t.lower() and "model" not in t.lower() and "ai" not in t.lower().split()
+    ]
+    assert not overlapping, (
+        f"{overlapping} is about review without naming AI, so it collides with "
+        f"{human_review!r}."
     )
 
 

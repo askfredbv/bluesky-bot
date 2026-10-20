@@ -662,12 +662,21 @@ MENTOR_TOPICS: List[str] = [
     # the eight originally-specific seeds — the v4.20 finding above is that
     # broad anchors ("Career", "Automation") produce soft output and
     # specific ones produce sharp output.
-    "the gap between a demo that works and a system someone depends on",
+    #
+    # Every one names AI, a model or an agent OUTRIGHT, and that is load-
+    # bearing rather than stylistic. The seed is pasted into the generic
+    # Mentor prompt, which adds no AI context of its own, so a seed that
+    # merely implies AI gets read as ordinary software. The first draft of
+    # this list said "reviewing work you did not write" and "deciding what
+    # not to automate"; the first lands straight back on human code review —
+    # the very theme this change exists to thin out — and the second on
+    # scripting. test_every_ai_territory_names_ai_outright enforces it.
+    "the gap between an AI demo that works and a system someone depends on",
     "what AI makes faster, and what it quietly makes slower",
-    "reviewing work you did not write",
-    "where the bottleneck moves once the obvious part is automated",
-    "the tool works and the adoption fails",
-    "deciding what not to automate",
+    "reviewing code a model wrote, not a colleague",
+    "where the bottleneck moves once AI handles the obvious part",
+    "when the AI tool works and the adoption still fails",
+    "deciding what not to hand to a model",
 ]
 
 # ── Phase 4b — Proactive replies (scaffolding only, no behaviour yet) ────────
@@ -715,11 +724,11 @@ PROACTIVE_REPLY_MAX_CHARS: int = 200                # tighter than post limit �
 # no evidence either way yet. Read the first weeks of Strategist posts and
 # cut the ones that come out soft.
 SECONDARY_TOPICS = [
-    "what a team forgets how to do once a tool does it for them",
-    "which parts of a job automation removes and which it quietly relocates",
+    "what a team forgets how to do once a model does it for them",
+    "which parts of a job AI removes and which it quietly relocates",
     "the skills that get more valuable as the models get better",
-    "what becomes infrastructure and what stays a product",
-    "how a profession absorbs a new tool, judged on the last time it happened",
+    "what in this AI wave becomes infrastructure and what stays a product",
+    "what the last technology that threatened a profession predicts about AI",
     "mental health and burnout prevention",
     "open-source culture and community",
     "privacy and digital sovereignty",

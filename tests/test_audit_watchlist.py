@@ -328,3 +328,18 @@ def test_render_markdown_includes_low_cadence_warning():
     )
     md = render_markdown([a], now)
     assert "⚠️" in md
+
+
+def test_topic_token_bag_holds_no_function_words():
+    """The >=4 length rule only worked while no topic phrase held a short
+    function word. A new Strategist topic put "this" in the bag on 2026-10-20
+    and "Went hiking this weekend." started scoring as on-topic, which quietly
+    inflates every topic_fit_score the watchlist audit produces."""
+    from scripts.audit_watchlist import _TOPIC_STOPWORDS, _TOPIC_TOKENS
+    leaked = sorted(_TOPIC_TOKENS & _TOPIC_STOPWORDS)
+    assert not leaked, f"function words reached the topic bag: {leaked}"
+
+
+def test_an_off_topic_post_stays_off_topic():
+    from scripts.audit_watchlist import topic_fit_score
+    assert topic_fit_score(["Went hiking this weekend."]) == 0.0

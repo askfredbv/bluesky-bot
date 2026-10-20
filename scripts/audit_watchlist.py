@@ -104,6 +104,22 @@ def _format_error(exc: BaseException) -> str:
 # Topic keyword bag built once. SECONDARY_TOPICS contains short phrases like
 # "open-source culture and community"; we tokenise to single words so a post
 # mentioning "open-source" alone counts as a hit.
+#
+# The >= 4 length rule alone is not enough, and that was luck rather than
+# design: it held only while no topic phrase happened to contain a four-letter
+# function word. On 2026-10-20 a new Strategist topic ("what in this AI wave
+# becomes infrastructure...") put "this" in the bag, and "Went hiking this
+# weekend." promptly scored as on-topic. A stopword filter makes the rule hold
+# whatever the phrasing, instead of leaving a landmine for the next topic edit.
+_TOPIC_STOPWORDS: frozenset[str] = frozenset({
+    "what", "that", "this", "them", "they", "then", "than", "with", "from",
+    "your", "have", "does", "done", "once", "only", "over", "into", "when",
+    "where", "which", "while", "about", "after", "before", "their", "there",
+    "these", "those", "been", "both", "each", "more", "most", "some", "such",
+    "very", "will", "just", "also", "like", "same", "still", "upon", "else",
+    "even", "ever", "others", "something", "anything",
+})
+
 _TOPIC_TOKENS: set[str] = {
     tok.lower()
     for words in TOPIC_MAP.values()
@@ -112,7 +128,7 @@ _TOPIC_TOKENS: set[str] = {
     word.lower()
     for phrase in SECONDARY_TOPICS
     for word in re.findall(r"[a-zA-Z][a-zA-Z\-]+", phrase)
-    if len(word) >= 4  # drop "and", "the", "for", etc.
+    if len(word) >= 4 and word.lower() not in _TOPIC_STOPWORDS
 }
 
 
