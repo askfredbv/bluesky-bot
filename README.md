@@ -12,7 +12,7 @@ The afternoon run also runs a **pioneer dimension** — curated tech-history fac
 
 **Morning run — The Curator.** Fetches AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then writes about the most consequential development — the "…which means" that follows the headline, not the headline itself. One post by default; 2–3 only if the story needs it.
 
-**Afternoon run — The Mentor.** A career or work-life observation: specific, observational, the kind of thing that is obvious in hindsight but rarely articulated. If morning news volume is low, a longer-horizon "strategist" take runs instead of posting nothing.
+**Afternoon run — The Mentor and The Strategist, alternating.** A specific, observational take: the kind of thing that is obvious in hindsight but rarely articulated. The two alternate on day parity, drawing from separate topic pools — the Mentor on practice ("what AI makes faster, and what it quietly makes slower"), the Strategist on the longer horizon ("what does this look like in five years"). Either may instead run a Pioneer post about a figure or moment in computing history. The Strategist also stands in for a morning Curator run when news volume is too low to post anything worth reading.
 
 **Voice** — first-person, dry, no hype, no reader-bait questions, no day-of-week openers. Default zero hashtags, max two when they're a clear topic anchor.
 

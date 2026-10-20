@@ -118,6 +118,15 @@ _TOPIC_STOPWORDS: frozenset[str] = frozenset({
     "these", "those", "been", "both", "each", "more", "most", "some", "such",
     "very", "will", "just", "also", "like", "same", "still", "upon", "else",
     "even", "ever", "others", "something", "anything",
+    # Temporal and degree words. "last" was the one that got through the first
+    # pass ("what the last technology ..."), and substring matching meant
+    # "I spent last weekend hiking." scored as on-topic. Taking the tranche
+    # rather than the single word Codex named: the failure is the category.
+    "last", "next", "first", "then", "soon", "later", "early", "late",
+    "always", "never", "often", "again", "today", "year", "years", "time",
+    "times", "week", "weeks", "month", "months", "day", "days",
+    "more", "less", "best", "good", "better", "worse", "well", "much",
+    "many", "some", "every", "other", "over", "under", "into", "only",
 })
 
 _TOPIC_TOKENS: set[str] = {
