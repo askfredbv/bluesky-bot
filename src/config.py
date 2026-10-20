@@ -671,8 +671,13 @@ MENTOR_TOPICS: List[str] = [
     # not to automate"; the first lands straight back on human code review —
     # the very theme this change exists to thin out — and the second on
     # scripting. test_every_ai_territory_names_ai_outright enforces it.
+    # "what AI makes faster, and what it quietly makes slower" was here and
+    # was cut: it restated "what gets faster with experience and what doesn't"
+    # eight lines up with AI as the cause, so the pool grew on paper and not in
+    # production. Replaced with the vigilance problem, which the pool does not
+    # already cover. (Codex, #208.)
     "the gap between an AI demo that works and a system someone depends on",
-    "what AI makes faster, and what it quietly makes slower",
+    "what you still have to check when the model is usually right",
     "reviewing code a model wrote, not a colleague",
     "where the bottleneck moves once AI handles the obvious part",
     "when the AI tool works and the adoption still fails",

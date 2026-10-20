@@ -449,7 +449,7 @@ def test_the_visual_prompt_call_uses_the_primary_model(monkeypatch, text, expect
 #: should be a deliberate edit to this list, not a quiet deletion upstream.
 AI_PRACTICE_TERRITORIES = (
     "the gap between an AI demo that works and a system someone depends on",
-    "what AI makes faster, and what it quietly makes slower",
+    "what you still have to check when the model is usually right",
     "reviewing code a model wrote, not a colleague",
     "where the bottleneck moves once AI handles the obvious part",
     "when the AI tool works and the adoption still fails",
