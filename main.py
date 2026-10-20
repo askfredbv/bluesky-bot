@@ -137,8 +137,28 @@ def load_settings_or_exit() -> Settings:
 
 
 async def mode_selection_stage() -> ModeSelectionPayload:
-    current_hour = datetime.now(timezone.utc).hour
-    mode = Mode.CURATOR if current_hour < 11 else Mode.MENTOR
+    now = datetime.now(timezone.utc)
+    current_hour = now.hour
+    if current_hour < 11:
+        mode = Mode.CURATOR
+    else:
+        # The afternoon alternates Mentor and Strategist (2026-10-20).
+        #
+        # It was hardwired to Mentor, which made STRATEGIST unreachable on a
+        # schedule: it fired only as a morning degradation when the news volume
+        # was too low (see content_prep_stage). So SECONDARY_TOPICS sat unused
+        # in production and every afternoon drew from MENTOR_TOPICS alone.
+        # Over 2026-09-01..10-20 that produced 37 posts from 12 topics —
+        # migrations and documentation five times each, code-review dynamics
+        # three — which is the recurrence a reader notices.
+        #
+        # Day parity rather than stored state: it alternates exactly, needs no
+        # new field in the Gist, and a missed or re-run day cannot desynchronise
+        # it. The two modes share SYSTEM_INSTRUCTIONS_MENTOR and the same
+        # persona variants, so this widens the topic pool without touching the
+        # voice — only the closing task line differs (Strategist asks for the
+        # longer-horizon take).
+        mode = Mode.MENTOR if now.toordinal() % 2 == 0 else Mode.STRATEGIST
     # Test hook: FORCE_MODE (workflow_dispatch input) pins the mode for a manual
     # run — e.g. forcing Mentor to validate the image path. Blank/invalid keeps
     # the normal hour-based selection, so scheduled runs are unaffected.

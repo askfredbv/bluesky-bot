@@ -439,3 +439,58 @@ def test_the_visual_prompt_call_uses_the_primary_model(monkeypatch, text, expect
     monkeypatch.setattr(agents, "_get_client", lambda key: SimpleNamespace(models=_Models()))
     assert agents._sync_generate_text("key", "system", "task") == expected
     assert used == [GEMINI_MODEL_PRIORITY[0]]
+
+
+# --- afternoon topic pools (2026-10-20) -------------------------------------
+
+#: The AI/innovation territories added when the afternoon rotation went in.
+#: Asserted by name on purpose: before this, not one Mentor topic touched AI,
+#: so every AI post the account made was the morning Curator. Dropping these
+#: should be a deliberate edit to this list, not a quiet deletion upstream.
+AI_PRACTICE_TERRITORIES = (
+    "the gap between a demo that works and a system someone depends on",
+    "what AI makes faster, and what it quietly makes slower",
+    "reviewing work you did not write",
+    "where the bottleneck moves once the obvious part is automated",
+    "the tool works and the adoption fails",
+    "deciding what not to automate",
+)
+
+
+def test_mentor_pool_can_still_produce_an_ai_post():
+    missing = [t for t in AI_PRACTICE_TERRITORIES if t not in MENTOR_TOPICS]
+    assert not missing, (
+        f"MENTOR_TOPICS no longer offers these AI territories: {missing}. "
+        "Without them the afternoon cannot produce an AI post at all, which "
+        "was the state on 2026-10-20 on an AI-mentorship account."
+    )
+
+
+@pytest.mark.parametrize("name,pool", [
+    ("MENTOR_TOPICS", MENTOR_TOPICS),
+    ("SECONDARY_TOPICS", SECONDARY_TOPICS),
+])
+def test_each_afternoon_pool_outlasts_a_month_of_its_own_slot(name, pool):
+    """The afternoon alternates, so each mode gets roughly 15 slots a month.
+
+    A pool smaller than that guarantees a repeat inside one month regardless
+    of the 5-slot cooldown, which only prevents back-to-back picks. This is
+    the invariant behind the 2026-10-20 finding: 12 topics against a slot that
+    ran every afternoon produced 37 posts from 12 topics in seven weeks.
+    """
+    assert len(pool) >= 15, f"{name} has {len(pool)} topics; a month needs 15+"
+
+
+@pytest.mark.parametrize("name,pool", [
+    ("MENTOR_TOPICS", MENTOR_TOPICS),
+    ("SECONDARY_TOPICS", SECONDARY_TOPICS),
+])
+def test_no_pool_repeats_a_topic_with_itself(name, pool):
+    dupes = [t for t in pool if pool.count(t) > 1]
+    assert not dupes, f"{name} lists these more than once: {set(dupes)}"
+
+
+def test_the_two_afternoon_pools_do_not_overlap():
+    """A topic in both pools would come round twice as often as the rest."""
+    both = set(MENTOR_TOPICS) & set(SECONDARY_TOPICS)
+    assert not both, f"topics in both afternoon pools: {both}"
