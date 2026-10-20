@@ -12,7 +12,7 @@ async def test_mode_selection_stage_selects_curator(monkeypatch):
     class FixedDatetime:
         @classmethod
         def now(cls, tz=None):
-            return SimpleNamespace(hour=9)
+            return SimpleNamespace(hour=9, toordinal=lambda: 739_000)
 
     monkeypatch.setattr(main, "datetime", FixedDatetime)
 
@@ -27,7 +27,7 @@ async def test_mode_selection_stage_honors_force_mode(monkeypatch):
     class FixedDatetime:
         @classmethod
         def now(cls, tz=None):
-            return SimpleNamespace(hour=9)  # would be Curator by the clock
+            return SimpleNamespace(hour=9, toordinal=lambda: 739_000)  # would be Curator by the clock
 
     monkeypatch.setattr(main, "datetime", FixedDatetime)
     monkeypatch.setenv("FORCE_MODE", "strategist")
@@ -42,7 +42,7 @@ async def test_mode_selection_stage_ignores_blank_force_mode(monkeypatch):
     class FixedDatetime:
         @classmethod
         def now(cls, tz=None):
-            return SimpleNamespace(hour=14)  # Mentor by the clock
+            return SimpleNamespace(hour=14, toordinal=lambda: 739_000)  # Mentor by the clock
 
     monkeypatch.setattr(main, "datetime", FixedDatetime)
     monkeypatch.setenv("FORCE_MODE", "")  # blank => normal hour-based selection
@@ -1208,3 +1208,62 @@ async def test_broadcasting_stage_gives_mastodon_no_link_when_there_is_no_card(m
     await main.broadcasting_stage(prep, _x6_settings(), _x6_creds())
 
     assert captured["mastodon_source"] is None
+
+
+# --- afternoon rotation (2026-10-20) ----------------------------------------
+# The afternoon used to be hardwired to Mentor, which left STRATEGIST
+# unreachable on a schedule: it fired only as a morning degradation on low news
+# volume. Every afternoon therefore drew from MENTOR_TOPICS alone, and over
+# 2026-09-01..10-20 that produced 37 posts from 12 topics.
+
+def _clock(hour, ordinal):
+    class FixedDatetime:
+        @classmethod
+        def now(cls, tz=None):
+            return SimpleNamespace(hour=hour, toordinal=lambda: ordinal)
+    return FixedDatetime
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ordinal,expected", [
+    (739_000, "mentor"),      # even
+    (739_001, "strategist"),  # odd
+    (739_002, "mentor"),
+    (739_003, "strategist"),
+])
+async def test_afternoon_alternates_between_mentor_and_strategist(
+        monkeypatch, ordinal, expected):
+    monkeypatch.setattr(main, "datetime", _clock(14, ordinal))
+    monkeypatch.delenv("FORCE_MODE", raising=False)
+    payload = await main.mode_selection_stage()
+    assert payload.mode == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ordinal", [739_000, 739_001])
+async def test_morning_is_curator_on_either_parity(monkeypatch, ordinal):
+    """Day parity governs only the afternoon; the morning is still the Curator."""
+    monkeypatch.setattr(main, "datetime", _clock(9, ordinal))
+    monkeypatch.delenv("FORCE_MODE", raising=False)
+    payload = await main.mode_selection_stage()
+    assert payload.mode == "curator"
+
+
+@pytest.mark.asyncio
+async def test_force_mode_still_overrides_the_rotation(monkeypatch):
+    monkeypatch.setattr(main, "datetime", _clock(14, 739_001))  # Strategist by parity
+    monkeypatch.setenv("FORCE_MODE", "mentor")
+    payload = await main.mode_selection_stage()
+    assert payload.mode == "mentor"
+
+
+@pytest.mark.asyncio
+async def test_consecutive_days_never_repeat_the_same_afternoon_mode(monkeypatch):
+    """Exact alternation is the point — parity cannot clump the way random can."""
+    seen = []
+    for ordinal in range(739_000, 739_014):
+        monkeypatch.setattr(main, "datetime", _clock(15, ordinal))
+        monkeypatch.delenv("FORCE_MODE", raising=False)
+        seen.append((await main.mode_selection_stage()).mode)
+    assert all(a != b for a, b in zip(seen, seen[1:])), seen
+    assert seen.count("mentor") == seen.count("strategist") == 7

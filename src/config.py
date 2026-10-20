@@ -618,9 +618,17 @@ RSS_FEEDS = [
 # vs organisational debt"). The specific seeds give the model a clearer
 # angle to land; the broad ones keep room for the model to find its own.
 #
-# Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory,
-# so with 12 topics each comes around roughly every 2-3 weeks. Goal: kill
-# the "same Mentor topic two days running" pattern observed pre-v4.16.
+# Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory.
+# That kills the "same Mentor topic two days running" pattern observed
+# pre-v4.16, but it does nothing about the cycle length, which is set by the
+# pool size. With 12 topics and an afternoon that always ran Mentor, each
+# came around every 2-3 weeks — visible to a reader as repetition, and
+# measured on 2026-10-20 at 37 posts from 12 topics over seven weeks.
+#
+# Two changes address that: 18 topics here, and the afternoon now alternates
+# with Strategist (main.py mode_selection_stage), so the effective afternoon
+# pool is this list plus SECONDARY_TOPICS. A topic now returns on the order
+# of two months rather than two weeks.
 MENTOR_TOPICS: List[str] = [
     # v4.20 (2026-05-15) — the original 12 included four broad anchors
     # ("Career", "Automation", "Work-Life Balance", "Learning") that, in
@@ -642,6 +650,38 @@ MENTOR_TOPICS: List[str] = [
     "the half-life of internal documentation",
     "migrations: what makes them succeed besides 'doing them'",
     "the difference between a decision that looks technical and one that is",
+    # 2026-10-20: six AI/innovation territories. Until now not one of the
+    # twelve above touched AI, so every AI post the account made was the
+    # morning Curator and the afternoon was structurally incapable of one —
+    # on an account whose whole subject is AI mentorship.
+    #
+    # These are deliberately about PRACTICE, not news: the Curator already
+    # owns "what shipped this week", and a Mentor topic that drifts there
+    # would duplicate it in a weaker register. Each is an observation
+    # territory anchored to Frederik's advisory work, in the same shape as
+    # the eight originally-specific seeds — the v4.20 finding above is that
+    # broad anchors ("Career", "Automation") produce soft output and
+    # specific ones produce sharp output.
+    #
+    # Every one names AI, a model or an agent OUTRIGHT, and that is load-
+    # bearing rather than stylistic. The seed is pasted into the generic
+    # Mentor prompt, which adds no AI context of its own, so a seed that
+    # merely implies AI gets read as ordinary software. The first draft of
+    # this list said "reviewing work you did not write" and "deciding what
+    # not to automate"; the first lands straight back on human code review —
+    # the very theme this change exists to thin out — and the second on
+    # scripting. test_every_ai_territory_names_ai_outright enforces it.
+    # "what AI makes faster, and what it quietly makes slower" was here and
+    # was cut: it restated "what gets faster with experience and what doesn't"
+    # eight lines up with AI as the cause, so the pool grew on paper and not in
+    # production. Replaced with the vigilance problem, which the pool does not
+    # already cover. (Codex, #208.)
+    "the gap between an AI demo that works and a system someone depends on",
+    "what you still have to check when the model is usually right",
+    "reviewing code a model wrote, not a colleague",
+    "where the bottleneck moves once AI handles the obvious part",
+    "when the AI tool works and the adoption still fails",
+    "deciding what not to hand to a model",
 ]
 
 # ── Phase 4b — Proactive replies (scaffolding only, no behaviour yet) ────────
@@ -672,7 +712,28 @@ PROACTIVE_REPLY_MIN_PARENT_ENGAGEMENT: int = 1      # parent must have ≥1 repl
 PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS: int = 24        # drafts older than this auto-rejected as 'expired'
 PROACTIVE_REPLY_MAX_CHARS: int = 200                # tighter than post limit — replies are conversational
 
+# Strategist's pool. Until 2026-10-20 this was effectively dead: the
+# afternoon always ran Mentor and Strategist fired only as a morning
+# degradation on low news volume, so these nineteen almost never reached a
+# reader. The afternoon now alternates, which puts them in rotation — and
+# the five AI/innovation entries below are written for the framing the
+# Strategist task line asks for ("not what to do Monday, but what does this
+# look like in five years").
+#
+# Known risk, recorded rather than silently fixed: six of the original
+# nineteen ("mental health and burnout prevention", "continuous learning and
+# skill building", "curiosity and lifelong learning", "digital minimalism and
+# focus", "remote work productivity", "career growth and freelancing") are
+# broad territory words — the exact shape the v4.20 finding on MENTOR_TOPICS
+# says produces soft output. They have never run in production, so there is
+# no evidence either way yet. Read the first weeks of Strategist posts and
+# cut the ones that come out soft.
 SECONDARY_TOPICS = [
+    "what a team forgets how to do once a model does it for them",
+    "which parts of a job AI removes and which it quietly relocates",
+    "the skills that get more valuable as the models get better",
+    "what in this AI wave becomes infrastructure and what stays a product",
+    "what the last technology that threatened a profession predicts about AI",
     "mental health and burnout prevention",
     "open-source culture and community",
     "privacy and digital sovereignty",

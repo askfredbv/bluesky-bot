@@ -328,3 +328,47 @@ def test_render_markdown_includes_low_cadence_warning():
     )
     md = render_markdown([a], now)
     assert "⚠️" in md
+
+
+def test_topic_token_bag_holds_no_function_words():
+    """The >=4 length rule only worked while no topic phrase held a short
+    function word. A new Strategist topic put "this" in the bag on 2026-10-20
+    and "Went hiking this weekend." started scoring as on-topic, which quietly
+    inflates every topic_fit_score the watchlist audit produces."""
+    from scripts.audit_watchlist import _TOPIC_STOPWORDS, _TOPIC_TOKENS
+    leaked = sorted(_TOPIC_TOKENS & _TOPIC_STOPWORDS)
+    assert not leaked, f"function words reached the topic bag: {leaked}"
+
+
+@pytest.mark.parametrize("post", [
+    "Went hiking this weekend.",
+    "I spent last weekend hiking.",   # "last" leaked through the first pass
+    "What a day.",
+    "More of the same, then.",
+    "Best year so far.",
+])
+def test_an_off_topic_post_stays_off_topic(post):
+    from scripts.audit_watchlist import topic_fit_score
+    assert topic_fit_score([post]) == 0.0
+
+
+def test_no_everyday_word_can_reach_the_topic_bag():
+    """Guards the category, not the one word that got through.
+
+    The stopword filter was added for "this" and still let "last" past, because
+    the check made at the time looked at what the filter REMOVED rather than at
+    what it left behind. This asserts against a list of everyday words that are
+    not currently in any topic phrase, so it fails when a future phrase
+    introduces one rather than after someone notices a skewed audit.
+    """
+    from scripts.audit_watchlist import _TOPIC_TOKENS
+    everyday = {
+        "last", "next", "first", "then", "this", "that", "what", "more",
+        "best", "good", "well", "much", "many", "some", "every", "year",
+        "week", "time", "today", "always", "never", "often", "over", "only",
+    }
+    leaked = sorted(_TOPIC_TOKENS & everyday)
+    assert not leaked, (
+        f"everyday words reached the topic bag: {leaked}. _has_topic_hit does "
+        "substring matching, so each one silently inflates topic_fit_score."
+    )

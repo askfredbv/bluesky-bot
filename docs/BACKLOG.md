@@ -18,6 +18,42 @@ on `keyword_substring_only_matches` data and item 5 is time-boxed; neither is bl
 A bullet has no state and nothing closes it — which is how the corrective in
 `RETRO_2026-05-08` sat unautomated through three occurrences of the same bug.*
 
+**FINDING 2026-10-20 — a third of the content design was never reachable, and the
+afternoon could not produce an AI post.**
+
+Frederik noticed the same "senior reviews your code" theme recurring and asked whether it
+was him. It was not. Measured over 2026-09-01..10-20: of 50 afternoon posts, 13 were
+Pioneer and the other **37 came from a pool of 12 topics** — migrations and internal
+documentation five times each, code-review dynamics three, four more themes four times.
+The repeats are near-verbatim, not merely same-theme: 09-12 and 10-05 both open "Starting
+from a blank page forces you to...".
+
+Two causes, and the interesting one is not pool size.
+
+**`Mode.STRATEGIST` was unreachable on a schedule.** `mode_selection_stage` read
+`Mode.CURATOR if current_hour < 11 else Mode.MENTOR`, so Strategist fired only as a
+*morning degradation* when news volume was too low. Its 19 topics had effectively never
+reached a reader. A whole mode, written and tested, was dead in production — and nothing
+reported that, because a mode that never runs logs nothing.
+
+**Not one of the 12 Mentor topics touched AI**, on an account whose subject is AI
+mentorship. Every AI post it has ever made was the morning Curator; the afternoon was
+structurally incapable of one.
+
+Fixed together: the afternoon now alternates Mentor/Strategist on day parity (stateless —
+no Gist field, and a missed or re-run day cannot desynchronise it), MENTOR_TOPICS gains six
+AI *practice* territories (deliberately not news — the Curator owns that), and
+SECONDARY_TOPICS gains five horizon ones. The afternoon pool goes 12 → 42, so a topic
+returns on the order of two months rather than two weeks.
+
+*Left open on purpose, recorded rather than fixed:* six of the original 19 Strategist
+topics are broad territory words of exactly the shape the v4.20 finding says produces soft
+output ("mental health and burnout prevention", "digital minimalism and focus", …). They
+have never run, so there is no evidence either way. Read the first weeks of Strategist
+posts and cut the ones that come out soft. *Also open:* `get_recent_posts` fetches
+`limit=10` — about five days — so when a topic comes round the model cannot see its own
+previous take, which is why the repeats are near-verbatim rather than merely similar.
+
 **FINDING 2026-10-19 — our review effort is aimed at `.py`, and that is not where the
 bugs were.**
 

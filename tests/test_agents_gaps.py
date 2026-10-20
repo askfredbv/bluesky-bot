@@ -439,3 +439,107 @@ def test_the_visual_prompt_call_uses_the_primary_model(monkeypatch, text, expect
     monkeypatch.setattr(agents, "_get_client", lambda key: SimpleNamespace(models=_Models()))
     assert agents._sync_generate_text("key", "system", "task") == expected
     assert used == [GEMINI_MODEL_PRIORITY[0]]
+
+
+# --- afternoon topic pools (2026-10-20) -------------------------------------
+
+#: The AI/innovation territories added when the afternoon rotation went in.
+#: Asserted by name on purpose: before this, not one Mentor topic touched AI,
+#: so every AI post the account made was the morning Curator. Dropping these
+#: should be a deliberate edit to this list, not a quiet deletion upstream.
+AI_PRACTICE_TERRITORIES = (
+    "the gap between an AI demo that works and a system someone depends on",
+    "what you still have to check when the model is usually right",
+    "reviewing code a model wrote, not a colleague",
+    "where the bottleneck moves once AI handles the obvious part",
+    "when the AI tool works and the adoption still fails",
+    "deciding what not to hand to a model",
+)
+
+#: The Strategist half, written for its longer-horizon task line.
+AI_HORIZON_TERRITORIES = (
+    "what a team forgets how to do once a model does it for them",
+    "which parts of a job AI removes and which it quietly relocates",
+    "the skills that get more valuable as the models get better",
+    "what in this AI wave becomes infrastructure and what stays a product",
+    "what the last technology that threatened a profession predicts about AI",
+)
+
+
+def test_mentor_pool_can_still_produce_an_ai_post():
+    missing = [t for t in AI_PRACTICE_TERRITORIES if t not in MENTOR_TOPICS]
+    assert not missing, (
+        f"MENTOR_TOPICS no longer offers these AI territories: {missing}. "
+        "Without them the afternoon cannot produce an AI post at all, which "
+        "was the state on 2026-10-20 on an AI-mentorship account."
+    )
+
+
+def test_strategist_pool_can_still_produce_an_ai_post():
+    missing = [t for t in AI_HORIZON_TERRITORIES if t not in SECONDARY_TOPICS]
+    assert not missing, f"SECONDARY_TOPICS no longer offers: {missing}"
+
+
+@pytest.mark.parametrize("topic", AI_PRACTICE_TERRITORIES + AI_HORIZON_TERRITORIES)
+def test_every_ai_territory_names_ai_outright(topic):
+    """A seed that only implies AI gets read as ordinary software.
+
+    The topic is pasted verbatim into the generic Mentor prompt, which adds no
+    AI context. The first draft of this list said "reviewing work you did not
+    write" and "deciding what not to automate": the first reads as human code
+    review — the theme the 2026-10-20 change exists to thin out — and the
+    second as scripting. Naming AI, a model or an agent is what makes the seed
+    do its job, so it is asserted rather than left to judgement.
+    """
+    words = topic.lower().replace(",", " ").split()
+    assert any(w in ("ai", "model", "models", "agent", "agents") for w in words), (
+        f"{topic!r} never names AI, a model or an agent, so the generic Mentor "
+        "prompt has nothing to anchor it to."
+    )
+
+
+def test_no_ai_territory_restates_the_human_code_review_topic():
+    """The seed that triggered this work must stay the only one of its kind."""
+    human_review = (
+        "code review dynamics: what changes when the reviewer is more senior "
+        "than the author"
+    )
+    assert human_review in MENTOR_TOPICS
+    overlapping = [
+        t for t in AI_PRACTICE_TERRITORIES
+        if "review" in t.lower() and "model" not in t.lower() and "ai" not in t.lower().split()
+    ]
+    assert not overlapping, (
+        f"{overlapping} is about review without naming AI, so it collides with "
+        f"{human_review!r}."
+    )
+
+
+@pytest.mark.parametrize("name,pool", [
+    ("MENTOR_TOPICS", MENTOR_TOPICS),
+    ("SECONDARY_TOPICS", SECONDARY_TOPICS),
+])
+def test_each_afternoon_pool_outlasts_a_month_of_its_own_slot(name, pool):
+    """The afternoon alternates, so each mode gets roughly 15 slots a month.
+
+    A pool smaller than that guarantees a repeat inside one month regardless
+    of the 5-slot cooldown, which only prevents back-to-back picks. This is
+    the invariant behind the 2026-10-20 finding: 12 topics against a slot that
+    ran every afternoon produced 37 posts from 12 topics in seven weeks.
+    """
+    assert len(pool) >= 15, f"{name} has {len(pool)} topics; a month needs 15+"
+
+
+@pytest.mark.parametrize("name,pool", [
+    ("MENTOR_TOPICS", MENTOR_TOPICS),
+    ("SECONDARY_TOPICS", SECONDARY_TOPICS),
+])
+def test_no_pool_repeats_a_topic_with_itself(name, pool):
+    dupes = [t for t in pool if pool.count(t) > 1]
+    assert not dupes, f"{name} lists these more than once: {set(dupes)}"
+
+
+def test_the_two_afternoon_pools_do_not_overlap():
+    """A topic in both pools would come round twice as often as the rest."""
+    both = set(MENTOR_TOPICS) & set(SECONDARY_TOPICS)
+    assert not both, f"topics in both afternoon pools: {both}"
