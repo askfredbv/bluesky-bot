@@ -147,12 +147,56 @@ is how this one survived three releases.
 provenance. **Deliberately gated on a week of item 1's
 `keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
 which is what the abandoned landmark gate (§3) teaches against doing without data.
-5. **Re-run the Curator judgement test, ~2026-10-20.** Position entropy cannot tell a wise
-choice from an arbitrary one; tier capture when candidate quality *varies within a
-batch* can (framing from an outside review, 2026-10-06). Currently unanswerable: only
+5. **[DONE 2026-10-20 — RAN IT. The shortlist is fixed; the choice is not. → #210]**
+**Re-run the Curator judgement test.** Position entropy cannot tell a wise choice from
+an arbitrary one; tier capture when candidate quality *varies within a batch* can
+(framing from an outside review, 2026-10-06). The baseline was unanswerable: only
 **5 of 21** batches posed a real test at all, and the model captured the top-tier item
 in 1 of those 5 — n too small to mean anything. Item 1's fix is what makes the metric
-meaningful.
+meaningful, and it did.
+
+**Half of this is now good news. Item 1 worked.** Over the 20 successful morning runs
+to 2026-10-20, **16 of 20** batches posed a real test, against 5 of 21 before. The
+scorer is doing its job: it offers a shortlist whose candidates genuinely differ in
+quality, which is the precondition the metric was waiting on.
+
+**The other half is the finding. Tier capture is 1 of 13.** (Three of the sixteen
+tested batches had no recoverable `chosen_link` in their logs and are excluded rather
+than counted as misses.) What the model chose when tiers varied:
+
+| chosen tier | n | note |
+| --- | --- | --- |
+| 3 | **5** | the default floor — in practice arXiv, which has scored at 3.0 since `export.arxiv.org` was removed from `SOURCE_TIERS` on 2026-09-14 |
+| 7 | 4 | the-decoder |
+| 8 | 3 | simonwillison |
+| 10 | 1 | engineering.fb.com, 10-20 |
+
+The shape matters more than the ratio. On 10-08 the shortlist was `[10, 10, 9, 3, 3]`
+and it took a 3; on 10-09 `[10, 10, 8, 3, 3]` → a 3; on 10-16 `[10, 10, 7, 3, 3]` → a
+3. **Five times it walked past two tier-1 primary sources to take the lowest-ranked
+item on the list.**
+
+**So the arXiv skew is not where anyone has been looking for it.** Not the feed list:
+Hugging Face, OpenAI, DeepMind and Meta were *on the shortlist* and lost. Not the
+scorer: it offered a varied batch 16 times in 20. It is the model's choice from a good
+shortlist, which is upstream of both and is the one place no work has gone.
+
+**Caveat against the number, recorded so it is not read as worse than it is.** Tier
+capture conflates two different misses. Choosing simonwillison (8) over an OpenAI post
+(10) is arguably the *better* read — Simon carries a contestable claim and a corporate
+blog usually does not — and seven of the twelve misses are of that kind. The five
+floor picks are the ones that are not defensible. A follow-up metric should separate
+"chose a lower tier that reads better" from "chose the floor".
+
+This lands on **FINDING 2026-10-12** exactly: *the prompt is the binding constraint,
+not the model.* Nothing in the Curator prompt tells it to prefer an item with
+something to argue with over the newest preprint. **Tracked as #210** rather than left
+as a paragraph here.
+
+*Method, so it can be re-run:* for each successful morning run, pull
+`curator_candidates` and `chosen_link` from the run log, map each candidate's link
+domain through `SOURCE_TIERS` (default 3), count a batch as a test when the tiers
+differ, and a capture when the chosen item is at the batch maximum.
 
 **Data point, 2026-10-10 (n=1, human):** during the fallback model trial, `ttok 1.0`
 scored **12.1**, second-highest of that day's pool, and Frederik — reading five models'
