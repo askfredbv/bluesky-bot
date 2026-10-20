@@ -168,11 +168,18 @@ exists so the next person does not repeat the same four mistakes.
 | | pre-fix (to 10-06) | post-fix (10-07 on) |
 | --- | --- | --- |
 | batches posing a real test | 2 / 6 | **14 / 14** |
-| floor-tier items offered | 0% of slots | 29% of slots |
+| floor-tier slots offered | **67%** (20 / 30) | 29% (20 / 70) |
 
 Four of the six pre-fix mornings had an all-floor shortlist — five arXiv items out of five,
 so the model had nothing to choose between. After the fix every batch varies. The scorer is
 doing its job on the supply side, which is the precondition this metric was waiting on.
+
+*That 67% is itself a correction Codex caught on #211.* The first version of this table said
+pre-fix exposure was **0%**, which contradicted the sentence above it. The cause was in the
+script, not the prose: exposure was averaged over the batches that *vary*, and the four
+all-floor batches do not vary, so the batches that are the entire pre-fix story were excluded
+from their own denominator. Same class of error as the three runs dropped on the first pass.
+**Exposure is counted over every batch in the window, including the ones that pose no test.**
 
 **Tier capture, post-fix: 1 of 14.** The top-tier item won once, on 10-20
 (engineering.fb.com). On 10-08 the shortlist was `[10, 10, 9, 3, 3]` and a 3 won; on 10-09
@@ -192,6 +199,20 @@ corporate blog usually does not — which means tier capture is measuring the wr
 much as it is measuring a problem. A metric that separates "chose a lower tier that reads
 better" from "chose the floor" is a precondition for acting on any of this.
 
+**And the 14 runs are two selectors, not one** (Codex, #211). `claude-sonnet-5-5` became
+primary after the 10-12 morning run, so the window is 6 Gemini mornings and 8 Sonnet ones.
+Taken from each run's `model_used` log line rather than from the trial's opening date:
+
+| post-fix arm | runs | floor offered | floor chosen | top tier captured |
+| --- | --- | --- | --- | --- |
+| `gemini-3.7-flash` (10-07 → 10-12) | 6 | 30% | 50% | 0 / 6 |
+| `claude-sonnet-5-5` (10-13 → 10-20) | 8 | 28% | 38% | 1 / 8 |
+
+Pooling was not hiding a reversal — both arms over-select the floor, Gemini by 1.7× and
+Sonnet by 1.4×. What the split actually shows is how little is behind the pooled number:
+**six runs and eight runs**. Neither arm can carry a claim about either model, and the one
+top-tier capture in the whole window is Sonnet's, on 10-20.
+
 Tracked as **#210**, with the caveat that the evidence is thinner than the first pass
 claimed.
 
@@ -204,7 +225,10 @@ chosen link from the **public Bluesky feed's link-card URI**, not from `chosen_l
 log, because `main.py` only logs that inside `curator_link_realigned` when the choice
 *differs* from the top item, so absence correlates with the outcome; and report **offered
 versus selected** per tier, since a choice count alone cannot distinguish preference from
-availability.
+availability, counting exposure over **every** batch in the window and not only the ones that
+vary, or the all-floor batches vanish from the denominator they define; and read `model_used`
+off each run, because the window spans a change of primary model and the date the trial opened
+is not the date the model changed.
 
 **Data point, 2026-10-10 (n=1, human):** during the fallback model trial, `ttok 1.0`
 scored **12.1**, second-highest of that day's pool, and Frederik — reading five models'
