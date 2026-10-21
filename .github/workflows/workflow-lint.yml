@@ -44,17 +44,45 @@ jobs:
       - name: Audit workflows
         # --offline: no token, no network, hermetic and reproducible.
         #
-        # --min-confidence high is the gate, and it is deliberate. On the
-        # workflows as they stand (2026-10-19) zizmor reports 19 findings, every
-        # one of them LOW confidence: 14 `artipacked` (checkout without
-        # persist-credentials: false) and 5 informational `template-injection`
-        # in non-shell contexts. The real P1 was HIGH confidence. Gating on
-        # confidence therefore separates signal from noise exactly, while
-        # leaving every audit switched on — unlike suppressing `artipacked`,
-        # which would also blind us to a future high-confidence instance of it.
+        # --min-confidence high is the gate, and it is deliberate. The real P1
+        # was HIGH confidence, so gating on confidence leaves every audit
+        # switched on while admitting only what the auditor is sure about —
+        # unlike suppressing an audit, which would blind us to a future
+        # high-confidence instance of that same class.
         #
-        # The 14 artipacked findings are real hardening debt, not false
-        # positives; they are tracked separately rather than silenced. If this
-        # gate ever starts passing something it should have caught, raise the
-        # bar here before reaching for an ignore rule.
+        # On the workflows as they stand (2026-10-21) zizmor reports 6 findings,
+        # every one of them LOW confidence, so this gate passes:
+        #
+        #   - 1 `artipacked` (Medium severity): the checkout in
+        #     refresh_momentum.yml, which must keep its credential because the
+        #     job pushes a branch. Deliberate, and argued at that step.
+        #   - 5 `template-injection` (Informational): `steps.count-runs.outputs.*`
+        #     in two `run:` blocks in schedule-health.yml. These ARE shell
+        #     contexts — an earlier version of this comment wrongly called them
+        #     non-shell — but every value is a count or an ISO timestamp the
+        #     github-script step computes itself (`String(runCount)`,
+        #     `windowStart.toISOString()`), never dispatcher input, which is why
+        #     zizmor rates them Informational rather than Medium.
+        #
+        # It reported 19 when this file was written: the other 14 `artipacked`
+        # were real hardening debt and have been fixed rather than silenced
+        # (#204 — by then 15, because #215 added a checkout of its own). Every
+        # checkout in the repo now sets `persist-credentials: false` except the
+        # one named above.
+        #
+        # The gate did NOT move with that sweep, and the reason is worth
+        # recording. `artipacked` is a Low-confidence audit, so bringing the
+        # class into scope means dropping the confidence floor — and then the
+        # one checkout that must keep its credential fails the gate (verified:
+        # `--min-severity medium` exits 13 on exactly that finding). Having both
+        # would require an ignore rule on that step, which is the move this file
+        # refuses. `--min-confidence medium` does stay green, but `artipacked`
+        # is Low either way, so it would narrow nothing here while reading like
+        # it had: not taken.
+        #
+        # What that leaves open, stated plainly: a NEW workflow whose checkout
+        # forgets the flag produces a Low-confidence finding this gate does not
+        # see. The hole is one finding wide now instead of fifteen, and the fix
+        # if it ever matters is to make the exception unnecessary — not to lower
+        # the bar and suppress the one honest exception underneath it.
         run: zizmor --offline --min-confidence high .github/workflows/
