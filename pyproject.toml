@@ -11,7 +11,16 @@ dependencies = [
     "python-dotenv>=1.0,<2",
     "requests>=2.32,<3",
     "beautifulsoup4>=4.15.0,<5",
-    "Pillow>=12.3.0,<13",
+    # Security floor AND a major bump, not a feature need. 12.3.0 carries eight
+    # advisories (CVE-2026-112395/112397/112400/112404/112895/112896/112897/112899),
+    # all fixed only in 13.0.0 — the previous ceiling of <13 made the fix
+    # unreachable, so regenerating the lockfile could not close them. Pillow decodes
+    # attacker-supplied bytes on the daily path: `compress_image` and the OG-thumbnail
+    # path open images scraped from arbitrary third-party article URLs, so an
+    # image-parsing bug here is reachable by anyone who can get a link into a feed.
+    # The API this repo uses is Image.open / MAX_IMAGE_PIXELS / convert / resize /
+    # save(JPEG) / .format, all unchanged in 13.
+    "Pillow>=13.0.0,<14",
     # Critical integrations
     "atproto>=0.0.61,<0.1",
     "google-genai>=1.75.0,<2",
@@ -34,6 +43,16 @@ dependencies = [
     # metadata from third-party domains. Fixed in 2.8.0. pip-audit has failed
     # on every PR and on main since 2026-10-05 because of this.
     "urllib3>=2.8.0,<3",
+    # Security floor, not a feature need. certifi arrives via requests and httpx;
+    # 2026.7.22 carries PYSEC-2026-4320 — the bundled CA store trusts
+    # `emSign ECC Root CA - G3`, and eight eMudhra intermediates chaining to it have
+    # compromised private keys, so an on-path attacker holding one can present a
+    # valid-looking certificate for any hostname. Every outbound call this bot makes
+    # trusts that bundle: RSS feeds, article scrapes, Bluesky, Mastodon, Gemini and
+    # Anthropic. 2026.10.18 dropped all emSign roots and 2026.10.19 restored the
+    # unaffected ones, so the floor is 2026.10.19. Declared rather than left
+    # transitive so the floor cannot be lost by a future resolution.
+    "certifi>=2026.10.19",
 ]
 
 [project.optional-dependencies]
