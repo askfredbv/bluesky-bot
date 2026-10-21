@@ -60,33 +60,46 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
     Shape, verified against pip-audit 2.10.1:
         {"dependencies": [{"name", "version", "vulns": [{"id", "fix_versions"}]}]}
 
-    A payload that is not that shape raises, because the caller must treat
-    "I could not read the audit" as no signal rather than as a clean lockfile.
-    Individual malformed entries are skipped instead: one odd row should not
-    discard the advisories either side of it.
+    Anything unreadable raises, down to a single advisory without an id,
+    because the caller must treat "I could not read the audit" as no signal
+    rather than as a clean lockfile -- and a report missing rows is
+    indistinguishable from one that had none to miss.
     """
     if not isinstance(payload, dict):
         raise ValueError("audit payload is not an object")
     deps = payload.get("dependencies")
     if not isinstance(deps, list):
         raise ValueError("audit payload has no dependencies list")
-    # The dangerous shape is not a payload we reject outright, it is one that
-    # still parses and yields nothing: that reads as "clean" and CLOSES the
-    # issue. A clean audit says `vulns: []` on every dependency, so the key
-    # being absent everywhere is drift, not good news.
-    if deps and not any(isinstance(d, dict) and isinstance(d.get("vulns"), list) for d in deps):
-        raise ValueError("no dependency carries a vulns list; the audit shape changed")
+
+    # ONE rule, applied to every record: if it cannot be read, there is no
+    # signal, so raise. The caller turns that into "leave the issue alone".
+    #
+    # The first two attempts here both got this wrong in the same direction
+    # (Codex, #215). They SKIPPED unreadable records, which silently converts a
+    # partial report into an apparently complete one -- and an empty report
+    # closes the issue. The second attempt also guarded with `any`, so one
+    # readable `vulns: []` record vouched for a payload whose other record
+    # carried a live CVE under a renamed key.
+    #
+    # For an alert whose failure mode is silent closure, under-reporting is the
+    # expensive direction and over-strictness is the cheap one: a raise leaves a
+    # real issue standing and merely un-refreshed.
     rows: List[Dict[str, str]] = []
     for dep in deps:
         if not isinstance(dep, dict):
-            continue
-        name, version = dep.get("name"), dep.get("version")
-        vulns = dep.get("vulns")
-        if not isinstance(name, str) or not isinstance(vulns, list):
-            continue
+            raise ValueError("a dependency record is not an object; the audit shape changed")
+        name, version, vulns = dep.get("name"), dep.get("version"), dep.get("vulns")
+        if not isinstance(name, str):
+            raise ValueError("a dependency record has no name; the audit shape changed")
+        # A clean audit carries `vulns: []` on every dependency, so the list
+        # being absent is drift, never good news.
+        if not isinstance(vulns, list):
+            raise ValueError(f"dependency {name} carries no vulns list; the audit shape changed")
         for vuln in vulns:
             if not isinstance(vuln, dict) or not isinstance(vuln.get("id"), str):
-                continue
+                raise ValueError(f"an advisory on {name} has no id; the audit shape changed")
+            # Lenient only here, and only because the advisory is still
+            # REPORTED: an unreadable fix list costs a cell, not a finding.
             fixes = vuln.get("fix_versions")
             fixes = [f for f in fixes if isinstance(f, str)] if isinstance(fixes, list) else []
             rows.append({

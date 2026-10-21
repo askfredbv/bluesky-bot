@@ -60,7 +60,13 @@ jobs:
   # fails, which is precisely when there is something to report.
   dependency-audit-issue:
     needs: pip-audit
-    if: ${{ always() && github.event_name != 'pull_request' }}
+    # main only. The condition used to be "not a pull_request", which admitted
+    # every workflow_dispatch -- and the branch selector means that run would
+    # audit a feature branch while mutating the repository-wide issue, so a
+    # clean branch could close an alert that still applies to main and a stale
+    # one could reopen a fixed alert (Codex, #215). schedule and push to main
+    # both carry refs/heads/main, so nothing real is lost.
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     # Deliberately NOT scoped by github.ref, for the same reason daily_post.yml
     # is not: the state being serialised is one shared GitHub issue, not
@@ -78,8 +84,21 @@ jobs:
       issues: write
 
     steps:
-      - name: Checkout repository
+      # Explicitly main, not the triggering SHA. A concurrency group orders jobs
+      # by when they START WAITING, which here is after `needs: pip-audit`
+      # finishes -- so reporters can reach this group in a different order from
+      # their workflow runs, and a late reporter checking out ITS older SHA
+      # would write a conclusion about a lockfile main has already moved past
+      # (Codex, #215). Auditing main makes every reporter answer the same
+      # question, so whichever writes last is still right about main.
+      #
+      # The trade: a dispatch cannot be used to test a change to this reporter
+      # from a branch, because main's copy is what runs. That is the correct
+      # direction for a production alert; test the reporter through its tests.
+      - name: Checkout main
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6

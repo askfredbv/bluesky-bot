@@ -70,17 +70,38 @@ def test_a_shape_it_does_not_recognise_raises_rather_than_reading_as_clean(paylo
         rda.parse_audit(payload)
 
 
-def test_one_malformed_entry_does_not_discard_the_advisories_around_it():
+@pytest.mark.parametrize("deps", [
+    ["junk"],                                                   # not an object
+    [{"version": "1.0", "vulns": []}],                          # no name
+    [{"name": "pillow", "version": "12.3.0"}],                  # no vulns list
+    [{"name": "pillow", "version": "12.3.0", "vulns": {}}],     # vulns not a list
+    [{"name": "pillow", "version": "12.3.0", "vulns": [{"no_id": True}]}],
+], ids=["not-an-object", "no-name", "no-vulns", "vulns-not-a-list", "advisory-without-id"])
+def test_an_unreadable_record_means_no_signal_not_a_partial_report(deps):
+    """Earlier versions SKIPPED these, which turns a partial report into an
+    apparently complete one -- and an empty report closes the issue. For an
+    alert whose failure mode is silent closure, under-reporting is the
+    expensive direction."""
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": deps})
+
+
+def test_a_readable_record_next_to_an_unreadable_one_does_not_rescue_it():
+    """The `any` hole, named: one clean `vulns: []` record must not vouch for a
+    payload whose other record carries a live CVE under a renamed key."""
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": [
+            {"name": "httpx", "version": "0.28.1", "vulns": []},
+            {"name": "pillow", "version": "12.3.0", "advisories": [{"id": "CVE-2026-112895"}]},
+        ]})
+
+
+def test_an_unreadable_fix_list_still_reports_the_advisory():
+    """Lenient only where the advisory survives: a bad fix list costs a cell."""
     rows = rda.parse_audit({"dependencies": [
-        "junk",
-        {"name": "pillow", "version": "12.3.0", "vulns": [{"id": "CVE-2026-112895", "fix_versions": ["13.0.0"]}]},
-        {"name": None, "vulns": []},
-        {"name": "certifi", "version": "2026.7.22", "vulns": [
-            {"no_id": True},
-            {"id": "PYSEC-2026-4320", "fix_versions": ["2026.10.19"]},
-        ]},
+        {"name": "pillow", "version": "12.3.0", "vulns": [{"id": "CVE-1", "fix_versions": "13.0.0"}]},
     ]})
-    assert sorted(r["id"] for r in rows) == ["CVE-2026-112895", "PYSEC-2026-4320"]
+    assert rows == [{"package": "pillow", "version": "12.3.0", "id": "CVE-1", "fix": "no fix released"}]
 
 
 def test_an_advisory_with_no_fix_says_so_rather_than_showing_an_empty_cell():
