@@ -38,7 +38,7 @@ by default, and the two registers (strategic-advisory and casual-narrative) defi
 Flag any change that loosens these, **even if the result reads fine.** "It reads fine" is
 not the bar; the bar is the rules above.
 
-### 2. No hardcoded fallback content that bypasses voice or validation
+### 2. No hardcoded fallback content that bypasses voice/validation
 
 A v4.18 bug shipped a hardcoded `"Notes on {topic} — more soon."` placeholder to
 production for weeks. The rule that came out of it: **missing a run beats shipping
