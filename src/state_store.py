@@ -647,11 +647,42 @@ def update_seen_articles_checked(
     any chance of repairing that Gist by hand, which is worth it exactly where
     withholding the write would leave a story selectable after a platform may
     have taken it — see ``settle_broadcast`` (#201).
+
+    It narrows the GIST guard and nothing else. An untrusted read still refuses,
+    and that is not a corner case: ``daily_post.yml`` configures ``GIST_ID`` and
+    no ``STATE_STORE_URL``, and ``seen_articles.json`` is gitignored, so on a
+    runner the Gist is the ONLY tier that can supply state. A corrupt Gist there
+    leaves nothing to derive a write from, and the empty default would replace
+    the history rather than extend it — so the suppressing write is refused in
+    production's own configuration, loudly, and the thing that prevents the
+    repost is that ``reserve_broadcast`` needs this same read and so nothing
+    posts at all (Codex review on #218).
     """
     lock_path = SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".lock")
     with _file_lock(lock_path):
         current, trusted, gist_status = load_seen_articles_sourced()
         if not trusted:
+            if corrupt_gist_is_inert:
+                # The caller is a SUPPRESSING write, and it is being refused
+                # for a reason the flag below cannot narrow: no tier supplied
+                # state at all, so there is nothing to derive a write FROM.
+                # Writing anyway would put the empty default in the Gist —
+                # every seen link, recent topic and Pioneer cooldown replaced
+                # with nothing, and a parseable Gist that lets the next run
+                # resume posting at once with no memory. That turns one
+                # possibly-live story into every story still inside the feed
+                # window, so the refusal stands. What holds the line instead is
+                # that `reserve_broadcast` needs this same read, so nothing
+                # posts until the tier is readable (AGENTS.md principle 2: a
+                # missed run beats a duplicate). Said out loud, because the
+                # generic line below reads like routine bookkeeping and this is
+                # a story that may be live and is recorded nowhere
+                # (Codex review on #218).
+                SafeLogger.error(
+                    "seen_articles_suppressing_write_unstorable",
+                    "No tier supplied state, so a story that may already be live cannot be recorded; runs stay blocked until the state tier reads",
+                    gist_status=gist_status,
+                )
             SafeLogger.error(
                 "seen_articles_update_skipped",
                 "Seen-state read was untrusted; skipping the write rather than erasing history",
@@ -1093,6 +1124,20 @@ def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> N
     write would do — the claim it wants gone is unreadable either way — so
     there is nothing to buy with an overwrite that destroys the corrupt content
     a human might otherwise recover.
+
+    That reaches the configuration #201 describes, where a lower tier still
+    holds a snapshot. It does NOT reach production, which runs on the Gist alone
+    (``daily_post.yml`` sets ``GIST_ID`` and no ``STATE_STORE_URL``): there a
+    corrupt Gist leaves no tier holding state, the read is untrusted, and the
+    suppressing write is refused before this flag is consulted. Deliberately,
+    because with nothing to derive state from the write would store the empty
+    default and resume posting from no memory. What stands in for it is the
+    halt: every later run needs a reservation, the reservation needs the same
+    read, and ``main.py`` skips the broadcast when it is refused — so the story
+    is unrecorded but nothing can repost it while the Gist stays unreadable. The
+    residual window is a Gist that returns VALID BUT STALE, and no write here
+    defends against that: a stale restore would overwrite a stored claim just as
+    readily (Codex review on #218).
 
     The release does NOT fail safe, and is verified. Its whole purpose is for the
     claim to be GONE, so a shadowed write leaves the story suppressed while this

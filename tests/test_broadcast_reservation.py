@@ -1047,6 +1047,70 @@ def test_a_release_does_not_overwrite_a_corrupt_gist(monkeypatch):
     assert saved == []
 
 
+def _sole_gist(monkeypatch, tmp_path, gist_status):
+    """Production's configuration: a Gist, and nothing underneath it.
+
+    `daily_post.yml` passes GIST_ID and never STATE_STORE_URL, and
+    `seen_articles.json` is gitignored, so a fresh runner has no local copy
+    either. The Gist is the ONLY tier that can supply state, which is what makes
+    a corrupt one untrusted rather than merely unparseable. The real read chain
+    runs here; only its tiers are stubbed.
+    """
+    monkeypatch.setenv("GIST_ID", "abc123")
+    monkeypatch.delenv("STATE_STORE_URL", raising=False)
+    monkeypatch.setattr(state_store, "SEEN_FILE", tmp_path / "seen_articles.json")
+    monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
+    monkeypatch.setattr(state_store, "_load_gist_state_checked", lambda _f: (None, gist_status))
+    monkeypatch.setattr(state_store, "_load_state_from_store", lambda _k: None)
+    saved = []
+    monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
+    return saved
+
+
+def test_a_sole_gist_corrupt_read_cannot_settle_and_says_so(monkeypatch, tmp_path):
+    """Where `corrupt_gist_is_inert` does NOT reach, pinned (Codex on #218).
+
+    With the Gist as the only tier, a corrupt one leaves no state anywhere: the
+    read returns the empty default with `trusted=False`, and the untrusted guard
+    returns before the corrupt branch. So the suppressing write is refused in
+    production's own configuration, and the generic "it stays pending" reading
+    of that is wrong — the claim is sitting in unparseable content.
+
+    Writing anyway is the alternative, and it is the worse trade: with no lower
+    tier there is nothing to derive state FROM, so the write would store the
+    empty default and hand the next run a parseable Gist with no memory,
+    resuming posting at once. One possibly-live story would become every story
+    still inside the feed window. Hence the dedicated ERROR rather than a
+    bypass.
+    """
+    saved = _sole_gist(monkeypatch, tmp_path, state_store.GIST_READ_CORRUPT)
+    levelled = _levelled_events(monkeypatch)
+
+    state_store.settle_broadcast(
+        "https://a.example.com/x", delivered=False, attempted=True
+    )
+
+    assert saved == []
+    assert ("error", "seen_articles_suppressing_write_unstorable") in levelled
+    assert ("error", "broadcast_settlement_failed") in levelled
+
+
+def test_nothing_can_be_reserved_while_the_only_state_tier_is_unreadable(monkeypatch, tmp_path):
+    """Why the refusal above does not become the repost it looks like.
+
+    The claim cannot be recorded, but the next run cannot post either: it needs
+    a reservation, the reservation needs the same untrusted read, and `main.py`
+    skips the broadcast outright when it is refused. The bot stays halted and
+    loud until the Gist reads again — a missed run instead of a duplicate. The
+    residual window is a Gist that comes back valid but stale, which no
+    settlement write defends against either.
+    """
+    saved = _sole_gist(monkeypatch, tmp_path, state_store.GIST_READ_CORRUPT)
+
+    assert state_store.reserve_broadcast("https://a.example.com/x") is False
+    assert saved == []
+
+
 # ---------------------------------------------------------------------------
 # What counts as a stored claim
 # ---------------------------------------------------------------------------
@@ -1822,7 +1886,10 @@ def test_an_untrusted_read_blocks_the_write_whatever_the_caller_vouches_for(monk
     """The inert flag narrows the GIST guard only. An untrusted read means no
     tier supplied real state, so the mutator is handed the empty default and the
     write would replace every seen link, recent topic and Pioneer cooldown with
-    nothing — the older and larger hole, and still closed."""
+    nothing — the older and larger hole, and still closed.
+
+    Not a corner case: it is production's own configuration, pinned end to end
+    in `test_a_sole_gist_corrupt_read_cannot_settle_and_says_so` below."""
     monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
     saved = []
     monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
