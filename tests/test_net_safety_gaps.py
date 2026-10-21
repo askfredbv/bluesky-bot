@@ -479,6 +479,76 @@ def test_the_pin_blocks_a_rebind_on_an_internationalised_host(host, rebinding_re
             socket.getaddrinfo(host, 443)
 
 
+# -- A partially-shifted answer, the CDN case (#212) -------------------------
+# Until 2026-10-21 the pin refused any answer containing an address the first
+# resolution had not seen, which blocked www.theregister.com on 3 of 12 runs and
+# www.microsoft.com on another. Nothing covered the mixed answer: every
+# rebinding fixture returns ONLY the attacker address, so both the old strict
+# check and the filtered invariant pass those. These pin the difference.
+
+_GOOD = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+_ALSO_GOOD = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.35", 443))
+_EVIL = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 443))
+
+
+@pytest.fixture
+def mixed_resolver(monkeypatch):
+    """A rotating CDN: one pinned address, one the first lookup never saw."""
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [_GOOD, _ALSO_GOOD])
+
+
+def test_a_rotated_answer_resolves_instead_of_failing_the_whole_request(mixed_resolver):
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        got = socket.getaddrinfo(b"example.com", 443)
+    assert got == [_GOOD]
+
+
+def test_a_rotated_answer_can_never_reach_the_unpinned_address(mixed_resolver):
+    """The invariant: only prevalidated addresses are handed back."""
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(b"example.com", 443)}
+    assert addresses == {"93.184.216.34"}
+    assert "93.184.216.35" not in addresses
+
+
+def test_an_answer_mixing_a_pinned_address_with_a_hostile_one_drops_the_hostile_one(monkeypatch):
+    """The shape an attacker would try once strict containment is gone."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [_GOOD, _EVIL])
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        got = socket.getaddrinfo(b"example.com", 443)
+    assert got == [_GOOD]
+    assert all(entry[4][0] != "169.254.169.254" for entry in got)
+
+
+def _captured_warnings(monkeypatch):
+    """Collect SafeLogger.warn events. The event name is a log-record attribute,
+    not message text, so caplog.text never contains it."""
+    seen = []
+    monkeypatch.setattr(net_safety.SafeLogger, "warn",
+                        lambda event, *a, **k: seen.append((event, k)))
+    return seen
+
+
+def test_narrowing_an_answer_is_logged_so_a_rotating_cdn_is_not_invisible(mixed_resolver, monkeypatch):
+    seen = _captured_warnings(monkeypatch)
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        socket.getaddrinfo(b"example.com", 443)
+    events = [event for event, _ in seen]
+    assert "resolver_answer_narrowed" in events
+    fields = next(k for event, k in seen if event == "resolver_answer_narrowed")
+    assert fields["dropped"] == 1 and fields["kept"] == 1
+
+
+def test_an_unshifted_answer_logs_nothing(monkeypatch):
+    """No warning when the resolver simply agrees with itself."""
+    seen = _captured_warnings(monkeypatch)
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [_GOOD])
+    with net_safety._resolver_pinned_to_ips("example.com", ["93.184.216.34"]):
+        socket.getaddrinfo(b"example.com", 443)
+    assert [event for event, _ in seen] == []
+
+
 def test_the_pin_leaves_other_hostnames_alone(rebinding_resolver):
     """The pin is a global monkeypatch, so an unrelated lookup must pass through
     -- other tasks resolve while a pinned fetch is in flight."""

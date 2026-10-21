@@ -282,7 +282,26 @@ def _resolver_host_keys(hostname: str) -> frozenset:
 def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
     """
     Temporarily constrains DNS resolution for one hostname to a prevalidated set.
-    If the resolver returns addresses outside the allowed set, resolution is blocked.
+
+    The invariant is that a connection only ever goes to an address this request
+    already validated as public: the guard returns ONLY entries from
+    ``allowed_ips``, and raises when that intersection is empty.
+
+    It does NOT refuse an answer merely because it also contains addresses the
+    first resolution did not. Until 2026-10-21 it did, on strict set
+    containment, and that cost real feeds: `www.theregister.com` (12 advertised
+    addresses) was blocked on 3 of 12 runs and `www.microsoft.com` (5) on
+    another, because a resolver answering with a shifting subset between the two
+    lookups trips containment while the intersection is still perfectly good.
+    Each block silently removed a configured source from that run's candidate
+    pool (#212).
+
+    Dropping that check costs no security. A rebinding attack wins only if the
+    connection REACHES an attacker address, and ``filtered`` makes that
+    impossible whatever else the answer contains; a full rebind, which is what
+    an attacker actually returns, still leaves an empty intersection and still
+    raises. Blocking a mixed answer refused a request we were always going to
+    send to a prevalidated address.
     """
     original_getaddrinfo = socket.getaddrinfo
     pinned_keys = _resolver_host_keys(hostname)
@@ -297,13 +316,28 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
         if not current_ips:
             raise socket.gaierror(f"No DNS records found for {host}")
 
-        unexpected = current_ips - allowed_set
-        if unexpected:
-            raise socket.gaierror(f"Resolver returned unexpected address for {host}")
-
+        # The guard: hand back prevalidated addresses only. An empty
+        # intersection is a real rebind (or a hostname that moved mid-request)
+        # and still fails closed.
         filtered = [entry for entry in current if entry[4][0] in allowed_set]
         if not filtered:
             raise socket.gaierror(f"No allowed DNS records found for {host}")
+
+        # A partially-shifted answer is now served rather than refused, so say
+        # so: without this line a rotating CDN and a correctly-working pin are
+        # indistinguishable in the log, and the 2026-10-21 blocks were only
+        # diagnosable because the refusal was loud.
+        dropped = current_ips - allowed_set
+        if dropped:
+            SafeLogger.warn(
+                "resolver_answer_narrowed",
+                "Resolver returned addresses outside the pinned set; connecting to the pinned ones",
+                # _resolver_host_key, not str(host): httpcore passes BYTES, and
+                # str() on those renders "b'example.com'" -- the exact shape
+                # whose use in a COMPARISON meant the pin never fired at all
+                # before #192. Harmless in a log field, misleading in a log
+                # someone reads to diagnose this.
+                host=_resolver_host_key(host), dropped=len(dropped), kept=len(filtered))
         return filtered
 
     # Monkeypatching the module attribute: guarded_getaddrinfo intentionally
