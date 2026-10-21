@@ -103,14 +103,6 @@ def test_a_readable_record_next_to_an_unreadable_one_does_not_rescue_it():
         ]})
 
 
-def test_an_unreadable_fix_list_still_reports_the_advisory():
-    """Lenient only where the advisory survives: a bad fix list costs a cell."""
-    rows = rda.parse_audit({"dependencies": [
-        {"name": "pillow", "version": "12.3.0", "vulns": [{"id": "CVE-1", "fix_versions": "13.0.0"}]},
-    ]})
-    assert rows == [{"package": "pillow", "version": "12.3.0", "id": "CVE-1", "fix": "no fix released"}]
-
-
 def test_an_advisory_with_no_fix_says_so_rather_than_showing_an_empty_cell():
     rows = rda.parse_audit({"dependencies": [
         {"name": "lonely", "version": "1.0", "vulns": [{"id": "PYSEC-9", "fix_versions": []}]},
@@ -240,8 +232,13 @@ def test_a_genuinely_clean_audit_is_still_clean_not_drift():
     ]}) == []
 
 
-def test_an_empty_dependency_list_is_not_treated_as_drift():
-    assert rda.parse_audit({"dependencies": []}) == []
+def test_an_empty_dependency_snapshot_is_truncation_not_a_clean_lockfile():
+    """This test previously asserted the OPPOSITE and locked the bug in: it
+    said an empty dependency list parses to no findings. An empty report closes
+    the issue, and the audited lockfile carries 46 records even when clean, so
+    zero records means the audit did not run (Codex, #215)."""
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": []})
 
 
 def test_a_raced_duplicate_issue_is_folded_into_the_oldest_one():
@@ -294,3 +291,50 @@ def test_a_padded_id_is_accepted_but_stored_trimmed():
         {"name": "pillow", "version": "12.3.0", "vulns": [{"id": "  CVE-1  ", "fix_versions": ["13.0.0"]}]},
     ]})
     assert rows[0]["id"] == "CVE-1"
+
+
+# --- round five: every reported fact gets the same rule --------------------
+
+@pytest.mark.parametrize("deps", [
+    [{"name": "pillow", "vulns": []}],                                    # no version
+    [{"name": "pillow", "version": "", "vulns": []}],                     # blank version
+    [{"name": "pillow", "version": "   ", "vulns": []}],                  # whitespace version
+    [{"name": "pillow", "version": 12.3, "vulns": []}],                   # version not a string
+], ids=["no-version", "blank-version", "whitespace-version", "version-not-a-string"])
+def test_an_unusable_version_is_no_signal_rather_than_a_question_mark(deps):
+    """"?" in that cell is a row nobody can act on, and a blank one used to be
+    kept verbatim."""
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": deps})
+
+
+@pytest.mark.parametrize("vuln", [
+    {"id": "CVE-1"},                                   # fix_versions absent
+    {"id": "CVE-1", "fix_versions": "13.0.0"},         # not a list
+    {"id": "CVE-1", "fix_versions": ["13.0.0", ""]},   # one blank entry
+    {"id": "CVE-1", "fix_versions": [None]},           # entry not a string
+], ids=["absent", "not-a-list", "blank-entry", "entry-not-a-string"])
+def test_a_malformed_fix_list_raises_instead_of_claiming_no_fix_released(vuln):
+    """The old code rendered any of these as "no fix released", which tells the
+    reader a live advisory cannot be fixed. That is not a cosmetic loss."""
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": [
+            {"name": "pillow", "version": "12.3.0", "vulns": [vuln]},
+        ]})
+
+
+def test_a_genuinely_empty_fix_list_still_means_no_fix_released():
+    """The one case that must NOT raise: pip-audit saying no fix exists."""
+    rows = rda.parse_audit({"dependencies": [
+        {"name": "lonely", "version": "1.0", "vulns": [{"id": "PYSEC-9", "fix_versions": []}]},
+    ]})
+    assert rows == [{"package": "lonely", "version": "1.0", "id": "PYSEC-9",
+                     "fix": "no fix released"}]
+
+
+def test_padded_versions_and_fixes_are_stored_trimmed():
+    rows = rda.parse_audit({"dependencies": [
+        {"name": "pillow", "version": " 12.3.0 ",
+         "vulns": [{"id": "CVE-1", "fix_versions": [" 13.0.0 "]}]},
+    ]})
+    assert rows[0]["version"] == "12.3.0" and rows[0]["fix"] == "13.0.0"

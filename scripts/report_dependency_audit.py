@@ -60,7 +60,8 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
     Shape, verified against pip-audit 2.10.1:
         {"dependencies": [{"name", "version", "vulns": [{"id", "fix_versions"}]}]}
 
-    Anything unreadable raises, down to a single advisory without an id,
+    Anything unreadable raises -- an empty dependency list, a blank version, a
+    malformed fix list, a single advisory without an id --
     because the caller must treat "I could not read the audit" as no signal
     rather than as a clean lockfile -- and a report missing rows is
     indistinguishable from one that had none to miss.
@@ -70,6 +71,14 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
     deps = payload.get("dependencies")
     if not isinstance(deps, list):
         raise ValueError("audit payload has no dependencies list")
+    # Zero records is truncation, not good news (Codex, #215). The audited
+    # lockfile carries 46 dependency records even when it is completely clean,
+    # so `{"dependencies": []}` cannot mean "nothing to report" -- it means the
+    # audit did not run, or its output was cut off. An earlier version of this
+    # file accepted it AND had a test asserting that acceptance was correct,
+    # which is the rule written backwards and then locked in.
+    if not deps:
+        raise ValueError("audit payload lists no dependencies at all; the audit did not run")
 
     # ONE rule, applied to every record: if it cannot be read, there is no
     # signal, so raise. The caller turns that into "leave the issue alone".
@@ -100,19 +109,35 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
         # being absent is drift, never good news.
         if not isinstance(vulns, list):
             raise ValueError(f"dependency {name} carries no vulns list; the audit shape changed")
+        # The installed version is a reported fact, not decoration: "?" in that
+        # cell is a row that cannot be acted on, and the previous version of
+        # this file also kept a blank one as-is.
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError(f"dependency {name} has no usable version; the audit shape changed")
         for vuln in vulns:
             advisory_id = vuln.get("id") if isinstance(vuln, dict) else None
             if not isinstance(advisory_id, str) or not advisory_id.strip():
                 raise ValueError(f"an advisory on {name} has no usable id; the audit shape changed")
-            # Lenient only here, and only because the advisory is still
-            # REPORTED: an unreadable fix list costs a cell, not a finding.
+            # No leniency left here either. The previous comment argued an
+            # unreadable fix list "costs a cell, not a finding" -- but it costs
+            # the remediation: a malformed fix_versions silently rendered as
+            # "no fix released", which tells the reader a live advisory cannot
+            # be fixed (Codex, #215). An EMPTY list is different and still
+            # allowed: that is pip-audit genuinely saying no fix exists.
             fixes = vuln.get("fix_versions")
-            fixes = [f for f in fixes if isinstance(f, str)] if isinstance(fixes, list) else []
+            if not isinstance(fixes, list):
+                raise ValueError(
+                    f"advisory {advisory_id.strip()} on {name} has no fix_versions list; "
+                    "the audit shape changed")
+            if any(not isinstance(f, str) or not f.strip() for f in fixes):
+                raise ValueError(
+                    f"advisory {advisory_id.strip()} on {name} has an unusable fix version; "
+                    "the audit shape changed")
             rows.append({
                 "package": name,
-                "version": version if isinstance(version, str) else "?",
+                "version": version.strip(),
                 "id": advisory_id.strip(),
-                "fix": ", ".join(fixes) if fixes else "no fix released",
+                "fix": ", ".join(f.strip() for f in fixes) if fixes else "no fix released",
             })
     return rows
 
