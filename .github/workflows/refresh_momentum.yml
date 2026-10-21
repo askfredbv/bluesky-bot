@@ -21,6 +21,15 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
+      # The one checkout in this repo that deliberately KEEPS its credential, so
+      # `persist-credentials: false` would break it: the "Open a PR if the list
+      # changed" step below pushes a branch with `git push -u origin`, and git
+      # reads that credential from the `.git/config` extraheader checkout writes.
+      # Every other checkout here was swept in #204 precisely so this one reads
+      # as a decision rather than an oversight — leave it, and do not "fix" the
+      # zizmor artipacked finding it produces. Note that `gh pr create` would
+      # survive the flag, since it authenticates from GH_TOKEN in the step env;
+      # it is the `git push` that would not.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
