@@ -3,7 +3,7 @@ anthropic==1.13.0
 anyio==4.14.2
 atproto==0.0.71
 beautifulsoup4==4.15.0
-certifi==2026.7.22
+certifi==2026.10.19
 cffi==2.1.1
 charset-normalizer==3.5.1
 click==8.5.0
@@ -25,7 +25,7 @@ idna==3.19
 jiter==0.17.0
 libipld==3.4.1
 mastodon-py==2.2.2
-pillow==12.3.0
+pillow==13.0.0
 pyasn1==0.6.4
 pyasn1-modules==0.4.2
 pycparser==3.0
