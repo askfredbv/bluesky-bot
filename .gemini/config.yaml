@@ -1,0 +1,50 @@
+# Gemini Code Assist — repository configuration.
+#
+# Schema (RepoConfig, draft-07):
+#   https://docs.cloud.google.com/gemini/docs/code-review/customize-repo-review
+# Review instructions live next to this file, in .gemini/styleguide.md.
+#
+# Every field is set explicitly rather than left to its default, so that reading
+# this file tells you the whole behaviour. Where a value differs from the Google
+# default, the comment says why.
+
+# Default: false. No poems in the PR summary. The voice is the product, and it is
+# not this bot's voice to spend.
+have_fun: false
+
+code_review:
+  disable: false
+
+  # Default: MEDIUM. This repo already runs a CodeQL gate and an external bot
+  # review on every PR, so a third reviewer earns its place only by being quiet.
+  # HIGH means Gemini posts what would change the merge decision and stays silent
+  # on the rest. See "How to review" in styleguide.md: one well-grounded finding
+  # beats five speculative ones.
+  comment_severity_threshold: HIGH
+
+  # Default: -1 (unlimited). A bounded review is one a human actually finishes
+  # reading, and the operating goal is to cost no recurring human time.
+  max_review_comments: 10
+
+  pull_request_opened:
+    # Default: false. The help message is a one-time thing; it does not need to
+    # ride along on every PR.
+    help: false
+
+    # Default: false. PR bodies here are written by hand and carry the reasoning
+    # that later becomes the release notes. A generated summary on top of that is
+    # duplication, not information.
+    summary: false
+
+    code_review: true
+
+    # Default: true. A draft on this repo means "still being pushed to". Review it
+    # when it is marked ready, not on every intermediate push.
+    include_drafts: false
+
+ignore_patterns:
+  # Generated from pyproject.toml by pip-compile, and CI's lockfile-check already
+  # enforces that they match it. Review the source, not the output. A dependency
+  # added directly to a lockfile is a styleguide.md §8 finding, not a diff comment.
+  - "requirements.txt"
+  - "requirements-dev.txt"
