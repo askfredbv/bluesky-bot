@@ -89,15 +89,21 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
         if not isinstance(dep, dict):
             raise ValueError("a dependency record is not an object; the audit shape changed")
         name, version, vulns = dep.get("name"), dep.get("version"), dep.get("vulns")
-        if not isinstance(name, str):
-            raise ValueError("a dependency record has no name; the audit shape changed")
+        # Non-blank, not merely a str. "" passes isinstance and then renders an
+        # empty cell, which is a partial row wearing the no-signal rule's badge
+        # -- the same required-field failure as the key being absent. Codex
+        # caught this on `id` (#215); `name` had it too and was not flagged, so
+        # it is fixed here as the boundary rather than the line.
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("a dependency record has no usable name; the audit shape changed")
         # A clean audit carries `vulns: []` on every dependency, so the list
         # being absent is drift, never good news.
         if not isinstance(vulns, list):
             raise ValueError(f"dependency {name} carries no vulns list; the audit shape changed")
         for vuln in vulns:
-            if not isinstance(vuln, dict) or not isinstance(vuln.get("id"), str):
-                raise ValueError(f"an advisory on {name} has no id; the audit shape changed")
+            advisory_id = vuln.get("id") if isinstance(vuln, dict) else None
+            if not isinstance(advisory_id, str) or not advisory_id.strip():
+                raise ValueError(f"an advisory on {name} has no usable id; the audit shape changed")
             # Lenient only here, and only because the advisory is still
             # REPORTED: an unreadable fix list costs a cell, not a finding.
             fixes = vuln.get("fix_versions")
@@ -105,7 +111,7 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
             rows.append({
                 "package": name,
                 "version": version if isinstance(version, str) else "?",
-                "id": vuln["id"],
+                "id": advisory_id.strip(),
                 "fix": ", ".join(fixes) if fixes else "no fix released",
             })
     return rows

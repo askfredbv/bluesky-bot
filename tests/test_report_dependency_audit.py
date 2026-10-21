@@ -76,7 +76,14 @@ def test_a_shape_it_does_not_recognise_raises_rather_than_reading_as_clean(paylo
     [{"name": "pillow", "version": "12.3.0"}],                  # no vulns list
     [{"name": "pillow", "version": "12.3.0", "vulns": {}}],     # vulns not a list
     [{"name": "pillow", "version": "12.3.0", "vulns": [{"no_id": True}]}],
-], ids=["not-an-object", "no-name", "no-vulns", "vulns-not-a-list", "advisory-without-id"])
+    # Blank is the same required-field failure as absent: "" passes isinstance
+    # and then renders an empty cell (Codex, #215). `name` had the same hole.
+    [{"name": "pillow", "version": "12.3.0", "vulns": [{"id": ""}]}],
+    [{"name": "pillow", "version": "12.3.0", "vulns": [{"id": "   "}]}],
+    [{"name": "", "version": "12.3.0", "vulns": []}],
+    [{"name": "   ", "version": "12.3.0", "vulns": []}],
+], ids=["not-an-object", "no-name", "no-vulns", "vulns-not-a-list", "advisory-without-id",
+        "blank-id", "whitespace-id", "blank-name", "whitespace-name"])
 def test_an_unreadable_record_means_no_signal_not_a_partial_report(deps):
     """Earlier versions SKIPPED these, which turns a partial report into an
     apparently complete one -- and an empty report closes the issue. For an
@@ -260,3 +267,30 @@ def test_one_open_issue_is_not_mistaken_for_a_duplicate():
     gh = FakeGh(open_issue={"number": 30, "body": "only one"})
     rda.report([PILLOW], gh)
     assert gh.closed() == []
+
+
+def test_a_blank_id_publishes_a_row_that_identifies_nothing():
+    """Why the blank must be refused upstream: the row renders with an empty
+    Advisory cell, and advisory_ids_in then cannot see it, so the published
+    body no longer says what was reported.
+
+    It does NOT nag daily -- plan()'s body-equality check short-circuits before
+    the ID comparison. Checked rather than assumed, because the first version of
+    this test asserted the nag and was wrong."""
+    blank = {"package": "pillow", "version": "12.3.0", "id": "", "fix": "13.0.0"}
+    body = rda.render_body([blank])
+    assert "| pillow | 12.3.0 |  | 13.0.0 |" in body
+    assert rda.advisory_ids_in(body) == []
+    assert rda.plan([blank], {"number": 7, "body": body}) == "nothing"
+    # which is why parse_audit must never produce such a row in the first place
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": [
+            {"name": "pillow", "version": "12.3.0", "vulns": [{"id": "", "fix_versions": ["13.0.0"]}]},
+        ]})
+
+
+def test_a_padded_id_is_accepted_but_stored_trimmed():
+    rows = rda.parse_audit({"dependencies": [
+        {"name": "pillow", "version": "12.3.0", "vulns": [{"id": "  CVE-1  ", "fix_versions": ["13.0.0"]}]},
+    ]})
+    assert rows[0]["id"] == "CVE-1"
