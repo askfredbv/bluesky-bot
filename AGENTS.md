@@ -24,6 +24,11 @@ its author.** Audience growth is deprioritised. Reasoning and numbers: `docs/BAC
 
 ## Review priorities — the things a generic reviewer misses
 
+This section is mirrored, for the one reviewer that cannot read this file, in
+`.gemini/styleguide.md` (Gemini Code Assist reads only its own `.gemini/` directory).
+**This file is canonical; change the two in the same commit** — a divergent copy of a
+review rule is worse than no copy, because each one then looks authoritative.
+
 1. **Voice is a brand decision, not a metric decision.** Content/prompt changes must
    preserve the voice rules: no hype words, no reader-bait questions, no broken-promise
    teasers ("more soon", "stay tuned", 🧵), no source-summary openers ("A new paper…",
