@@ -70,6 +70,12 @@ def parse_audit(payload: Any) -> List[Dict[str, str]]:
     deps = payload.get("dependencies")
     if not isinstance(deps, list):
         raise ValueError("audit payload has no dependencies list")
+    # The dangerous shape is not a payload we reject outright, it is one that
+    # still parses and yields nothing: that reads as "clean" and CLOSES the
+    # issue. A clean audit says `vulns: []` on every dependency, so the key
+    # being absent everywhere is drift, not good news.
+    if deps and not any(isinstance(d, dict) and isinstance(d.get("vulns"), list) for d in deps):
+        raise ValueError("no dependency carries a vulns list; the audit shape changed")
     rows: List[Dict[str, str]] = []
     for dep in deps:
         if not isinstance(dep, dict):
@@ -145,17 +151,36 @@ def plan(findings: List[Dict[str, str]], open_issue: Optional[Dict[str, Any]]) -
     return "update"
 
 
-def find_open_issue(gh: Runner) -> Optional[Dict[str, Any]]:
-    out = gh(["issue", "list", "--label", LABEL, "--state", "open", "--json", "number,body", "--limit", "1"])
+def find_open_issues(gh: Runner) -> List[Dict[str, Any]]:
+    """Every open issue carrying the label, oldest first.
+
+    Not `--limit 1`. Two reporters can race -- a push to main overlapping the
+    cron -- and both open an issue; with a limit of one, every later run manages
+    whichever it happens to see and the other stays open forever, including
+    after the lockfile comes back clean. The job is serialised by a concurrency
+    group so the race should not happen, and this reconciles it if it ever does,
+    because an alert that needs manual tidying is an alert that gets ignored.
+    """
+    out = gh(["issue", "list", "--label", LABEL, "--state", "open",
+              "--json", "number,body", "--limit", "100"])
     issues = json.loads(out or "[]")
-    return issues[0] if issues else None
+    return sorted((i for i in issues if isinstance(i, dict) and "number" in i),
+                  key=lambda i: i["number"])
 
 
 def report(findings: List[Dict[str, str]], gh: Runner = _gh) -> str:
     """Apply ``plan`` through ``gh``; return the action taken."""
     gh(["label", "create", LABEL, "--color", "B60205",
         "--description", "pip-audit found a known vulnerability", "--force"])
-    issue = find_open_issue(gh)
+    issues = find_open_issues(gh)
+    issue = issues[0] if issues else None
+    # Keep the oldest and fold any duplicate into it, so "one self-closing
+    # issue" stays true even after a race.
+    for duplicate in issues[1:]:
+        assert issue is not None
+        gh(["issue", "close", str(duplicate["number"]),
+            "--comment", f"Duplicate of #{issue['number']}, which is the one this "
+                         f"job keeps up to date. Closing."])
     action = plan(findings, issue)
     if action == "open":
         gh(["issue", "create", "--title", TITLE, "--label", LABEL, "--body", render_body(findings)])

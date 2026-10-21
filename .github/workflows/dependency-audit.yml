@@ -62,6 +62,17 @@ jobs:
     needs: pip-audit
     if: ${{ always() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
+    # Deliberately NOT scoped by github.ref, for the same reason daily_post.yml
+    # is not: the state being serialised is one shared GitHub issue, not
+    # anything per-ref. Without this, a push to main overlapping the 07:10 cron
+    # can have both reporters read "no open issue" before either creates one and
+    # both open one -- and a later run manages only the first it finds, so the
+    # duplicate stays open even after the lockfile comes back clean. Merging two
+    # PRs minutes apart, which happened on 2026-10-21, is enough to race it.
+    # cancel-in-progress is false: the second run must still report, not vanish.
+    concurrency:
+      group: dependency-audit-issue
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
@@ -75,8 +86,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Pinned, like zizmor in workflow-lint.yml. parse_audit documents and tests
+      # one JSON shape (2.10.1, verified); an unattended alert must not adopt a
+      # new shape on its own, because shape drift that still parses reads as an
+      # empty audit and would CLOSE the issue. Bump deliberately, with the
+      # fixture in tests/test_report_dependency_audit.py.
       - name: Install pip-audit
-        run: python -m pip install --quiet pip-audit
+        run: python -m pip install --disable-pip-version-check --quiet pip-audit==2.10.1
 
       # `|| true`: pip-audit exits non-zero when it finds something, and the
       # findings are the point. The JSON is still written. A genuine crash

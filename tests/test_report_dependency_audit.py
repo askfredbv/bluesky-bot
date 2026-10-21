@@ -26,15 +26,21 @@ CERTIFI = {"package": "certifi", "version": "2026.7.22", "id": "PYSEC-2026-4320"
 class FakeGh:
     """Records every `gh` call; answers `issue list` with the open issue, if any."""
 
-    def __init__(self, open_issue=None):
+    def __init__(self, open_issue=None, open_issues=None):
         self.calls = []
-        self.open_issue = open_issue
+        if open_issues is not None:
+            self.open_issues = list(open_issues)
+        else:
+            self.open_issues = [open_issue] if open_issue else []
 
     def __call__(self, args):
         self.calls.append(list(args))
         if list(args[:2]) == ["issue", "list"]:
-            return json.dumps([self.open_issue] if self.open_issue else [])
+            return json.dumps(self.open_issues)
         return ""
+
+    def closed(self):
+        return [c[2] for c in self.calls if c[:2] == ["issue", "close"]]
 
     def verbs(self):
         return [c[:2] for c in self.calls]
@@ -183,3 +189,53 @@ def test_a_readable_audit_reaches_the_report(tmp_path, monkeypatch):
     monkeypatch.setattr(rda, "report", lambda findings: seen.setdefault("n", len(findings)) or "open")
     assert rda.main([str(good)]) == 0
     assert seen["n"] == 3
+
+
+# --- what Codex caught on #215 --------------------------------------------
+
+def test_a_shape_that_still_parses_but_yields_nothing_raises_instead_of_reading_as_clean():
+    """The dangerous drift: not a payload we reject, one that quietly means
+    "clean" and closes a real issue. A clean audit says vulns: [] per dep, so
+    the key missing everywhere is drift."""
+    with pytest.raises(ValueError):
+        rda.parse_audit({"dependencies": [
+            {"name": "pillow", "version": "12.3.0", "advisories": [{"id": "CVE-1"}]},
+            {"name": "certifi", "version": "2026.7.22", "advisories": []},
+        ]})
+
+
+def test_a_genuinely_clean_audit_is_still_clean_not_drift():
+    """vulns present and empty is the real clean signal and must survive."""
+    assert rda.parse_audit({"dependencies": [
+        {"name": "httpx", "version": "0.28.1", "vulns": []},
+        {"name": "pillow", "version": "13.0.0", "vulns": []},
+    ]}) == []
+
+
+def test_an_empty_dependency_list_is_not_treated_as_drift():
+    assert rda.parse_audit({"dependencies": []}) == []
+
+
+def test_a_raced_duplicate_issue_is_folded_into_the_oldest_one():
+    """Two reporters can both open one; a limit of 1 would leave the second open
+    forever, including after the lockfile came back clean."""
+    gh = FakeGh(open_issues=[
+        {"number": 31, "body": "second, from the race"},
+        {"number": 30, "body": "first"},
+    ])
+    rda.report([PILLOW], gh)
+    assert gh.closed() == ["31"]
+    assert ["issue", "edit"] in gh.verbs()
+    assert "30" in [c[2] for c in gh.calls if c[:2] == ["issue", "edit"]]
+
+
+def test_duplicates_are_reconciled_even_when_the_lockfile_is_clean():
+    gh = FakeGh(open_issues=[{"number": 31, "body": "dup"}, {"number": 30, "body": "first"}])
+    assert rda.report([], gh) == "close"
+    assert sorted(gh.closed()) == ["30", "31"]
+
+
+def test_one_open_issue_is_not_mistaken_for_a_duplicate():
+    gh = FakeGh(open_issue={"number": 30, "body": "only one"})
+    rda.report([PILLOW], gh)
+    assert gh.closed() == []
