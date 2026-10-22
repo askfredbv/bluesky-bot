@@ -25,7 +25,9 @@ two drift in wording while reporting green, which is worse than no test.
 """
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Sequence, Tuple
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,10 +43,11 @@ AGENTS_PRIORITY = re.compile(r"^(\d+)\.\s+\*\*(.+?)\*\*", re.MULTILINE)
 #: ``### 1. Voice is a brand decision, not a metric decision`` in styleguide.md.
 STYLEGUIDE_PRIORITY = re.compile(r"^###\s+(\d+)\.\s+(.+?)\s*$", re.MULTILINE)
 
-#: A fenced code block. A rule may legitimately show a Markdown example, and a
-#: ``## `` or a numbered line inside that example is neither a heading nor a
-#: priority.
-FENCED_BLOCK = re.compile(r"^```.*?^```[^\n]*$", re.MULTILINE | re.DOTALL)
+#: The opening or closing line of a fenced code block: three or more backticks
+#: or tildes, indented by at most three spaces. A rule may legitimately show a
+#: Markdown example, and a ``## `` or a numbered line inside that example is
+#: neither a heading nor a priority.
+FENCE_LINE = re.compile(r"^ {0,3}(?P<char>[`~])(?P=char){2,}")
 
 #: A floor, not the count. Asserting the exact number would fail for the good
 #: reason as well as the bad one, but an empty parse must never read as
@@ -60,10 +63,33 @@ def _strip_fenced_blocks(text: str) -> str:
     lists match and the check goes green while everything after the fence has
     diverged. That is the dangerous direction: a false pass, not a false alarm.
 
-    Each block becomes the same number of blank lines rather than disappearing,
-    so offsets into the text stay comparable.
+    Scanned line by line rather than matched as one block, because the fence is
+    a small grammar and a pattern covering part of it closes only part of the
+    hole. The first version of this guard handled column-zero triple backticks,
+    and a ``~~~`` fence or a three-space indent walked straight through it —
+    caught in review of #224, in the same commit that introduced the guard.
+
+    An unterminated fence runs to the end of the text, as CommonMark says it
+    does. A closing fence is the same character and at least as long as the one
+    that opened the block. Stripped lines become empty rather than vanishing,
+    so line counts and offsets stay comparable.
     """
-    return FENCED_BLOCK.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    out: List[str] = []
+    closing = ""
+    for line in text.split("\n"):
+        fence = FENCE_LINE.match(line)
+        marker = fence.group(0).strip() if fence else ""
+        if closing:
+            out.append("")
+            if marker and marker[0] == closing[0] and len(marker) >= len(closing):
+                closing = ""
+            continue
+        if marker:
+            closing = marker
+            out.append("")
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def _section(path: Path) -> str:
@@ -159,4 +185,115 @@ def test_gemini_config_and_styleguide_are_both_present():
         f"Missing from .gemini/: {missing}. Gemini Code Assist is installed on "
         "this repo (Developer Connect connection ghbskbot2) and falls back to "
         "its defaults for whichever file is absent, without warning anyone."
+    )
+
+
+# ── Regression cases for the two guards above ───────────────────────────────
+#
+# The tests above run only against the real AGENTS.md and styleguide.md, which
+# are sequentially numbered and carry no fenced examples — so neither guard is
+# exercised by them, and deleting either one would leave the suite green
+# (caught in review of #224). These build the documents that do exercise them.
+
+#: ``1. **Alpha.** Prose`` — the AGENTS.md shape.
+AGENTS_FMT = "{n}. **{t}.** Prose that follows the title."
+
+#: ``### 1. Alpha`` — the styleguide.md shape.
+MIRROR_FMT = "### {n}. {t}"
+
+#: Six, so a fence placed after the fifth still leaves MINIMUM_PRIORITIES
+#: parseable. A fence early enough to drop below the floor fails loudly on the
+#: floor instead, which is the safe direction and not the case under test.
+SIX = tuple(
+    (n, t) for n, t in
+    enumerate(("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"), start=1)
+)
+
+#: A Markdown example holding a line that looks like the heading the section
+#: extractor stops at. Three spellings CommonMark all treats as a fence.
+FENCED_EXAMPLES = {
+    "backticks": "```markdown\n## Not a real heading\n```",
+    "tildes": "~~~markdown\n## Not a real heading\n~~~",
+    "indented": "   ```markdown\n   ## Not a real heading\n   ```",
+    "long": "`````markdown\n## Not a real heading\n`````",
+}
+
+
+def _doc(
+    path: Path,
+    numbered: Sequence[Tuple[int, str]],
+    fmt: str,
+    block: str = "",
+    block_after: int = 0,
+) -> Path:
+    """Write a minimal document with a priorities section, and return its path."""
+    lines = [SECTION_PREFIX, ""]
+    for index, (number, title) in enumerate(numbered):
+        if block and index == block_after:
+            lines += [block, ""]
+        lines += [fmt.format(n=number, t=title), ""]
+    lines += ["## Something after", ""]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("style", sorted(FENCED_EXAMPLES))
+@pytest.mark.parametrize("fmt,pattern", [
+    (AGENTS_FMT, AGENTS_PRIORITY),
+    (MIRROR_FMT, STYLEGUIDE_PRIORITY),
+])
+def test_a_fenced_example_does_not_hide_the_priorities_below_it(
+    tmp_path, style, fmt, pattern
+):
+    """All six must survive a fenced ``## `` sitting after the fifth.
+
+    Without the stripping, the section is cut at the example and only five are
+    seen — which is *above* MINIMUM_PRIORITIES, so the floor stays silent and
+    the truncation reads as agreement.
+    """
+    path = _doc(
+        tmp_path / f"{style}.md", SIX, fmt,
+        block=FENCED_EXAMPLES[style], block_after=5,
+    )
+    titles = _titles(path, pattern)
+    assert titles == [title.lower() for _, title in SIX], (
+        f"A {style} fence hid the priorities below it: parsed {len(titles)} of "
+        f"{len(SIX)}. _strip_fenced_blocks does not recognise this fence shape."
+    )
+
+
+@pytest.mark.parametrize("fmt,pattern", [
+    (AGENTS_FMT, AGENTS_PRIORITY),
+    (MIRROR_FMT, STYLEGUIDE_PRIORITY),
+])
+def test_a_mistyped_priority_number_is_rejected(tmp_path, fmt, pattern):
+    """1, 2, 2, 4, 5, 6 must fail even though every title is intact.
+
+    Titles alone compare equal across a renumbering, which is the hole this
+    guards: the priorities are cited by number across the repo.
+    """
+    misnumbered = [(1, "Alpha"), (2, "Bravo"), (2, "Charlie"),
+                   (4, "Delta"), (5, "Echo"), (6, "Foxtrot")]
+    path = _doc(tmp_path / "misnumbered.md", misnumbered, fmt)
+    with pytest.raises(AssertionError, match="are numbered"):
+        _titles(path, pattern)
+
+
+def test_a_divergence_below_a_fence_is_still_visible(tmp_path):
+    """The whole failure, end to end: fence after the fifth, sixth diverged."""
+    mirrored = list(SIX[:-1]) + [(6, "Foxtrot has drifted")]
+    canonical = _titles(
+        _doc(tmp_path / "AGENTS.md", SIX, AGENTS_FMT,
+             block=FENCED_EXAMPLES["tildes"], block_after=5),
+        AGENTS_PRIORITY,
+    )
+    mirror = _titles(
+        _doc(tmp_path / "styleguide.md", mirrored, MIRROR_FMT,
+             block=FENCED_EXAMPLES["tildes"], block_after=5),
+        STYLEGUIDE_PRIORITY,
+    )
+    assert canonical != mirror, (
+        "Both documents were truncated at the fenced example, so the shortened "
+        "lists matched and the divergence in priority 6 went unseen. This is "
+        "the false pass the stripping exists to prevent."
     )
