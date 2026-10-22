@@ -161,6 +161,13 @@ def _titles(path: Path, pattern: re.Pattern, candidate: re.Pattern) -> List[str]
         "not match, both files would still parse the same shorter list, and "
         "the mirror would look intact while one side carried a rule the other "
         "had never heard of."
+        "\n\nIf the line above is NOT meant to be a priority, it is sitting at "
+        "the same level as one and Markdown reads it that way too: at column "
+        "zero, `N. ` continues the ordered list the priorities are, and `### ` "
+        "is a sibling of the priority headings. Nest it instead — indent a "
+        "list under its priority, or use a deeper heading level. A bulleted "
+        "list or a bold lead-in is fine at any depth. The accepted shapes are "
+        "pinned in test_correctly_nested_content_is_accepted."
     )
     titles = [
         " ".join(match.group(2).split()).rstrip(".").lower()
@@ -399,3 +406,38 @@ def test_the_real_files_have_no_malformed_priority_lines():
         (STYLEGUIDE_MD, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE),
     ):
         assert _titles(path, pattern, candidate), f"{path.name} parsed no priorities"
+
+
+#: Content that belongs *inside* a priority rather than beside it. Each nests
+#: one level down, so neither Markdown nor the candidate patterns read it as
+#: another priority. Pinned here because the guard above is strict on purpose
+#: and a maintainer who trips it needs to know which shapes are available.
+NESTED_CONTENT = {
+    "indented-ordered-list": (AGENTS_FMT, AGENTS_PRIORITY, AGENTS_CANDIDATE,
+                              "   Steps:\n\n   1. First.\n   2. Then."),
+    "bulleted-list-at-column-zero": (AGENTS_FMT, AGENTS_PRIORITY, AGENTS_CANDIDATE,
+                                     "- First.\n- Then."),
+    "deeper-heading": (MIRROR_FMT, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE,
+                       "#### Examples\n\nSome prose."),
+    "bold-lead-in": (MIRROR_FMT, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE,
+                     "**Examples**\n\nSome prose."),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(NESTED_CONTENT))
+def test_correctly_nested_content_is_accepted(tmp_path, shape):
+    """The strict guard must not stand in the way of ordinary documentation.
+
+    The rejection in _titles is deliberate: a line at the same level as a
+    priority is one as far as Markdown is concerned, so flagging it is right.
+    But that is only defensible while there is a way to write the same content
+    one level down, and these are the ways. If one of these ever starts
+    failing, the guard has overreached and the fix belongs there, not here.
+    """
+    fmt, pattern, candidate, block = NESTED_CONTENT[shape]
+    path = _doc(tmp_path / f"{shape}.md", SIX, fmt, block=block, block_after=3)
+    titles = _titles(path, pattern, candidate)
+    assert titles == [title.lower() for _, title in SIX], (
+        f"{shape} is correctly nested one level below a priority and must not "
+        f"be read as one, but parsing returned {len(titles)} of {len(SIX)}."
+    )
