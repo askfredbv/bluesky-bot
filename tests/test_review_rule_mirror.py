@@ -39,13 +39,20 @@ SECTION_START = "## Review priorities"
 #: See _section for why that distinction is the whole design.
 SECTION_END = "## How to review"
 
+#: and matched as a heading LINE, not as text. A plain ``find`` also hits the
+#: terminator quoted inside an example or inline code, which truncates the
+#: section at that point in both files — the same false pass, one layer up.
+SECTION_END_LINE = re.compile(r"^##\s+How to review\s*$", re.MULTILINE)
+
 #: ``1. **Voice is a brand decision, not a metric decision.**`` in AGENTS.md.
-#: ``[0-9]`` rather than ``\d``, which also matches Unicode decimal digits that
-#: would compare equal once normalised.
-AGENTS_PRIORITY = re.compile(r"^([0-9]+)\.\s+\*\*(.+?)\*\*", re.MULTILINE)
+#: ``\d`` deliberately, not ``[0-9]``: capture any decimal-looking label and let
+#: the exact-string check below reject the wrong ones. Narrowing the capture
+#: instead makes a Unicode-digit label *invisible* rather than rejected, so a
+#: priority written ``७.`` would silently not exist.
+AGENTS_PRIORITY = re.compile(r"^(\d+)\.\s+\*\*(.+?)\*\*", re.MULTILINE)
 
 #: ``### 1. Voice is a brand decision, not a metric decision`` in styleguide.md.
-STYLEGUIDE_PRIORITY = re.compile(r"^###\s+([0-9]+)\.\s+(.+?)\s*$", re.MULTILINE)
+STYLEGUIDE_PRIORITY = re.compile(r"^###\s+(\d+)\.\s+(.+?)\s*$", re.MULTILINE)
 
 #: A floor, not the count. Asserting the exact number would fail for the good
 #: reason as well as the bad one, but an empty parse must never read as
@@ -77,6 +84,16 @@ def _section(path: Path) -> str:
     handling is gone with it — roughly forty lines removed, not added.
 
     Both headings must be present and in order. A missing one is loud.
+
+    **What this still does not cover, stated rather than left to be found.** The
+    terminator is matched as a heading line, so the text quoted in an example or
+    in inline code is not mistaken for it. A fenced block containing the exact
+    line ``## How to review`` at column zero, in *both* files, below the fifth
+    priority, would still truncate both and read as agreement. Closing that
+    would mean understanding fences again, which is the thing this design
+    exists to avoid, and it requires someone to paste this file's own
+    terminator into a code example in both documents. Known, accepted, not
+    forgotten.
     """
     text = path.read_text(encoding="utf-8")
     start = text.find(SECTION_START)
@@ -85,7 +102,8 @@ def _section(path: Path) -> str:
         "key off it; rename it in one and this mirror check goes blind."
     )
     body_at = start + len(SECTION_START)
-    end = text.find(SECTION_END, body_at)
+    terminator = SECTION_END_LINE.search(text, body_at)
+    end = terminator.start() if terminator else -1
     assert end != -1, (
         f"{path.name} has no '{SECTION_END}' heading after '{SECTION_START}'. "
         "That heading is what ends the priorities section. Without it the "
@@ -216,6 +234,9 @@ AWKWARD_MARKDOWN = {
     "backtick-in-info-string": "```lang`bad\n## Not a real heading\n```",
     "unterminated-fence-in-a-list": "- an item\n\n  ```markdown\n  ## Not a real heading",
     "bare-heading": "## Not a real heading",
+    # The terminator's own text, quoted rather than used as a heading.
+    "terminator-in-inline-code": "See `## How to review` for the rest.",
+    "terminator-mid-sentence": "The section ends at ## How to review, below.",
 }
 
 
@@ -271,6 +292,8 @@ def test_a_missing_terminator_fails_loudly(tmp_path, fmt, pattern):
 @pytest.mark.parametrize("labels,why", [
     (["1", "2", "2", "4", "5", "6"], "a mistyped label"),
     (["01", "02", "03", "04", "05", "06"], "zero padding, which int() hides"),
+    (["1", "2", "3", "4", "5", "७"], "a Unicode digit, which must be "
+                                           "captured and rejected, not skipped"),
 ])
 @pytest.mark.parametrize("fmt,pattern", BOTH_SHAPES)
 def test_labels_must_be_exactly_one_to_n(tmp_path, labels, why, fmt, pattern):
