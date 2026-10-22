@@ -99,8 +99,17 @@ def _strip_fenced_blocks(text: str) -> str:
                 closing = ""
             continue
         if marker:
-            # An opening fence may carry an info string (```markdown), so
-            # trailing text is deliberately not checked here.
+            # An opening fence may carry an info string (```markdown) — but a
+            # BACKTICK fence's info string may not itself contain a backtick,
+            # so ```lang`bad opens nothing and is ordinary text. Treating it as
+            # an opener blanks everything to the next backtick run, and when
+            # the swallowed priorities are the trailing ones the remaining
+            # numbers are still 1..N, so neither the floor nor the numbering
+            # check notices and both documents lose the same priorities
+            # (review of #224). Tilde fences have no such restriction.
+            if marker[0] == "`" and "`" in trailing:
+                out.append(line)
+                continue
             closing = marker
             out.append("")
             continue
@@ -315,4 +324,34 @@ def test_a_divergence_below_a_fence_is_still_visible(tmp_path):
         "Both documents were truncated at the fenced example, so the shortened "
         "lists matched and the divergence in priority 6 went unseen. This is "
         "the false pass the stripping exists to prevent."
+    )
+
+
+#: Not a fence at all: a backtick fence's info string may not itself contain a
+#: backtick, so CommonMark leaves this line as ordinary text.
+NOT_AN_OPENER = "```lang`bad"
+
+
+@pytest.mark.parametrize("fmt,pattern", [
+    (AGENTS_FMT, AGENTS_PRIORITY),
+    (MIRROR_FMT, STYLEGUIDE_PRIORITY),
+])
+def test_a_line_that_only_looks_like_a_fence_swallows_nothing(tmp_path, fmt, pattern):
+    """``` ```lang`bad ``` is text, and the priorities after it must survive.
+
+    Treated as an opener it blanks everything to the next backtick run. The
+    trailing case is the one that gets through the other guards: drop the LAST
+    priority and the remaining numbers are still 1..N, so the numbering check
+    is satisfied and five survivors keep the floor quiet. Drop a middle one and
+    the numbering check already catches it — which is why this case is built
+    with the swallowed priority last.
+    """
+    path = _doc(
+        tmp_path / "looks-like-a-fence.md", SIX, fmt,
+        block=NOT_AN_OPENER, block_after=5,
+    )
+    titles = _titles(path, pattern)
+    assert titles == [title.lower() for _, title in SIX], (
+        f"A line that is not a valid fence opener swallowed the priorities "
+        f"after it: parsed {len(titles)} of {len(SIX)}."
     )
