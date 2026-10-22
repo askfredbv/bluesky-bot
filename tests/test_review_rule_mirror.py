@@ -101,12 +101,12 @@ def test_styleguide_mirrors_every_agents_priority():
 
 
 def test_gemini_config_and_styleguide_are_both_present():
-    """Neither half of the Gemini setup is useful without the other.
+    """Neither half of the Gemini Code Assist setup is useful without the other.
 
-    ``config.yaml`` without ``styleguide.md`` reviews with Gemini's defaults and
-    none of the rules above; ``styleguide.md`` without ``config.yaml`` reviews
-    at the default MEDIUM threshold with no comment cap, which is the noise this
-    repo configured away.
+    ``config.yaml`` without ``styleguide.md`` reviews with Gemini Code Assist's
+    defaults and none of the rules above; ``styleguide.md`` without
+    ``config.yaml`` reviews at the default MEDIUM threshold with no comment cap,
+    which is the noise this repo configured away.
     """
     config = REPO_ROOT / ".gemini" / "config.yaml"
     missing = [

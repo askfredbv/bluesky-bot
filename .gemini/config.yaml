@@ -17,9 +17,9 @@ code_review:
 
   # Default: MEDIUM. This repo already runs a CodeQL gate and an external bot
   # review on every PR, so a third reviewer earns its place only by being quiet.
-  # HIGH means Gemini posts what would change the merge decision and stays silent
-  # on the rest. See "How to review" in styleguide.md: one well-grounded finding
-  # beats five speculative ones.
+  # HIGH means Gemini Code Assist posts what would change the merge decision and
+  # stays silent on the rest. See "How to review" in styleguide.md: one
+  # well-grounded finding beats five speculative ones.
   comment_severity_threshold: HIGH
 
   # Default: -1 (unlimited). A bounded review is one a human actually finishes
