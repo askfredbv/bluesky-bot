@@ -10,9 +10,9 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.31.0** (20
 
 ## Priority order
 
-Updated 2026-10-19. Items 1-3 are closed. **Correctives 1 and 2 of the 2026-10-19
+Updated 2026-10-22. Items 1-3 and 5 are closed. **Correctives 1 and 2 of the 2026-10-19
 finding shipped the same day; corrective 3 is tracked as #203.** Item 4 remains gated
-on `keyword_substring_only_matches` data and item 5 is time-boxed; neither is blocked.
+on `keyword_substring_only_matches` data; it is not blocked.
 
 *Anything recorded here that is meant to be built gets a GitHub issue, not a bullet.
 A bullet has no state and nothing closes it — which is how the corrective in
@@ -183,7 +183,7 @@ is how this one survived three releases.
 provenance. **Deliberately gated on a week of item 1's
 `keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
 which is what the abandoned landmark gate (§3) teaches against doing without data.
-5. **[DONE 2026-10-20 — RAN IT, then re-ran it after review. Item 1 worked; the claim about the model did not survive. → #210]**
+5. **[DONE 2026-10-20 — RAN IT, then re-ran it after review. Item 1 worked; the claim about the model did not survive. → #210, closed 2026-10-22 with no change made]**
 **Re-run the Curator judgement test.** Position entropy cannot tell a wise choice from
 an arbitrary one; tier capture when candidate quality *varies within a batch* can
 (framing from an outside review, 2026-10-06). The baseline was unanswerable: only
@@ -249,8 +249,24 @@ Sonnet by 1.4×. What the split actually shows is how little is behind the poole
 **six runs and eight runs**. Neither arm can carry a claim about either model, and the one
 top-tier capture in the whole window is Sonnet's, on 10-20.
 
-Tracked as **#210**, with the caveat that the evidence is thinner than the first pass
-claimed.
+Tracked as **#210** — **closed 2026-10-22 with no change made.** The issue set its own
+precondition, to read the floor picks as posts before touching anything. That was done:
+all six pulled from the public feed, and they are good posts. Five of the six open with a
+finding rather than a summary, each carries concrete specifics, and the closing lines land
+("Tokenization was a compute crutch", "Slow and correct can still be wrong"). So tier
+capture measures provenance, not quality — a tier-10 corporate announcement usually
+carries no contestable claim, and a contestable claim is what this voice needs. Acting on
+1-of-14 would have optimised away exactly those posts. The metric this item asked for was
+never built, deliberately: it was a precondition for deciding whether a problem existed,
+and reading the output answered that more cheaply than building it would have.
+
+*Left on the table rather than built, because nothing shows it is needed:*
+`select_candidates` already mixes the shortlist and `calculate_relevance_score` already
+penalises a repeated **topic**, but nothing penalises the same **host** winning
+repeatedly — six arXiv papers can be six distinct topics and pay nothing. A host-repetition
+cooldown beside the topic one would be about ten lines with no prompt edit and no voice
+risk. Whether 43% of mornings from one host reads as monotonous is a question about
+variety rather than quality, and it is a reader's call, not a measurement.
 
 *Method, so it can be re-run — and so the first pass's four errors are not repeated:*
 score the window from **2026-10-07 only** (the scoring fix's first live run; earlier runs
