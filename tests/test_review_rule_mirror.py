@@ -79,12 +79,28 @@ def _strip_fenced_blocks(text: str) -> str:
     for line in text.split("\n"):
         fence = FENCE_LINE.match(line)
         marker = fence.group(0).strip() if fence else ""
+        trailing = line[fence.end():] if fence else ""
         if closing:
             out.append("")
-            if marker and marker[0] == closing[0] and len(marker) >= len(closing):
+            # All three clauses are load-bearing. CommonMark closes a block on
+            # the same character, at least as long, followed by nothing but
+            # whitespace — and it is the last clause that bites: without it a
+            # line like ``` ```not-a-close ``` *inside* the block reads as the
+            # close, which exposes a later ``## `` to the section extractor and
+            # reopens the very false pass this function exists to shut. Closing
+            # early is not the safe direction, which is the mistake the first
+            # version of this scanner made (review of #224).
+            if (
+                marker
+                and marker[0] == closing[0]
+                and len(marker) >= len(closing)
+                and not trailing.strip()
+            ):
                 closing = ""
             continue
         if marker:
+            # An opening fence may carry an info string (```markdown), so
+            # trailing text is deliberately not checked here.
             closing = marker
             out.append("")
             continue
@@ -216,6 +232,9 @@ FENCED_EXAMPLES = {
     "tildes": "~~~markdown\n## Not a real heading\n~~~",
     "indented": "   ```markdown\n   ## Not a real heading\n   ```",
     "long": "`````markdown\n## Not a real heading\n`````",
+    # A line that looks like a close but carries trailing text is still code
+    # per CommonMark, so the heading below it is still inside the block.
+    "fake-close": "```markdown\n```not-a-close\n## Not a real heading\n```",
 }
 
 
