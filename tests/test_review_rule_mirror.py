@@ -8,7 +8,11 @@ wrong fact sat on five surfaces, and each fix felt like the last one.
 
 **What this guards, and what it cannot.** It compares the priority *titles* in
 both files and fails on any asymmetry: a priority renamed, added, removed or
-reordered in one file and not the other. It cannot read the prose under a title,
+reordered in one file and not the other. It also requires each file to number
+its priorities ``1..N``, and it blanks fenced code blocks before parsing —
+without those two, a mistyped number and a ``## `` inside a Markdown example
+both let the check go green while the files have diverged (found by an external
+review, 2026-10-22). It cannot read the prose under a title,
 so a rule sharpened in ``AGENTS.md`` while the mirror keeps the old wording
 still passes here. That hole is known and deliberate — a checksum over the
 section would catch it, at the cost of failing CI on every edit until a human
@@ -37,15 +41,34 @@ AGENTS_PRIORITY = re.compile(r"^(\d+)\.\s+\*\*(.+?)\*\*", re.MULTILINE)
 #: ``### 1. Voice is a brand decision, not a metric decision`` in styleguide.md.
 STYLEGUIDE_PRIORITY = re.compile(r"^###\s+(\d+)\.\s+(.+?)\s*$", re.MULTILINE)
 
+#: A fenced code block. A rule may legitimately show a Markdown example, and a
+#: ``## `` or a numbered line inside that example is neither a heading nor a
+#: priority.
+FENCED_BLOCK = re.compile(r"^```.*?^```[^\n]*$", re.MULTILINE | re.DOTALL)
+
 #: A floor, not the count. Asserting the exact number would fail for the good
 #: reason as well as the bad one, but an empty parse must never read as
 #: agreement: two regexes that match nothing agree perfectly.
 MINIMUM_PRIORITIES = 5
 
 
+def _strip_fenced_blocks(text: str) -> str:
+    """Blank out fenced code blocks, keeping the line count.
+
+    Left in, a ``## `` inside a fenced example truncates the section early —
+    and it truncates it at the same place in *both* files, so the two shortened
+    lists match and the check goes green while everything after the fence has
+    diverged. That is the dangerous direction: a false pass, not a false alarm.
+
+    Each block becomes the same number of blank lines rather than disappearing,
+    so offsets into the text stay comparable.
+    """
+    return FENCED_BLOCK.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+
+
 def _section(path: Path) -> str:
     """The text under ``## Review priorities``, up to the next ``## `` heading."""
-    text = path.read_text(encoding="utf-8")
+    text = _strip_fenced_blocks(path.read_text(encoding="utf-8"))
     start = text.find(SECTION_PREFIX)
     assert start != -1, (
         f"{path.name} no longer has a '{SECTION_PREFIX}' heading. Both files "
@@ -57,17 +80,37 @@ def _section(path: Path) -> str:
 
 
 def _titles(path: Path, pattern: re.Pattern) -> List[str]:
-    """Priority titles in file order, normalised for comparison."""
+    """Priority titles in file order, normalised for comparison.
+
+    Also checks the literal numbers. Comparing titles alone cannot see them:
+    ``1, 2, 2, 4`` against ``1, 2, 3, 4`` with identical titles compares equal
+    and passes. That matters because the priorities are cited by number, and
+    the two files do not fail the same way — a Markdown renderer silently
+    renumbers the ordered list in AGENTS.md, while ``### 3.`` in the mirror is
+    literal text that renders exactly as typed. Requiring ``1..N`` in each file
+    makes them agree by construction.
+    """
+    matches = list(pattern.finditer(_section(path)))
     titles = [
         " ".join(match.group(2).split()).rstrip(".").lower()
-        for match in pattern.finditer(_section(path))
+        for match in matches
     ]
+    numbers = [int(match.group(1)) for match in matches]
     assert len(titles) >= MINIMUM_PRIORITIES, (
         f"Only {len(titles)} review priorities parsed out of {path.name}, "
         f"expected at least {MINIMUM_PRIORITIES}. The formatting of the "
         "priority headings changed and this check can no longer see them — "
         "which would otherwise let both files pass by matching nothing. Fix "
         "the pattern in tests/test_review_rule_mirror.py to match the new shape."
+    )
+    assert numbers == list(range(1, len(numbers) + 1)), (
+        f"The review priorities in {path.name} are numbered {numbers}, not "
+        f"1..{len(numbers)}. Either a number was mistyped, or one priority is "
+        "written in a shape this check cannot see and the gap is where it "
+        "should have been — a title wrapped across two lines does exactly "
+        "that. The priorities are cited by number across the repo, so the "
+        "numbering has to be right in the file as well as consistent between "
+        "the two."
     )
     return titles
 
