@@ -54,6 +54,22 @@ AGENTS_PRIORITY = re.compile(r"^(\d+)\.\s+\*\*(.+?)\*\*", re.MULTILINE)
 #: ``### 1. Voice is a brand decision, not a metric decision`` in styleguide.md.
 STYLEGUIDE_PRIORITY = re.compile(r"^###\s+(\d+)\.\s+(.+?)\s*$", re.MULTILINE)
 
+#: Lines that are *reaching for* the priority shape, matched loosely. Every one
+#: of them must also match the strict pattern above, or the file is malformed.
+#:
+#: This is the difference between a line being rejected and a line being
+#: invisible, and invisible is the dangerous one: an unbolded sixth priority
+#: added to AGENTS.md alone simply does not match AGENTS_PRIORITY, so both
+#: files still parse five, the labels still read 1..5, and the check passes
+#: over a priority the mirror has never heard of. The same shape covers a
+#: Unicode-digit label and a title hard-wrapped across two lines. Found by an
+#: external review, 2026-10-22; the class, not one of its members.
+#:
+#: Anchored at column zero because real priorities start there and wrapped
+#: continuation lines are indented.
+AGENTS_CANDIDATE = re.compile(r"^\d+\.\s", re.MULTILINE)
+STYLEGUIDE_CANDIDATE = re.compile(r"^###\s", re.MULTILINE)
+
 #: A floor, not the count. Asserting the exact number would fail for the good
 #: reason as well as the bad one, but an empty parse must never read as
 #: agreement: two regexes that match nothing agree perfectly.
@@ -113,7 +129,7 @@ def _section(path: Path) -> str:
     return text[body_at:end]
 
 
-def _titles(path: Path, pattern: re.Pattern) -> List[str]:
+def _titles(path: Path, pattern: re.Pattern, candidate: re.Pattern) -> List[str]:
     """Priority titles in file order, normalised for comparison.
 
     Also checks the labels, as the literal strings they are. Comparing titles
@@ -127,7 +143,25 @@ def _titles(path: Path, pattern: re.Pattern) -> List[str]:
     it, because ``int`` normalises away differences a reader can see: ``01``
     and ``1`` are the same integer and different labels.
     """
-    matches = list(pattern.finditer(_section(path)))
+    section = _section(path)
+    matches = list(pattern.finditer(section))
+    parsed_at = {match.start() for match in matches}
+    malformed = [
+        section[match.start():(section.find("\n", match.start()) + 1 or None)].strip()
+        for match in candidate.finditer(section)
+        if match.start() not in parsed_at
+    ]
+    assert not malformed, (
+        f"{path.name} has {len(malformed)} line(s) in the priorities section "
+        f"that look like a priority and do not parse as one:\n  "
+        + "\n  ".join(repr(line) for line in malformed)
+        + "\nA line this check cannot read is not skipped, it is rejected. "
+        "Skipping is how a priority goes missing silently: an unbolded entry, "
+        "a non-ASCII label or a title wrapped onto a second line simply would "
+        "not match, both files would still parse the same shorter list, and "
+        "the mirror would look intact while one side carried a rule the other "
+        "had never heard of."
+    )
     titles = [
         " ".join(match.group(2).split()).rstrip(".").lower()
         for match in matches
@@ -158,8 +192,8 @@ def test_styleguide_mirrors_every_agents_priority():
     Failing here does not mean the change is wrong. It means it landed in one
     of the two files and the other one still claims otherwise.
     """
-    canonical = _titles(AGENTS_MD, AGENTS_PRIORITY)
-    mirrored = _titles(STYLEGUIDE_MD, STYLEGUIDE_PRIORITY)
+    canonical = _titles(AGENTS_MD, AGENTS_PRIORITY, AGENTS_CANDIDATE)
+    mirrored = _titles(STYLEGUIDE_MD, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE)
 
     missing = [title for title in canonical if title not in mirrored]
     extra = [title for title in mirrored if title not in canonical]
@@ -212,7 +246,10 @@ AGENTS_FMT = "{n}. **{t}.** Prose that follows the title."
 #: ``### 1. Alpha`` — the styleguide.md shape.
 MIRROR_FMT = "### {n}. {t}"
 
-BOTH_SHAPES = [(AGENTS_FMT, AGENTS_PRIORITY), (MIRROR_FMT, STYLEGUIDE_PRIORITY)]
+BOTH_SHAPES = [
+    (AGENTS_FMT, AGENTS_PRIORITY, AGENTS_CANDIDATE),
+    (MIRROR_FMT, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE),
+]
 
 #: Six, so dropping one still leaves MINIMUM_PRIORITIES parseable and the floor
 #: cannot mask what is being tested.
@@ -259,9 +296,9 @@ def _doc(
 
 
 @pytest.mark.parametrize("shape", sorted(AWKWARD_MARKDOWN))
-@pytest.mark.parametrize("fmt,pattern", BOTH_SHAPES)
+@pytest.mark.parametrize("fmt,pattern,candidate", BOTH_SHAPES)
 def test_awkward_markdown_does_not_truncate_the_section(
-    tmp_path, shape, fmt, pattern
+    tmp_path, shape, fmt, pattern, candidate
 ):
     """All six survive any Markdown that merely looks like the terminator.
 
@@ -272,21 +309,21 @@ def test_awkward_markdown_does_not_truncate_the_section(
         tmp_path / f"{shape}.md", SIX, fmt,
         block=AWKWARD_MARKDOWN[shape], block_after=5,
     )
-    titles = _titles(path, pattern)
+    titles = _titles(path, pattern, candidate)
     assert titles == [title.lower() for _, title in SIX], (
         f"{shape} truncated the section: parsed {len(titles)} of {len(SIX)}. "
         "Only SECTION_END should end it."
     )
 
 
-@pytest.mark.parametrize("fmt,pattern", BOTH_SHAPES)
-def test_a_missing_terminator_fails_loudly(tmp_path, fmt, pattern):
+@pytest.mark.parametrize("fmt,pattern,candidate", BOTH_SHAPES)
+def test_a_missing_terminator_fails_loudly(tmp_path, fmt, pattern, candidate):
     """No SECTION_END means the bound is unknown, which must not read as fine."""
     path = tmp_path / "no-terminator.md"
     body = _doc(path, SIX, fmt).read_text(encoding="utf-8")
     path.write_text(body.replace(SECTION_END, "## Something else"), encoding="utf-8")
     with pytest.raises(AssertionError, match="has no"):
-        _titles(path, pattern)
+        _titles(path, pattern, candidate)
 
 
 @pytest.mark.parametrize("labels,why", [
@@ -295,13 +332,13 @@ def test_a_missing_terminator_fails_loudly(tmp_path, fmt, pattern):
     (["1", "2", "3", "4", "5", "७"], "a Unicode digit, which must be "
                                            "captured and rejected, not skipped"),
 ])
-@pytest.mark.parametrize("fmt,pattern", BOTH_SHAPES)
-def test_labels_must_be_exactly_one_to_n(tmp_path, labels, why, fmt, pattern):
+@pytest.mark.parametrize("fmt,pattern,candidate", BOTH_SHAPES)
+def test_labels_must_be_exactly_one_to_n(tmp_path, labels, why, fmt, pattern, candidate):
     """Titles compare equal across a relabelling, so the labels are checked too."""
     relabelled = list(zip(labels, [title for _, title in SIX]))
     path = _doc(tmp_path / "relabelled.md", relabelled, fmt)
     with pytest.raises(AssertionError, match="are labelled"):
-        _titles(path, pattern)
+        _titles(path, pattern, candidate)
 
 
 def test_a_divergence_below_awkward_markdown_is_still_visible(tmp_path):
@@ -310,14 +347,55 @@ def test_a_divergence_below_awkward_markdown_is_still_visible(tmp_path):
     block = AWKWARD_MARKDOWN["unterminated-fence-in-a-list"]
     canonical = _titles(
         _doc(tmp_path / "AGENTS.md", SIX, AGENTS_FMT, block=block, block_after=5),
-        AGENTS_PRIORITY,
+        AGENTS_PRIORITY, AGENTS_CANDIDATE,
     )
     mirror = _titles(
         _doc(tmp_path / "styleguide.md", mirrored, MIRROR_FMT, block=block, block_after=5),
-        STYLEGUIDE_PRIORITY,
+        STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE,
     )
     assert canonical != mirror, (
         "Both documents lost the sixth priority to the same piece of awkward "
         "Markdown, so the shortened lists matched and the divergence went "
         "unseen. That is the false pass this file exists to prevent."
     )
+
+
+#: Lines that reach for the priority shape and miss. Each would previously have
+#: been skipped in silence, which is how a priority goes missing from one file
+#: without the mirror noticing. Keyed by what is wrong with them.
+MALFORMED = {
+    "unbolded": (AGENTS_FMT, AGENTS_PRIORITY, AGENTS_CANDIDATE,
+                 "7. A new rule nobody bolded."),
+    "title-wrapped-onto-two-lines": (AGENTS_FMT, AGENTS_PRIORITY, AGENTS_CANDIDATE,
+                                     "7. **A title long enough that it\n"
+                                     "   wraps onto a second line.** Prose."),
+    "bold-never-closed": (AGENTS_FMT, AGENTS_PRIORITY, AGENTS_CANDIDATE,
+                          "7. **A title missing its closing marker"),
+    "h3-with-no-label": (MIRROR_FMT, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE,
+                         "### Extra notes"),
+    "h3-label-without-a-dot": (MIRROR_FMT, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE,
+                               "### 7 Missing the dot"),
+}
+
+
+@pytest.mark.parametrize("what", sorted(MALFORMED))
+def test_a_line_that_misses_the_priority_shape_is_rejected_not_skipped(tmp_path, what):
+    """Unreadable must fail, never pass quietly.
+
+    Each of these parses as nothing, so without the candidate check both files
+    keep returning the same shorter list and the mirror looks intact while one
+    side carries a rule the other does not.
+    """
+    fmt, pattern, candidate, bad = MALFORMED[what]
+    path = _doc(tmp_path / f"{what}.md", SIX, fmt, block=bad, block_after=5)
+    with pytest.raises(AssertionError, match="look like a priority"):
+        _titles(path, pattern, candidate)
+
+
+def test_the_real_files_have_no_malformed_priority_lines():
+    """The guard above must not be firing on the documents it ships with."""
+    for path, pattern, candidate in (
+        (AGENTS_MD, AGENTS_PRIORITY, AGENTS_CANDIDATE),
+        (STYLEGUIDE_MD, STYLEGUIDE_PRIORITY, STYLEGUIDE_CANDIDATE),
+    ):
+        assert _titles(path, pattern, candidate), f"{path.name} parsed no priorities"
