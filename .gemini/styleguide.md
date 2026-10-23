@@ -11,8 +11,10 @@ reason this file exists.
 ## What this project is
 
 A bot that posts AI/tech-mentorship content to Bluesky (@askfred.be) and Mastodon, twice
-daily via GitHub Actions. Python 3.11, Gemini for generation, a private GitHub Gist for
-state. It runs unattended and it posts under a real person's name.
+daily via GitHub Actions. Python 3.11, a two-provider model chain for generation
+(`claude-sonnet-5-5` primary since 2026-10-12, the Gemini chain as fallback — see
+`ANTHROPIC_CHAIN_POSITION` in `src/config.py`; images stay Gemini-only), a private GitHub
+Gist for state. It runs unattended and it posts under a real person's name.
 
 **The voice is the product.** The operating goal (set 2026-10-06) is: run reliably, cost
 no recurring human time, never embarrass its author. Audience growth is deprioritised.
