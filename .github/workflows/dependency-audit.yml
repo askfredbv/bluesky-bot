@@ -41,6 +41,11 @@ permissions:
 jobs:
   pip-audit:
     runs-on: ubuntu-latest
+    # A healthy run takes ~25 seconds. Without this, a genuinely hung audit
+    # would sit "pending" for GitHub's default of six hours. #226 turned out
+    # not to be a hang (every record reads completed/success), but a bound
+    # turns any future one into a red check within minutes.
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -76,6 +81,7 @@ jobs:
     # both carry refs/heads/main, so nothing real is lost.
     if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Deliberately NOT scoped by github.ref, for the same reason daily_post.yml
     # is not: the state being serialised is one shared GitHub issue, not
     # anything per-ref. Without this, a push to main overlapping the 07:10 cron
