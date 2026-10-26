@@ -11,8 +11,8 @@ provider-wide outage from a missed run into a posted one.
 
 Where it sits in the chain is one constant, ``ANTHROPIC_CHAIN_POSITION``.
 **Since 2026-10-12 it is "primary": Anthropic writes the posts and Gemini is
-the fallback.** That is a trial, on craft grounds rather than metrics —
-Frederik prefers how Claude writes — with a decision due 2026-10-26. Set the
+the fallback.** That began as a trial, on craft grounds rather than metrics —
+Frederik prefers how Claude writes — and was KEPT on 2026-10-26. Set the
 constant to "fallback" to revert; nothing else needs to change. See the
 comment on it in ``src/config.py`` for the evidence and its limits.
 
