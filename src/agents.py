@@ -178,21 +178,17 @@ def get_temporal_context() -> Dict[str, str]:
     """Returns day-aware contextual themes (Sage v4.5)."""
     now = datetime.now(timezone.utc)
     day = now.strftime("%A")
-    hour = now.hour
-    
-    context = {"day": day}
-    
-    if day == "Monday":
-        context["theme"] = "Setting the weekly strategy and forward-looking momentum."
-    elif day == "Friday":
-        context["theme"] = "Capping off the week with synthesis and reflective analysis."
-    elif day in ["Saturday", "Sunday"]:
-        context["theme"] = "Weekend high-level vision and community reflection."
-    else:
-        context["theme"] = "Mid-week technical deep-dives and progress tracking."
-        
-    context["session"] = "Morning Intelligence Briefing" if hour < 12 else "Afternoon Mentor Deep-Dive"
-    return context
+    themes = {
+        "Monday": "Setting the weekly strategy and forward-looking momentum.",
+        "Friday": "Capping off the week with synthesis and reflective analysis.",
+        "Saturday": "Weekend high-level vision and community reflection.",
+        "Sunday": "Weekend high-level vision and community reflection.",
+    }
+    return {
+        "day": day,
+        "theme": themes.get(day, "Mid-week technical deep-dives and progress tracking."),
+        "session": "Morning Intelligence Briefing" if now.hour < 12 else "Afternoon Mentor Deep-Dive",
+    }
 
 def validate_summary(text: str) -> Tuple[bool, str]:
     """Heuristic validation of AI output quality (Rescue v4.5).
