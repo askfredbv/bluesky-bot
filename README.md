@@ -23,7 +23,7 @@ The afternoon run also runs a **pioneer dimension** — curated tech-history fac
 ```
 cron-job.org → GitHub Actions (workflow_dispatch)
   → fetch + score RSS feeds     (src/news.py)
-  → generate via Gemini         (src/agents.py)
+  → generate via model chain    (src/agents.py → src/llm.py)
   → post to Bluesky + Mastodon  (src/broadcasters.py)
   → reply to mentions           (src/agents.py)
 ```
@@ -37,11 +37,11 @@ Two runs a day, anchored to Belgian local time (UTC shifts with DST: summer 07:0
 - **Voice** — anchored to Frederik Van Hecke's writing in two registers (strategic-advisory / casual-narrative); verbatim anchors live in `src/config.py`, and `docs/VOICE_AUDIT.md` documents the independent voice-critique process. English only.
 - **Curator: a take, not a summary** — three-part shape (hook → concrete specific → link); paper-summary phrasings and editorial-filler endings are banned.
 - **No broken promises** — the bot has no follow-up mechanism, so teasers ("more soon", 🧵) are banned and stripped; every post lands complete on its own.
-- **Images** — Mentor/Strategist posts may attach an AI-generated illustration (`gemini-3.1-flash-image`; two-step — Gemini drafts the visual prompt, then the image model renders it). Curator uses an RSS link card instead.
+- **Images** — Mentor/Strategist posts may attach an AI-generated illustration (`gemini-3.1-flash-image`; two-step — Gemini drafts the visual prompt, then the image model renders it). Both steps stay on Gemini even while Claude writes the text, so a Google outage costs the image but not the post. Curator uses an RSS link card instead.
 - **Mastodon discovery tags** — the Mastodon copy gets 1–2 trailing hashtags on its root post; the Bluesky copy gets none. Mastodon has no algorithmic feed, so a followed hashtag is how people find posts there; Bluesky's Discover feed does that job instead. Not a voice change: the post is generated once, platform-neutral, and the tags are appended at the broadcaster. A model names them per-post, a **different** model reviews them against the post, and the pair runs concurrently with the Bluesky broadcast inside a shared 20s budget — every failure path ships the post untagged. Kill switch: `MASTODON_TAGS_ENABLED`.
 - **Mastodon thread numbering** — multi-part posts carry "1/2", "2/2" on Mastodon. Mastodon lists a self-thread newest-first, so a timeline reader meets part 2 before part 1. The first part ends with "1/2"; every later part opens with its number ("2/2: …"), so the part a reader meets first says at once that it continues something. Bluesky's app already numbers self-threads on its own, so the Bluesky copy is left as it is. Added at the broadcaster, before the discovery tags; the generated text is unchanged.
 - **Mastodon source link** — Curator posts carry their source URL in the Mastodon text whenever the generated text does not already include it. Bluesky shows the same link as a card built from the article's metadata; Mastodon can only show a link that is in the text, and without this most Curator posts reached Mastodon with no source at all.
-- **Models** — a `GEMINI_MODEL_PRIORITY` chain (gemini-3.7-flash primary; gemini-3.5-flash the immediate fallback); an API failure advances to the next model, and the list is pruned to what the key can actually reach at startup. Thinking budget is pinned per model so it doesn't eat the output budget.
+- **Models** — one ordered failover chain spanning two providers: `ANTHROPIC_MODELS` (`claude-sonnet-5-5` → `claude-haiku-5-5`) and `GEMINI_MODEL_PRIORITY` (`gemini-3.7-flash` → `gemini-3.5-flash` → `gemini-2.5-pro` → `gemini-2.5-flash`). Which provider leads is the single constant `ANTHROPIC_CHAIN_POSITION`, **`"primary"` since 2026-10-12** — so Claude writes the posts and the Gemini chain is the fallback. That began as a two-week trial and was kept on 2026-10-26 (`docs/BACKLOG.md`); setting the constant to `"fallback"` restores Gemini-first with no other change. With no `ANTHROPIC_API_KEY` configured the chain is Gemini-only. An API failure advances to the next model, and the Gemini rungs are pruned at startup to what the key can actually reach. Thinking budget is pinned per model so it doesn't eat the output budget.
 - **Reliability** — concurrent delivery (one platform failing doesn't block the other); per-thread shared retry budgets for rate-limit + transient errors with partial-delivery semantics (no re-sending posts already on the wire); Gist-backed state with local-file fallback; a cached Bluesky session string to skip warm-run logins; a fully exhausted model chain skips the run cleanly (no placeholder posts).
 - **Telemetry** — three Gist JSON files: `post_metrics.json` (per-post engagement + formatting features, refreshed ~daily), `feed_health.json` (per-feed fetch health, rolling window), `growth.json` (follower snapshots). All three are recorded for observability, not as optimisation targets: audience growth is deprioritised (see `AGENTS.md`, "What this project is"), and at this scale the engagement numbers are noise rather than signal — nothing in the pipeline reads them back into a decision. A configured feed flagged as broken or stale opens a GitHub issue labelled `feed-health`, which closes itself once every feed is healthy again.
 
@@ -55,7 +55,7 @@ Add these as GitHub repo secrets (`Settings > Secrets and variables > Actions`):
 
 | Secret | Required | Description |
 | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | Yes | Google AI Studio key for content + image generation |
+| `GEMINI_API_KEY` | Yes | Google AI Studio key. Images always — Anthropic cannot generate them. Text only when the chain falls through to Gemini, or for every post if `ANTHROPIC_API_KEY` is unset |
 | `BLUESKY_USERNAME` | Yes | Your Bluesky handle (e.g. `yourname.bsky.social`) |
 | `BLUESKY_APP_PASSWORD` | Yes | App-specific password from Bluesky settings |
 | `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance |
@@ -107,7 +107,9 @@ The main levers are in `src/config.py`:
 - **`LANGUAGE_OPTIONS`** — languages the model may pick from (default `["English"]`)
 - **`IMAGE_MODEL`** — image model (default `gemini-3.1-flash-image`)
 - **`IMAGE_GENERATION_PROBABILITY`** — chance of a *generated* image (default `0.85`). Applies to the Mentor/Strategist post image and to the Curator fallback card image used when an article has no usable OG thumbnail; it never strips an article's own thumbnail.
-- **`GEMINI_MODEL_PRIORITY`** — ordered model failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
+- **`GEMINI_MODEL_PRIORITY`** — the Gemini rungs of the failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
+- **`ANTHROPIC_MODELS`** — the Anthropic rungs, in preference order (default `claude-sonnet-5-5` → `claude-haiku-5-5`)
+- **`ANTHROPIC_CHAIN_POSITION`** — whether those rungs sit `"primary"` (above the Gemini chain) or `"fallback"` (below it). Currently `"primary"`; this one word is the revert switch, kept as `"primary"` after the 2026-10-26 trial decision in `docs/BACKLOG.md`
 - **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; refreshed monthly by `refresh_momentum.yml`, which opens a PR rather than pushing
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed covering the same story
 
@@ -122,6 +124,7 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 ├── main.py                 # Async orchestrator & pipeline stages
 ├── src/
 │   ├── agents.py           # Content generation, image prompts, mention handling
+│   ├── llm.py              # Provider seam: routes text generation to Anthropic or Gemini
 │   ├── broadcasters.py     # Bluesky + Mastodon posting, per-post retry, Mastodon-only mechanics
 │   ├── bluesky_session.py  # Session-string caching via Gist
 │   ├── proactive.py        # Phase 4b proactive replies (dormant; human-gated)
