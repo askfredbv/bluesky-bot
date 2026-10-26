@@ -662,50 +662,42 @@ async def capture_post_metrics_stage(broadcast: BroadcastPayload, creds: Any) ->
         posted_at = now.isoformat()
 
         # ---- Capture: new rows from this run ----
-        bsky_uris = broadcast.bsky_sent_uris or []
-        mastodon_ids = broadcast.mastodon_sent_ids or []
-
-        def _record(post_id: str, platform: str, content: str, position: int, total: int) -> None:
-            record_post_metric(
-                post_metrics,
-                post_id=post_id,
-                platform=platform,
-                mode=ctx.get("mode", broadcast.mode),
-                posted_at=posted_at,
-                content_preview=content,
-                thread_position=position,
-                thread_length=total,
-                topic=ctx.get("topic"),
-                source_domain=ctx.get("source_domain"),
-                pioneer_id=ctx.get("pioneer_id"),
-                had_image=bool(ctx.get("had_image")),
-                had_link_card=bool(ctx.get("had_link_card")),
-            )
-
         # thread_length is recorded per-platform: a Bluesky thread of 3 and a
         # Mastodon thread of 3 are independent threads even if the content
         # is identical, and each row's thread_length describes its own
         # platform thread.
-        def _delivered(texts: List[str], idx: int) -> str:
-            # Prefer what the broadcaster actually sent; fall back to the
-            # generated text so a broadcaster that returned no delivered_texts
-            # still records a preview rather than an empty row.
-            if idx < len(texts):
-                return texts[idx]
-            return (
-                broadcast.content_list[idx]
-                if idx < len(broadcast.content_list)
-                else ""
-            )
-
-        bsky_total = len(bsky_uris)
-        for idx, uri in enumerate(bsky_uris):
-            content = _delivered(broadcast.bsky_delivered_texts, idx)
-            _record(uri, "bluesky", content, idx, bsky_total)
-        mastodon_total = len(mastodon_ids)
-        for idx, status_id in enumerate(mastodon_ids):
-            content = _delivered(broadcast.mastodon_delivered_texts, idx)
-            _record(status_id, "mastodon", content, idx, mastodon_total)
+        for platform, ids, texts in (
+            ("bluesky", broadcast.bsky_sent_uris or [], broadcast.bsky_delivered_texts),
+            ("mastodon", broadcast.mastodon_sent_ids or [], broadcast.mastodon_delivered_texts),
+        ):
+            for idx, post_id in enumerate(ids):
+                # Prefer what the broadcaster actually sent; fall back to the
+                # generated text so a broadcaster that returned no delivered_texts
+                # still records a preview rather than an empty row.
+                preview = (
+                    texts[idx]
+                    if idx < len(texts)
+                    else (
+                        broadcast.content_list[idx]
+                        if idx < len(broadcast.content_list)
+                        else ""
+                    )
+                )
+                record_post_metric(
+                    post_metrics,
+                    post_id=post_id,
+                    platform=platform,
+                    mode=ctx.get("mode", broadcast.mode),
+                    posted_at=posted_at,
+                    content_preview=preview,
+                    thread_position=idx,
+                    thread_length=len(ids),
+                    topic=ctx.get("topic"),
+                    source_domain=ctx.get("source_domain"),
+                    pioneer_id=ctx.get("pioneer_id"),
+                    had_image=bool(ctx.get("had_image")),
+                    had_link_card=bool(ctx.get("had_link_card")),
+                )
 
         # ---- Refresh: pull live counts for rows due an update ----
         bsky_client = broadcast.bsky_broadcast_client
