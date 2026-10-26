@@ -613,78 +613,67 @@ RSS_FEEDS = [
     "https://blogs.nvidia.com/feed/",            # NVIDIA (hardware launches)
 ]
 
-# Mentor mode topic pool (was 4 hardcoded entries inline in agents.py until
-# 2026-05-08). Expanded to 12 — a mix of broad anchors that have produced
-# good output before ("Career", "Learning") and more specific observation
-# territories anchored to Frederik's actual practice ("the gap between
-# giving advice and being responsible for outcomes", "infrastructure debt
-# vs organisational debt"). The specific seeds give the model a clearer
-# angle to land; the broad ones keep room for the model to find its own.
+# Mentor mode topic pool. Rebuilt 2026-10-26 from the subjects of Frederik's
+# own published articles, after the Sonnet-trial read of the live afternoon
+# posts: all seven Mentor posts passed on voice and five failed on subject.
+# His words: "I'm not a developer nor do I document features ... People who
+# know me would not understand I posted this." The previous seeds (code
+# review, documentation, estimating, workarounds) were a developer's
+# territory, and a well-written post about the wrong subject still fails.
 #
-# Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory.
-# That kills the "same Mentor topic two days running" pattern observed
-# pre-v4.16, but it does nothing about the cycle length, which is set by the
-# pool size. With 12 topics and an afternoon that always ran Mentor, each
-# came around every 2-3 weeks — visible to a reader as repetition, and
-# measured on 2026-10-20 at 37 posts from 12 topics over seven weeks.
+# Each seed names a TERRITORY, not a line to quote. The seed is pasted into
+# the Mentor prompt, and on 2026-10-26 three prompt rewrites showed that a
+# phrase placed there tends to become the post's opener. So none of these
+# quotes his canon lines, even where a source article has one.
 #
-# Two changes address that: 18 topics here, and the afternoon now alternates
-# with Strategist (main.py mode_selection_stage), so the effective afternoon
-# pool is this list plus SECONDARY_TOPICS. A topic now returns on the order
-# of two months rather than two weeks.
+# No seed asks for a quantity either. The model gets only the seed, the
+# Mentor prompt demands concrete specifics, and validate_summary checks
+# length and repetition, not facts: "what bad CRM data costs a ten-person
+# team in a year" invited an annual figure the model would have to make up,
+# under Frederik's name (Codex, #231). Recast as a territory instead.
+#
+# Every seed traces to one article: frederikvanhecke.com (all his), or
+# askfred.be (his up to 2024; the 2026 posts are partly AI-rewritten, so they
+# lend a SUBJECT only, which is all a seed takes). Frederik picked these 21
+# from a drafted 25; the source list is in docs/BACKLOG.md.
+#
+# Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory,
+# and the afternoon alternates with Strategist (main.py mode_selection_stage),
+# so a topic returns on the order of two months. test_agents_gaps pins the
+# pool at 15+ so a month of its own slot cannot repeat one.
 MENTOR_TOPICS: List[str] = [
-    # v4.20 (2026-05-15) — the original 12 included four broad anchors
-    # ("Career", "Automation", "Work-Life Balance", "Learning") that, in
-    # production, produced four work-life-balance variants and three
-    # estimation variants out of 9 Mentor posts in the 2026-04-26 → 2026-05-15
-    # window. The broad words evoke soft territory; the specific seeds below
-    # consistently produce the sharper output. Replaced the four broad
-    # anchors with four more IT-flavoured observation territories. Keep the
-    # 8 originally-specific seeds; the picker stays at 12 entries.
-    "the gap between giving advice and being responsible for outcomes",
-    "tools you keep using vs tools you keep abandoning",
-    "what gets faster with experience and what doesn't",
-    "writing for someone who has already decided",
-    "infrastructure debt vs organisational debt",
-    "estimating your own time vs estimating someone else's",
-    "the half-life of a clever workaround",
-    "draft revision vs writing from a blank page",
-    "code review dynamics: what changes when the reviewer is more senior than the author",
-    "the half-life of internal documentation",
-    "migrations: what makes them succeed besides 'doing them'",
-    "the difference between a decision that looks technical and one that is",
-    # 2026-10-20: six AI/innovation territories. Until now not one of the
-    # twelve above touched AI, so every AI post the account made was the
-    # morning Curator and the afternoon was structurally incapable of one —
-    # on an account whose whole subject is AI mentorship.
-    #
-    # These are deliberately about PRACTICE, not news: the Curator already
-    # owns "what shipped this week", and a Mentor topic that drifts there
-    # would duplicate it in a weaker register. Each is an observation
-    # territory anchored to Frederik's advisory work, in the same shape as
-    # the eight originally-specific seeds — the v4.20 finding above is that
-    # broad anchors ("Career", "Automation") produce soft output and
-    # specific ones produce sharp output.
-    #
-    # Every one names AI, a model or an agent OUTRIGHT, and that is load-
-    # bearing rather than stylistic. The seed is pasted into the generic
-    # Mentor prompt, which adds no AI context of its own, so a seed that
-    # merely implies AI gets read as ordinary software. The first draft of
-    # this list said "reviewing work you did not write" and "deciding what
-    # not to automate"; the first lands straight back on human code review —
-    # the very theme this change exists to thin out — and the second on
-    # scripting. test_every_ai_territory_names_ai_outright enforces it.
-    # "what AI makes faster, and what it quietly makes slower" was here and
-    # was cut: it restated "what gets faster with experience and what doesn't"
-    # eight lines up with AI as the cause, so the pool grew on paper and not in
-    # production. Replaced with the vigilance problem, which the pool does not
-    # already cover. (Codex, #208.)
+    # Getting things done, and doing the right things.
+    "doing the right things versus doing things right, and actually getting them done",
+    "listening first on a new assignment, before you have an opinion",
+    "getting your read of a problem validated before you dive into the detail",
+    "when choosing a tool becomes the way to avoid the work",
+    # Working life and independence.
+    "leaving a job when the board stops listening to the numbers",
+    "a network that lives in your phone rather than at receptions",
+    "\"thank you\", \"well done\" and \"no\": the three phrases that cost nothing at work",
+    # Change, and why things move.
+    "change that is not forced by running out of the old way",
+    "years of maintenance mistaken for progress, while nobody changes the structure",
+    "running a project against a dated plan, milestone by milestone",
+    # Procurement, data and adoption: the askfred.be practice.
+    "supplier negotiations lost before anyone sits down: walk-away point, switching cost, market rate",
+    "a sales team that has quietly stopped trusting its CRM data",
+    "a shared library nobody uses, because nobody can find anything in it",
+    "change management scheduled for the last two weeks before go-live",
+    "the spreadsheet nobody officially uses, open next to the new system",
+    "producers who never meet their end user: sell-in versus sell-through",
+    # AI practice. Every one names AI, a model or an agent OUTRIGHT: the seed
+    # is pasted into a generic prompt that adds no AI context, so a seed that
+    # only implies AI gets read as ordinary software
+    # (test_every_ai_territory_names_ai_outright). Four kept from the
+    # 2026-10-20 set; "reviewing code a model wrote" was cut as a developer's
+    # topic, and "when the AI tool works and the adoption still fails" because
+    # the go-live seed above covers adoption and two seeds would double it.
     "the gap between an AI demo that works and a system someone depends on",
     "what you still have to check when the model is usually right",
-    "reviewing code a model wrote, not a colleague",
     "where the bottleneck moves once AI handles the obvious part",
-    "when the AI tool works and the adoption still fails",
     "deciding what not to hand to a model",
+    "choosing an AI vendor on who will still be there in five years, not on this week's features",
 ]
 
 # ── Phase 4b — Proactive replies (scaffolding only, no behaviour yet) ────────

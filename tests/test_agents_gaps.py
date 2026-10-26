@@ -447,13 +447,14 @@ def test_the_visual_prompt_call_uses_the_primary_model(monkeypatch, text, expect
 #: Asserted by name on purpose: before this, not one Mentor topic touched AI,
 #: so every AI post the account made was the morning Curator. Dropping these
 #: should be a deliberate edit to this list, not a quiet deletion upstream.
+#: 2026-10-26: two cut and one added when the pool was rebuilt from
+#: Frederik's own articles (see the comment on MENTOR_TOPICS).
 AI_PRACTICE_TERRITORIES = (
     "the gap between an AI demo that works and a system someone depends on",
     "what you still have to check when the model is usually right",
-    "reviewing code a model wrote, not a colleague",
     "where the bottleneck moves once AI handles the obvious part",
-    "when the AI tool works and the adoption still fails",
     "deciding what not to hand to a model",
+    "choosing an AI vendor on who will still be there in five years, not on this week's features",
 )
 
 #: The Strategist half, written for its longer-horizon task line.
@@ -498,21 +499,40 @@ def test_every_ai_territory_names_ai_outright(topic):
     )
 
 
-def test_no_ai_territory_restates_the_human_code_review_topic():
-    """The seed that triggered this work must stay the only one of its kind."""
-    human_review = (
-        "code review dynamics: what changes when the reviewer is more senior "
-        "than the author"
-    )
-    assert human_review in MENTOR_TOPICS
-    overlapping = [
-        t for t in AI_PRACTICE_TERRITORIES
-        if "review" in t.lower() and "model" not in t.lower() and "ai" not in t.lower().split()
+def test_no_mentor_topic_is_a_developer_practice_topic():
+    """The 2026-10-26 rebuild: Frederik is not a developer, and said so.
+
+    Five of seven trial Mentor posts passed on voice and failed on subject,
+    all from seeds about code review, documentation and estimating. This
+    catches the unambiguous developer vocabulary only, so a code-review seed
+    added back later fails here instead of reaching the feed.
+
+    It is deliberately not the whole bar. Words like "draft", "estimate" and
+    "technical" are left out because Frederik's own territory uses them (his
+    profile is about telling a technically legitimate delay from
+    organisational friction). Whether a seed is his is his call, made on the
+    list itself, and no word filter can stand in for it.
+    """
+    developer_words = ("code", "codebase", "pull request", "refactor", "documentation")
+    offending = [t for t in MENTOR_TOPICS if any(w in t.lower() for w in developer_words)]
+    assert not offending, f"developer-practice seeds back in MENTOR_TOPICS: {offending}"
+
+
+def test_no_mentor_topic_asks_for_a_quantity():
+    """A seed that asks for a figure gets one, whether or not it exists.
+
+    The model sees only the seed, and nothing downstream checks facts. So a
+    seed must not carry a number or ask for an amount over a period: that is
+    how "what bad CRM data costs a ten-person team in a year" would have put
+    an invented annual cost on both feeds (Codex, #231). Catches the explicit
+    forms only; a seed can still invite a number in other words.
+    """
+    asks = ("how much", "in a year", "per year", "per month", "how many")
+    offending = [
+        t for t in MENTOR_TOPICS
+        if any(ch.isdigit() for ch in t) or any(a in t.lower() for a in asks)
     ]
-    assert not overlapping, (
-        f"{overlapping} is about review without naming AI, so it collides with "
-        f"{human_review!r}."
-    )
+    assert not offending, f"seeds that ask for a quantity: {offending}"
 
 
 @pytest.mark.parametrize("name,pool", [
