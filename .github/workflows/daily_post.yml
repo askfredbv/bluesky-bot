@@ -3,7 +3,13 @@ name: Daily Bluesky Post
 on:
   # Triggered externally by cron-job.org twice daily via workflow_dispatch.
   # Times are anchored to local Belgian time so UTC values shift with DST:
-  # 08:00/15:30 UTC in winter (CET), 07:00/14:30 UTC in summer (CEST).
+  # 09:00 and 19:00 Brussels, which is 08:00/18:00 UTC in winter (CET) and
+  # 07:00/17:00 UTC in summer (CEST). The cron-job.org afternoon job is set in
+  # its own timezone, Europe/London, which changes clocks on the same days as
+  # Brussels: 18:00 there is 19:00 Brussels all year. The afternoon run was
+  # 16:30 Brussels until 2026-10-26; it moved to 19:00 for a four-week test of
+  # a US-daytime slot, read out on 2026-11-24. The mode split (main.py,
+  # hour < 11 UTC = Curator) holds for both.
   # GitHub's built-in schedule is intentionally removed to avoid duplicate posts and timing delays.
   workflow_dispatch:
     inputs:

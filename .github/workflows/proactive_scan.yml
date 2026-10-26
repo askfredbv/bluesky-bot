@@ -10,7 +10,7 @@ name: Proactive Reply Scan
 # Mentor pipeline) — they share no code path.
 #
 # Recommended trigger time: ~10:00 UTC, between the morning Curator
-# (07:00 UTC) and afternoon Mentor (14:30 UTC) runs. Reads the
+# and afternoon Mentor runs (times: daily_post.yml). Reads the
 # watchlist's fresh morning posts; runner stays cheap (~30s).
 
 on:

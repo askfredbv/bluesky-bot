@@ -533,11 +533,13 @@ TOPIC_MAP: Dict[str, List[str]] = {
 # Branding & BIOS — reference text only. Bios are pasted manually into
 # each platform's profile UI when they change (rare). Lengths differ
 # because Bluesky's 256-char cap forces the trim; same intent both.
-APPROVED_BIO_BSKY = """askfred.be in feed form. AI/tech links @ 07:00 UTC, IT leadership @ 14:30 UTC. Quiet news days: a longer take.
+# No post times: they shift twice a year with DST, and a bio that names
+# them is wrong for part of every year (it was from 2026-10-25).
+APPROVED_BIO_BSKY = """askfred.be in feed form. AI/tech links and IT leadership, twice a day. Quiet news days: a longer take.
 
 LLM-written, house rules: no hype, no reader-bait."""
 
-APPROVED_BIO_MASTODON = """askfred.be in feed form. AI and tech research links at 07:00 UTC, IT leadership notes at 14:30 UTC. Quiet news days: a longer take instead.
+APPROVED_BIO_MASTODON = """askfred.be in feed form. AI and tech research links and IT leadership notes, twice a day. Quiet news days: a longer take instead.
 
 Written by an LLM, edited by house rules: no hype, no reader-bait, statements only."""
 
