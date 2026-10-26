@@ -137,7 +137,7 @@ pool, not just titles: 311 of 1165 items on 10-07 and 338 of 1328 on 10-08, almo
 of it the three-letter `app`. That is the data item 4 is gated on.
 2. **[DONE 2026-10-08] Cut the release.** v4.28.0, seventeen commits since v4.27.1.
 
-**OPEN TRIAL — Sonnet as primary. Opened 2026-10-12, DECIDE BY 2026-10-26.**
+**[KEPT 2026-10-26] TRIAL: Sonnet as primary. Opened 2026-10-12, decided 2026-10-26.**
 `ANTHROPIC_CHAIN_POSITION = "primary"`, so `claude-sonnet-5-5` writes the posts and
 the Gemini chain is the fallback. **Revert is one word**: set that constant to
 `"fallback"` and the 2026-10-11 behaviour returns exactly, no other change needed.
@@ -159,8 +159,24 @@ bar, across all three models, which says the side-by-side bar is not the product
 and may say the prompt matters more than the model. That 11% is itself worth chasing
 separately — see the note under item 5.
 
-*On 2026-10-26, write KEEP or REVERT here with the reason.* An open trial with no dated
-decision is just an undocumented config change.
+**Decision, 2026-10-26: KEEP.** Frederik's call, on the craft basis the trial opened
+with. `ANTHROPIC_CHAIN_POSITION` stays `"primary"`; the revert switch above still works
+if that ever changes. No count of "would I post this" yeses was taken for the trial
+window, so there is no number to set against the 2-of-20 Gemini baseline below.
+
+*What the two weeks showed, read from the live output on the day, not from the repo:*
+- **28 of 28 daily runs green, none missed.** The `model_used` log line names
+  `claude-sonnet-5-5` on 27 and `claude-haiku-5-5` on one (10-21 07:00), where Sonnet
+  overshot 300 characters twice, `validate_summary` rejected both and the chain fell
+  through as designed. Nothing unvalidated was posted.
+- **Length overshoot is Sonnet's one measurable habit:** 4 of 28 runs, against 2 of 29
+  for `gemini-3.7-flash` in the window before. Every one was caught. Not worth a change
+  on its own; worth knowing if the Curator prompt is edited.
+- **Mastodon carried the same 28.** The untagged ones are the #194 outage (four) and
+  one `mastodon_tags_empty` on 10-21, which is the reviewer working.
+
+**Unblocked by this decision:** the Mentor-prompt work under item 5, held since
+2026-10-12 so that two changes would not confound each other on the same output.
 3. **[DONE 2026-10-10] Wiki debt.** Wiki `bc7e2e6..f83dc21`, verified on the rendered
 pages rather than the raw files: `Home.md` (tests 980 → 998, the model chain now
 ending in `claude-haiku-5-5`), `Configuration.md` (the optional `ANTHROPIC_API_KEY`
