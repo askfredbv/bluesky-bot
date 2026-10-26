@@ -530,16 +530,12 @@ TOPIC_MAP: Dict[str, List[str]] = {
     "Science/Health": ["biotech", "drug", "physics", "folding", "climate", "discovery"]
 }
 
-# Branding & BIOS — reference text only. Bios are pasted manually into
-# each platform's profile UI when they change (rare). Lengths differ
-# because Bluesky's 256-char cap forces the trim; same intent both.
+# Branding & BIO — reference text only. Pasted manually into each
+# platform's profile UI when it changes (rare). One text for both: it fits
+# Bluesky's 256-char cap, so there is no reason for two versions to drift.
 # No post times: they shift twice a year with DST, and a bio that names
 # them is wrong for part of every year (it was from 2026-10-25).
-APPROVED_BIO_BSKY = """askfred.be in feed form. AI/tech links and IT leadership, twice a day. Quiet news days: a longer take.
-
-LLM-written, house rules: no hype, no reader-bait."""
-
-APPROVED_BIO_MASTODON = """askfred.be in feed form. AI and tech research links and IT leadership notes, twice a day. Quiet news days: a longer take instead.
+APPROVED_BIO = """askfred.be in feed form. AI and tech research links and IT leadership notes, twice a day. Quiet news days: a longer take instead.
 
 Written by an LLM, edited by house rules: no hype, no reader-bait, statements only."""
 
