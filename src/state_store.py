@@ -22,7 +22,7 @@ from src.config import (
     SEEN_FILE,
     SEEN_LINKS_WINDOW,
 )
-from src.file_lock import file_lock
+from src.file_lock import file_lock as _file_lock
 from src.logger import SafeLogger
 from src.net_safety import canonical_url
 
@@ -401,9 +401,6 @@ def prune_pioneer_recent(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if posted_at >= cutoff:
             kept.append(entry)
     return kept
-def _file_lock(lock_path: Path):
-    """Context manager for an advisory process lock."""
-    return file_lock(lock_path)
 def _ensure_pioneer_field(data: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure pioneer_recent key exists. In-place add for old state shapes."""
     if "pioneer_recent" not in data:
