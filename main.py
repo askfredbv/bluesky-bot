@@ -365,38 +365,35 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # chosen URL; only refetch when it differs from the pre-fetched top item.
     posted_topic_category: Optional[str] = None
     posted_link: Optional[str] = None
-    if mode == Mode.CURATOR and chosen_link:
-        top_link = news_items[0]["link"] if news_items else None
-        if chosen_link != top_link:
-            link_meta = await get_link_metadata(chosen_link)
-            SafeLogger.info(
-                "curator_link_realigned",
-                "Link card aligned to the item the model wrote about",
-                chosen_link=chosen_link,
-            )
-        from urllib.parse import urlparse
-        try:
-            source_domain = urlparse(chosen_link).netloc or None
-        except Exception:
-            source_domain = None
+    if mode == Mode.CURATOR:
+        if chosen_link:
+            if chosen_link != (news_items[0]["link"] if news_items else None):
+                link_meta = await get_link_metadata(chosen_link)
+                SafeLogger.info(
+                    "curator_link_realigned",
+                    "Link card aligned to the item the model wrote about",
+                    chosen_link=chosen_link,
+                )
+            from urllib.parse import urlparse
+            try:
+                source_domain = urlparse(chosen_link).netloc or None
+            except Exception:
+                source_domain = None
         # Resolve the topic category of the item actually written about, in the
         # same place the link card is realigned, so the two can never disagree.
+        # No chosen link (older/bare-array output) or hallucinated/edited URL:
+        # fall back to the top item — same fallback as the card.
         chosen_item = next(
-            (i for i in news_items if i.get("link") == chosen_link), None
+            (i for i in news_items if chosen_link and i.get("link") == chosen_link),
+            news_items[0] if news_items else None,
         )
-        if chosen_item is None and news_items:
-            chosen_item = news_items[0]  # hallucinated/edited URL — same fallback as the card
         if chosen_item:
             posted_topic_category = chosen_item.get("detected_topic")
         # Mark the feed item that was used, not the model's echoed URL: when the
         # model hallucinates or edits the link, chosen_item falls back to the top
         # item, and that is the entry that must not resurface. A hallucinated URL
         # is in no feed, so recording it instead would suppress nothing.
-        posted_link = chosen_item["link"] if chosen_item else chosen_link
-    elif mode == Mode.CURATOR and news_items:
-        # No chosen link (older/bare-array output): fall back to the top item.
-        posted_topic_category = news_items[0].get("detected_topic")
-        posted_link = news_items[0].get("link")
+        posted_link = chosen_item.get("link") if chosen_item else chosen_link
 
     # FORCE_IMAGE=1 (workflow_dispatch input) always attempts an image, for
     # deterministic end-to-end validation of the image path; otherwise the
