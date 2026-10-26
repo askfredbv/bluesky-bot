@@ -447,9 +447,9 @@ def _count_emojis(text: str) -> int:
 def _bucket_time_of_day(posted_at: Optional[str]) -> Optional[str]:
     """Return ``"morning"`` for UTC hour < 12, ``"afternoon"`` otherwise.
 
-    Bot's two daily runs are at 07:00 / 14:30 UTC in summer (CEST) and
-    08:00 / 15:30 UTC in winter (CET) — both buckets cleanly separable
-    by the noon-UTC split. Returns None if posted_at is unparseable.
+    The morning run lands before noon UTC and the afternoon run after it in
+    both summer and winter (times: daily_post.yml), so the noon-UTC split
+    separates them. Returns None if posted_at is unparseable.
     """
     parsed = _parse_iso(posted_at)
     if parsed is None:

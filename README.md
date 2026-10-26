@@ -28,7 +28,7 @@ cron-job.org → GitHub Actions (workflow_dispatch)
   → reply to mentions           (src/agents.py)
 ```
 
-Two runs a day, anchored to Belgian local time (UTC shifts with DST: summer 07:00/14:30, winter 08:00/15:30). A read-only `schedule-health.yml` monitor flags any 24h window that received fewer than the expected 2 external dispatches.
+Two runs a day, 09:00 and 19:00 Belgian local time (UTC shifts with DST: winter 08:00/18:00, summer 07:00/17:00). A read-only `schedule-health.yml` monitor flags any 24h window that received fewer than the expected 2 external dispatches.
 
 **Under the hood:**
 
