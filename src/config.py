@@ -626,6 +626,12 @@ RSS_FEEDS = [
 # phrase placed there tends to become the post's opener. So none of these
 # quotes his canon lines, even where a source article has one.
 #
+# No seed asks for a quantity either. The model gets only the seed, the
+# Mentor prompt demands concrete specifics, and validate_summary checks
+# length and repetition, not facts: "what bad CRM data costs a ten-person
+# team in a year" invited an annual figure the model would have to make up,
+# under Frederik's name (Codex, #231). Recast as a territory instead.
+#
 # Every seed traces to one article: frederikvanhecke.com (all his), or
 # askfred.be (his up to 2024; the 2026 posts are partly AI-rewritten, so they
 # lend a SUBJECT only, which is all a seed takes). Frederik picked these 21
@@ -648,10 +654,10 @@ MENTOR_TOPICS: List[str] = [
     # Change, and why things move.
     "change that is not forced by running out of the old way",
     "years of maintenance mistaken for progress, while nobody changes the structure",
-    "running a project against a dated plan: fourteen weeks, twelve milestones",
+    "running a project against a dated plan, milestone by milestone",
     # Procurement, data and adoption: the askfred.be practice.
     "supplier negotiations lost before anyone sits down: walk-away point, switching cost, market rate",
-    "what bad CRM data costs a ten-person sales team in a year",
+    "a sales team that has quietly stopped trusting its CRM data",
     "a shared library nobody uses, because nobody can find anything in it",
     "change management scheduled for the last two weeks before go-live",
     "the spreadsheet nobody officially uses, open next to the new system",

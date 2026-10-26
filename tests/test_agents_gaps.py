@@ -518,6 +518,23 @@ def test_no_mentor_topic_is_a_developer_practice_topic():
     assert not offending, f"developer-practice seeds back in MENTOR_TOPICS: {offending}"
 
 
+def test_no_mentor_topic_asks_for_a_quantity():
+    """A seed that asks for a figure gets one, whether or not it exists.
+
+    The model sees only the seed, and nothing downstream checks facts. So a
+    seed must not carry a number or ask for an amount over a period: that is
+    how "what bad CRM data costs a ten-person team in a year" would have put
+    an invented annual cost on both feeds (Codex, #231). Catches the explicit
+    forms only; a seed can still invite a number in other words.
+    """
+    asks = ("how much", "in a year", "per year", "per month", "how many")
+    offending = [
+        t for t in MENTOR_TOPICS
+        if any(ch.isdigit() for ch in t) or any(a in t.lower() for a in asks)
+    ]
+    assert not offending, f"seeds that ask for a quantity: {offending}"
+
+
 @pytest.mark.parametrize("name,pool", [
     ("MENTOR_TOPICS", MENTOR_TOPICS),
     ("SECONDARY_TOPICS", SECONDARY_TOPICS),

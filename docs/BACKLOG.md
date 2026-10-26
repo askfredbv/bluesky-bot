@@ -380,9 +380,9 @@ already takes positions.
 | a network in your phone; "thank you", "well done", "no" | fvh.com "Duizend dagen zelfstandig" (2019-09-22) |
 | change not forced by running out of the old way | fvh.com "Het stenen tijdperk is niet gestopt…" (2019-06-10) |
 | maintenance mistaken for progress | fvh.com "Over mobiliteit en tijd" (2019-04-28) |
-| a project against a dated plan | fvh.com "Verbouwen in de hoogste versnelling" (2010-07-12) |
+| a project against a dated plan, milestone by milestone | fvh.com "Verbouwen in de hoogste versnelling" (2010-07-12) |
 | supplier negotiation prep | askfred.be "Preparing a Negotiation Box for Supplier Deals" (2023-12-07) |
-| what bad CRM data costs | askfred.be "CRM Data Quality: What Goes Wrong and How to Fix It" (2024-10-23) |
+| a sales team that stopped trusting its CRM data | askfred.be "CRM Data Quality: What Goes Wrong and How to Fix It" (2024-10-23) |
 | a shared library nobody uses | askfred.be ResourceSpace DAM post (2016-11-10) |
 | change management in the last two weeks | askfred.be "The tool rarely fails. Adoption fails." (2026-04-29) |
 | the unofficial spreadsheet | askfred.be "Digital Transformation in SMEs…" (2026-06-13) |
