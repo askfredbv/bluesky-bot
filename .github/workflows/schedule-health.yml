@@ -3,7 +3,12 @@ name: Schedule Health Monitor
 on:
   schedule:
     # Daily check after the second expected external dispatch window.
-    - cron: '45 15 * * *'
+    # 18:45 UTC sits after the afternoon run in every regime (15:30 or 18:00
+    # UTC in winter, 14:30 or 17:00 in summer), so the 24h window always holds
+    # that day's two runs. At 15:45 it missed the day the afternoon slot moved
+    # later: the previous day's run fell just outside the window and the new
+    # one had not happened yet. GitHub also fires this up to ~3h late.
+    - cron: '45 18 * * *'
   workflow_dispatch:
 
 jobs:
