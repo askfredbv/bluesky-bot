@@ -259,6 +259,30 @@ def _sample_thread_pause(profile_name: str) -> float:
     )
     return random.uniform(low, high)
 
+
+def _make_thread_retry(function_name: str):
+    # Per-thread retry budgets — shared across every post in the thread.
+    rate_limit_attempts = 0
+    transient_attempts = 0
+
+    async def _send_with_thread_retry(send_fn):
+        nonlocal rate_limit_attempts, transient_attempts
+        while True:
+            try:
+                return await send_fn()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if classify_retry(e) == "rate_limit":
+                    rate_limit_attempts += 1
+                    await sleep_for_rate_limit(rate_limit_attempts, e, function=function_name)
+                else:
+                    transient_attempts += 1
+                    await sleep_for_transient(transient_attempts, e, function=function_name)
+
+    return _send_with_thread_retry
+
+
 async def post_to_bluesky(
     client: AsyncClient,
     content_list: List[str],
@@ -301,25 +325,7 @@ async def post_to_bluesky(
     # 2026-10-19). Set immediately before the call, so a raise INSIDE it
     # still counts as attempted — it may have reached the wire.
     attempted_send = False
-
-    # Per-thread retry budgets — shared across every post in the thread.
-    rate_limit_attempts = 0
-    transient_attempts = 0
-
-    async def _send_with_thread_retry(send_fn):
-        nonlocal rate_limit_attempts, transient_attempts
-        while True:
-            try:
-                return await send_fn()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                if classify_retry(e) == "rate_limit":
-                    rate_limit_attempts += 1
-                    await sleep_for_rate_limit(rate_limit_attempts, e, function="post_to_bluesky")
-                else:
-                    transient_attempts += 1
-                    await sleep_for_transient(transient_attempts, e, function="post_to_bluesky")
+    _send_with_thread_retry = _make_thread_retry("post_to_bluesky")
 
     try:
         for i, post_text in enumerate(content_list):
@@ -573,24 +579,7 @@ async def post_to_mastodon(
             timeout=MASTODON_POST_TIMEOUT_SECONDS
         )
 
-    # Per-thread retry budgets — shared across every post in the thread.
-    rate_limit_attempts = 0
-    transient_attempts = 0
-
-    async def _send_with_thread_retry(send_fn):
-        nonlocal rate_limit_attempts, transient_attempts
-        while True:
-            try:
-                return await send_fn()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                if classify_retry(e) == "rate_limit":
-                    rate_limit_attempts += 1
-                    await sleep_for_rate_limit(rate_limit_attempts, e, function="post_to_mastodon")
-                else:
-                    transient_attempts += 1
-                    await sleep_for_transient(transient_attempts, e, function="post_to_mastodon")
+    _send_with_thread_retry = _make_thread_retry("post_to_mastodon")
 
     try:
         for i, post_text in enumerate(content_list):
