@@ -1175,8 +1175,6 @@ def _select_tag_models(
     else; publishing an unreviewed affiliation costs more.
     """
     chain = list(model_priority or GEMINI_MODEL_PRIORITY)
-    if not chain:
-        chain = list(GEMINI_MODEL_PRIORITY)
 
     # Cheap end first. The chain is ordered by who should WRITE THE POST, which
     # is a different question from who should name two hashtags; promoting the
