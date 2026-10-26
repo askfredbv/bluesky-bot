@@ -380,7 +380,9 @@ GENERIC_IMAGE_PATTERNS: List[str] = [
 
 # AI Model Priority (failover order on quota/availability errors).
 #
-# Current primary: gemini-3.7-flash (KEPT 2026-08-19 after the voice trial) —
+# Since 2026-10-12 this whole list is the FALLBACK: ANTHROPIC_CHAIN_POSITION
+# below puts claude-sonnet-5-5 ahead of it (KEPT 2026-10-26). Within the list,
+# the lead is gemini-3.7-flash (KEPT 2026-08-19 after the voice trial) —
 # see the inline note on the list below. gemini-3.5-flash (the 2026-06-12 KEEP)
 # sits directly below as the known-good fallback.
 # History: v4.18.1 had made gemini-2.5-pro primary over 2.5-flash; 3.5-flash
@@ -440,13 +442,14 @@ ANTHROPIC_MODELS: List[str] = [
 # ABOVE, "fallback" puts it BELOW. One word, because it is the revert switch
 # for the trial below.
 #
-# TRIAL, opened 2026-10-12: Sonnet as primary, decide by 2026-10-26.
+# TRIAL, opened 2026-10-12: Sonnet as primary. KEPT 2026-10-26 (docs/BACKLOG.md,
+# "Priority order", has the decision and what the two weeks of live runs showed).
 # ----------------------------------------------------------------------
 # Basis is craft, not metrics, and the honest version of that is written down
 # rather than dressed up: Frederik prefers how Claude writes. Two blind reads
 # support it weakly — gemini-3.7-flash drew ZERO of ten picks across two
 # sessions and four articles — but ten picks cannot carry a conclusion and the
-# 2026-10-10 result did not replicate. The deciding evidence will be reading
+# 2026-10-10 result did not replicate. The deciding evidence was reading
 # the live feed, which is this project's established method (2026-06-12,
 # 2026-08-19).
 #
