@@ -504,8 +504,14 @@ def test_no_mentor_topic_is_a_developer_practice_topic():
 
     Five of seven trial Mentor posts passed on voice and failed on subject,
     all from seeds about code review, documentation and estimating. This
-    pins the class rather than the five strings, so a code-review seed added
-    back later fails here instead of reaching the feed.
+    catches the unambiguous developer vocabulary only, so a code-review seed
+    added back later fails here instead of reaching the feed.
+
+    It is deliberately not the whole bar. Words like "draft", "estimate" and
+    "technical" are left out because Frederik's own territory uses them (his
+    profile is about telling a technically legitimate delay from
+    organisational friction). Whether a seed is his is his call, made on the
+    list itself, and no word filter can stand in for it.
     """
     developer_words = ("code", "codebase", "pull request", "refactor", "documentation")
     offending = [t for t in MENTOR_TOPICS if any(w in t.lower() for w in developer_words)]
