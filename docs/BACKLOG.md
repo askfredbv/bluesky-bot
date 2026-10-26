@@ -355,6 +355,47 @@ largest, feed Mentor an artefact rather than a topic.
 the Mentor prompt now moves two variables at once and neither result would mean
 anything — the failure mode `RETRO_2026-05-08.md` exists to warn about.
 
+**2026-10-26: the subject was the binding constraint, not the prompt.** Frederik re-read
+the 28 live Sonnet-trial posts and marked voice and subject separately. Voice passed 27 of
+28. Subject passed 21 of 28 overall, but only 2 of 7 Mentor posts. All five rejected Mentor
+subjects came from the developer-flavoured seeds: drafts versus blank pages, writing for
+someone who has decided, technical-looking decisions, senior code review, advice versus
+outcomes. His reason: *"I'm not a developer nor do I document features ... People who know
+me would not understand I posted this."*
+
+So the prompt fix was tested and not shipped. All three rewrites of
+`SYSTEM_INSTRUCTIONS_MENTOR`, sampled through the real `generate_content`, turned their own
+wording into the post's opener: "The belief:" on 4 of 5 posts, then "Everyone says", then
+"Early in your career you assume" on 5 of 5. With Sonnet writing, the unchanged prompt
+already takes positions.
+
+**What shipped instead: `MENTOR_TOPICS` rebuilt from his own articles.** Read live
+2026-10-26. Frederik kept 21 of 25 drafted seeds. Sources:
+
+| Seeds | Source article |
+| --- | --- |
+| right things vs things right; listening first; validating your read | fvh.com "Juiste dingen doen, dingen juist doen en dingen gedaan krijgen" (2021-12-28) |
+| a tool as a way to avoid the work | fvh.com "Dingen gedaan krijgen versus dingen doen" (2019-11-06) |
+| leaving when the board stops listening to numbers | fvh.com "Opstarten als zelfstandige…" (2017-12-29) |
+| a network in your phone; "thank you", "well done", "no" | fvh.com "Duizend dagen zelfstandig" (2019-09-22) |
+| change not forced by running out of the old way | fvh.com "Het stenen tijdperk is niet gestopt…" (2019-06-10) |
+| maintenance mistaken for progress | fvh.com "Over mobiliteit en tijd" (2019-04-28) |
+| a project against a dated plan | fvh.com "Verbouwen in de hoogste versnelling" (2010-07-12) |
+| supplier negotiation prep | askfred.be "Preparing a Negotiation Box for Supplier Deals" (2023-12-07) |
+| what bad CRM data costs | askfred.be "CRM Data Quality: What Goes Wrong and How to Fix It" (2024-10-23) |
+| a shared library nobody uses | askfred.be ResourceSpace DAM post (2016-11-10) |
+| change management in the last two weeks | askfred.be "The tool rarely fails. Adoption fails." (2026-04-29) |
+| the unofficial spreadsheet | askfred.be "Digital Transformation in SMEs…" (2026-06-13) |
+| sell-in vs sell-through | askfred.be "Knowing Your End User When You Never Meet Them" (2026-03-10) |
+| an AI vendor that survives five years | askfred.be "Don't buy the best AI. Buy the one that survives." (2026-05-30) |
+| four AI-practice seeds | kept from #208 |
+
+Cut by Frederik from the draft: independent's insurance, who helps you start out, the
+post-migration cleanup, measuring after every change. The 2026 askfred.be posts are partly
+AI-rewritten, so they lend a subject only. **Lesson for the next pool edit: judge a seed by
+"would people who know me recognise this as mine", not by whether the post reads well.**
+Sonnet writes a wrong subject well, which is exactly why the earlier reads missed it.
+
 **Engagement cannot adjudicate this, and was checked.** Across the same 20 posts: 10
 likes, 1 repost, **0 real replies**. The six `replyCount` hits were the bot replying to
 itself, the second part of two-part threads — verify with `getPostThread` before ever
