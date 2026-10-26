@@ -396,6 +396,16 @@ Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for
 > drew 42 interactions, 41 of them zero — too little signal to steer by.
 >
 > **To reopen:** staff the Phase 4b queue and start at §2.1. Nothing is deleted.
+>
+> **One exception, 2026-10-26 to 2026-11-24, Frederik's decision.** The afternoon post
+> moved from 16:30 to 19:00 Brussels for four weeks (#229) to test whether a US-daytime
+> slot raises follower inflow. It was prompted by Shreyas's BluBot: its follower rate
+> doubled after its 2026-10-05 schedule change, while at the same weekly volume (14 posts)
+> ours stayed flat. The test is allowed under the goal above because it costs nothing
+> recurring: same two posts a day, no new runs, no model spend, no code path, and one
+> readout command. Pass/fail rule, fixed before the test started: 30 or more new followers
+> in 28 days, otherwise revert (#230). This is one test, not a change to the goal:
+> `AGENTS.md` still applies to everything else.
 
 **2026-05-08:** explicit commitment to Option 1 over Options 2 (representation) or 3 (craft). See `RETRO_2026-05-08.md` for the framing decision and `PLAN_engagement.md`'s GOAL CHANGE block for the phase re-ordering.
 
