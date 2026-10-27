@@ -14,20 +14,23 @@ name: Dependabot lockfile fix-up
 # every bump that resolves and quietly corrects the ones that do not (pydantic-core
 # goes back to whatever pydantic asks for).
 #
-# Two jobs, on purpose:
+# Three jobs, on purpose:
 #   - `regenerate` runs pip-compile, which may build a third-party sdist to read
 #     its metadata, i.e. it executes package code. It gets a read-only token.
 #   - `push` never installs or runs anything from PyPI. It only takes the two
-#     regenerated files, commits them and pushes. It is the only job that can write.
+#     regenerated files, commits them and pushes. It is the only job that can
+#     write contents.
+#   - `dispatch`: a push made with GITHUB_TOKEN does NOT trigger the pull_request
+#     workflows (GitHub's recursion guard, see refresh_momentum.yml), and the
+#     ruleset requires `tests` and `lockfile` on the PR head. So this job
+#     dispatches both workflows on the branch, and their check runs land on the
+#     new head commit. It is a job of its own so that "Re-run failed jobs" can
+#     retry a failed dispatch without repeating the push, which would be
+#     rejected once the first one has landed.
 #
-# A push made with GITHUB_TOKEN does NOT trigger the pull_request workflows
-# (GitHub's recursion guard, see refresh_momentum.yml), and the ruleset requires
-# `tests` and `lockfile` on the PR head. So `push` dispatches both workflows on
-# the branch, and their check runs land on the new head commit.
-#
-# Trade-off: once a non-Dependabot commit sits on its branch, Dependabot stops
-# rebasing that PR on its own. Weekly grouped PRs replace each other anyway, and a
-# `@dependabot recreate` comment starts one over from scratch.
+# The fix-up commit carries `[dependabot skip]`, so Dependabot keeps rebasing
+# and refreshing the PR, and simply force-pushes over our commit. That new
+# Dependabot push triggers this workflow again.
 
 on:
   pull_request:
@@ -106,7 +109,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write   # push the fixed lockfiles to the Dependabot branch
-      actions: write    # dispatch tests.yml and lockfile-check.yml on it
     steps:
       - name: Check out the Dependabot branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -128,13 +130,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add requirements.txt requirements-dev.txt
-          git commit -m "chore(deps): regenerate lockfiles with pip-compile"
+          # `[dependabot skip]` lets Dependabot force-push over this commit when it
+          # rebases, instead of giving up on the PR.
+          git commit -m "chore(deps): regenerate lockfiles with pip-compile [dependabot skip]"
           # The token is used for this one push and never written to .git/config,
           # which is why the checkout above can keep persist-credentials: false.
           # No --force: if Dependabot pushed again meanwhile, this fails and the
           # newer Dependabot push starts its own run.
           git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
 
+  dispatch:
+    needs: push
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write    # dispatch tests.yml and lockfile-check.yml
+    steps:
       - name: Run the required checks on the new head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

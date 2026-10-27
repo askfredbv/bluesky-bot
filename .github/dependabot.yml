@@ -30,11 +30,14 @@ updates:
       python-minor-and-patch:
         applies-to: version-updates
         update-types: ["minor", "patch"]
-    ignore:
+    allow:
       # Majors stay a human decision. Every runtime dependency has a ceiling in
       # pyproject.toml (`<2`, `<14`, ...), so a major bump means editing that
       # ceiling and reading the changelog (see the Pillow 13 note there).
       # Dependabot would only bump the lockfile pin, and pip-compile would then
-      # pull it straight back under the ceiling. Security fixes are not affected.
+      # pull it straight back under the ceiling.
+      # `allow.update-types`, NOT `ignore`: `ignore` also suppresses security
+      # updates, so a fix that only exists in a new major would never be
+      # proposed. `allow.update-types` limits version updates only.
       - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
