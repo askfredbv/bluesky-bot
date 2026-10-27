@@ -1,0 +1,155 @@
+name: Dependabot lockfile fix-up
+
+# Dependabot's lockfile edits never quite match what lockfile-check.yml builds,
+# so its PRs fail the required `lockfile` (and often `tests`) check. Two ways
+# this has gone wrong before:
+#   - it keeps extras that CI strips, e.g. `google-auth[requests]` versus
+#     `google-auth` (#46, #47, #49, see BACKLOG);
+#   - it bumps a pin that cannot resolve. #96 (2026-08-29) moved pydantic-core
+#     on its own, but pydantic pins pydantic-core exactly.
+#
+# This workflow finishes the job Dependabot started: on a Dependabot PR it re-runs
+# the same pip-compile commands as lockfile-check.yml, with Dependabot's new pins
+# as preferences, and pushes the result back to the PR branch. pip-compile keeps
+# every bump that resolves and quietly corrects the ones that do not (pydantic-core
+# goes back to whatever pydantic asks for).
+#
+# Three jobs, on purpose:
+#   - `regenerate` runs pip-compile, which may build a third-party sdist to read
+#     its metadata, i.e. it executes package code. It gets a read-only token.
+#   - `push` never installs or runs anything from PyPI. It only takes the two
+#     regenerated files, commits them and pushes. It is the only job that can
+#     write contents.
+#   - `dispatch`: a push made with GITHUB_TOKEN does NOT trigger the pull_request
+#     workflows (GitHub's recursion guard, see refresh_momentum.yml), and the
+#     ruleset requires `tests` and `lockfile` on the PR head. So this job
+#     dispatches both workflows on the branch, and their check runs land on the
+#     new head commit. It is a job of its own so that "Re-run failed jobs" can
+#     retry a failed dispatch without repeating the push, which would be
+#     rejected once the first one has landed.
+#
+# The fix-up commit carries `[dependabot skip]`, so Dependabot keeps rebasing
+# and refreshing the PR, and simply force-pushes over our commit. That new
+# Dependabot push triggers this workflow again.
+
+on:
+  pull_request:
+    paths:
+      - 'requirements.txt'
+      - 'requirements-dev.txt'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-lockfile-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    # Dependabot PRs only, keyed on the PR author rather than `github.actor`
+    # (anyone who re-runs the job becomes the actor; zizmor bot-conditions).
+    # Our push below is made with GITHUB_TOKEN, so it raises no pull_request
+    # event and cannot loop back into this job.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - name: Check out the Dependabot branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-tools
+        run: python -m pip install --upgrade pip pip-tools
+
+      # Same commands as lockfile-check.yml, so the result passes that check by
+      # construction. No --upgrade: the existing pins (Dependabot's bumps
+      # included) are kept wherever they resolve.
+      - name: Regenerate runtime lockfile
+        run: pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml
+
+      - name: Regenerate dev lockfile
+        run: pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml
+
+      - name: See whether anything moved
+        id: diff
+        run: |
+          if git diff --quiet requirements.txt requirements-dev.txt; then
+            echo "Dependabot's lockfiles already resolve. Nothing to fix."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff requirements.txt requirements-dev.txt
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload regenerated lockfiles
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependabot-lockfiles
+          path: |
+            requirements.txt
+            requirements-dev.txt
+          retention-days: 1
+
+  push:
+    needs: regenerate
+    if: needs.regenerate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # push the fixed lockfiles to the Dependabot branch
+    steps:
+      - name: Check out the Dependabot branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download regenerated lockfiles
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: dependabot-lockfiles
+
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add requirements.txt requirements-dev.txt
+          # `[dependabot skip]` lets Dependabot force-push over this commit when it
+          # rebases, instead of giving up on the PR.
+          git commit -m "chore(deps): regenerate lockfiles with pip-compile [dependabot skip]"
+          # The token is used for this one push and never written to .git/config,
+          # which is why the checkout above can keep persist-credentials: false.
+          # No --force: if Dependabot pushed again meanwhile, this fails and the
+          # newer Dependabot push starts its own run.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
+
+  dispatch:
+    needs: push
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write    # dispatch tests.yml and lockfile-check.yml
+    steps:
+      - name: Run the required checks on the new head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          gh workflow run tests.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          gh workflow run lockfile-check.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"

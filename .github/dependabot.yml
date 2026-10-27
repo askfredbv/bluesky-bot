@@ -4,14 +4,40 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # Security-updates only. `open-pull-requests-limit: 0` disables routine
-    # version-update PRs; security-advisory PRs are exempt from the limit and
-    # still come through (this is the documented mechanism for "security only").
-    #
-    # Why: Dependabot can't run pip-compile, so it bumps a single (often
-    # transitive) pin without resolving the full dependency graph — every
-    # routine PR then fails lockfile-check / tests. Example: #96 (2026-08-29)
-    # bumped pydantic-core standalone, which pydantic pins, → ResolutionImpossible.
-    # Routine minor/major bumps are done by regenerating the pyproject lockfiles
-    # (requirements.txt + requirements-dev.txt) by hand when we actually need them.
-    open-pull-requests-limit: 0
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Brussels"
+    # Weekly version updates are back on (they were security-only from #98 until
+    # 2026-10-27). They were switched off because Dependabot's lockfile edits never
+    # passed `lockfile`. Example: #96 (2026-08-29) bumped pydantic-core alone,
+    # which pydantic pins exactly, giving ResolutionImpossible.
+    # Two things keep that from happening again:
+    #   1. One group for every minor and patch bump, so packages that move
+    #      together (pydantic + pydantic-core, httpx + httpcore, ...) land in a
+    #      single weekly PR instead of a stream of half-PRs.
+    #   2. .github/workflows/dependabot-lockfile.yml regenerates both lockfiles
+    #      with pip-compile on every Dependabot PR and pushes the result, so the
+    #      PR passes `lockfile` by construction.
+    # Security-advisory PRs don't count toward this limit and ignore the group.
+    open-pull-requests-limit: 2
+    # A release must be a week old before Dependabot proposes it: most broken or
+    # hijacked releases get yanked within days. Security updates skip the wait.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    allow:
+      # Majors stay a human decision. Every runtime dependency has a ceiling in
+      # pyproject.toml (`<2`, `<14`, ...), so a major bump means editing that
+      # ceiling and reading the changelog (see the Pillow 13 note there).
+      # Dependabot would only bump the lockfile pin, and pip-compile would then
+      # pull it straight back under the ceiling.
+      # `allow.update-types`, NOT `ignore`: `ignore` also suppresses security
+      # updates, so a fix that only exists in a new major would never be
+      # proposed. `allow.update-types` limits version updates only.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
