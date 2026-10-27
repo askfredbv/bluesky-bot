@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [ main ]
+  # Dispatched by dependabot-lockfile.yml after it pushes fixed lockfiles to a
+  # Dependabot branch: that push can't trigger pull_request itself.
+  workflow_dispatch:
 
 permissions:
   contents: read
