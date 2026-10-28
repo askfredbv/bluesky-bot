@@ -1864,7 +1864,10 @@ async def handle_interactions(
         cutoff = datetime.now(timezone.utc) - timedelta(hours=MENTION_MAX_AGE_HOURS)
         mentions = []
         for n in notifications.notifications:
-            ts = _parse_iso(getattr(n, 'indexed_at', None)) if n.reason == 'mention' else None
+            # Answered ones out before the cap, or they would fill it every run.
+            if n.reason != 'mention' or n.uri in replied_to:
+                continue
+            ts = _parse_iso(getattr(n, 'indexed_at', None))
             if ts and (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)) > cutoff:
                 mentions.append(n)
         

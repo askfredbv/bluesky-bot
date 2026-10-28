@@ -31,6 +31,7 @@ from src.config import (
     GEMINI_MODEL_PRIORITY,
     MENTOR_PERSONA_VARIANTS,
     MENTOR_TOPICS,
+    REPLY_CAP_PER_RUN,
     SECONDARY_TOPICS,
     Mode,
 )
@@ -129,6 +130,14 @@ async def test_only_recent_mentions_get_a_reply_read_or_not(monkeypatch):
     sent, _recorded, models = await _handle(monkeypatch, notifications)
     assert sent == ["at://new-mention", "at://no-offset-mention"]
     assert models == [GEMINI_MODEL_PRIORITY[0]] * 2
+
+
+@pytest.mark.asyncio
+async def test_answered_mentions_do_not_fill_the_reply_cap(monkeypatch):
+    answered = [f"at://old{i}" for i in range(REPLY_CAP_PER_RUN)]
+    notifications = [_notification(uri) for uri in answered] + [_notification("at://waiting")]
+    sent, _recorded, _models = await _handle(monkeypatch, notifications, known=answered)
+    assert sent == ["at://waiting"]
 
 
 @pytest.mark.asyncio
