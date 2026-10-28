@@ -1862,10 +1862,11 @@ async def handle_interactions(
         # By age, not by is_read: "read" flips whenever Frederik opens the app, and
         # replied_to already prevents a second answer. No timestamp counts as old.
         cutoff = datetime.now(timezone.utc) - timedelta(hours=MENTION_MAX_AGE_HOURS)
-        mentions = [
-            n for n in notifications.notifications
-            if n.reason == 'mention' and (_parse_iso(getattr(n, 'indexed_at', None)) or cutoff) > cutoff
-        ]
+        mentions = []
+        for n in notifications.notifications:
+            ts = _parse_iso(getattr(n, 'indexed_at', None)) if n.reason == 'mention' else None
+            if ts and (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)) > cutoff:
+                mentions.append(n)
         
         if not mentions: return
 
@@ -1904,6 +1905,7 @@ async def handle_interactions(
                         platform="bluesky",
                         model=model,
                         error_type=type(exc).__name__,
+                        error_msg=str(exc)[:200],
                     )
             else:
                 SafeLogger.error(

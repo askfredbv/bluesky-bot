@@ -122,10 +122,13 @@ async def test_only_recent_mentions_get_a_reply_read_or_not(monkeypatch):
         _notification("at://reply", reason="reply"),
         _notification("at://old-mention", age_hours=72),
         _notification("at://new-mention"),
+        _notification("at://no-offset-mention"),
     ]
+    # A timestamp without an offset is read as UTC instead of crashing the comparison.
+    notifications[-1].indexed_at = notifications[-1].indexed_at.replace("+00:00", "")
     sent, _recorded, models = await _handle(monkeypatch, notifications)
-    assert sent == ["at://new-mention"]
-    assert models == [GEMINI_MODEL_PRIORITY[0]]
+    assert sent == ["at://new-mention", "at://no-offset-mention"]
+    assert models == [GEMINI_MODEL_PRIORITY[0]] * 2
 
 
 @pytest.mark.asyncio
