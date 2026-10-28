@@ -531,7 +531,7 @@ def select_pioneer_topic(
     1. **Date match**: today's (month, day) matches a dated entry not in cooldown
     2. **Undated fallback**: probability roll succeeds AND an undated entry
        outside cooldown exists
-    3. Otherwise None — caller falls back to the normal SECONDARY_TOPICS path
+    3. Otherwise None — caller falls back to the normal topic pick (MENTOR_TOPICS or SECONDARY_TOPICS)
     """
     if not PIONEER_DIMENSION_ENABLED:
         return None
