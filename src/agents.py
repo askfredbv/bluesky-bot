@@ -4,7 +4,7 @@ import asyncio
 import re
 import secrets
 from typing import List, Tuple, Dict, Any, Optional, cast
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from google import genai
 from google.genai import types
 from src.config import (
@@ -12,7 +12,7 @@ from src.config import (
     MAX_POST_LENGTH_BSKY, REPLY_CAP_PER_RUN, SECONDARY_TOPICS, MENTOR_TOPICS,
     MENTOR_PERSONA_VARIANTS, CURATOR_PERSONA_VARIANTS,
     STYLE_MEMORY_POST_WINDOW, STYLE_MEMORY_MAX_OPENERS, STYLE_MEMORY_MAX_HASHTAGS,
-    REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB,
+    REPLY_MAX_CHARS, MENTION_NO_REPLY_PROB, MENTION_MAX_AGE_HOURS,
     MENTION_REPLY_MIN_DELAY_SECONDS, MENTION_REPLY_MAX_DELAY_SECONDS,
     MIN_THREAD_POSTS, MAX_THREAD_POSTS,
     MENTION_SANITIZE_MAX_CHARS, GEMINI_MODEL_PRIORITY, Mode,
@@ -32,6 +32,7 @@ from src.config import (
 from src.llm import generate_anthropic, is_anthropic_model
 from src.state_store import load_replied_to_strict, prune_pioneer_recent, update_replied_to
 from src.logger import SafeLogger
+from src.metrics import _parse_iso
 
 # v4.14 voice rules
 MIN_POST_CHARS_FOR_VALIDATION: int = 40  # was 60; lowered for image-led short posts
@@ -412,6 +413,7 @@ async def generate_proactive_reply(
     parent_author: str,
     parent_text: str,
     model_priority: Optional[List[str]] = None,
+    anthropic_api_key: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a reply to a watched account's post, or None.
 
@@ -444,7 +446,7 @@ async def generate_proactive_reply(
             response_text = ""
             try:
                 response_text = await asyncio.to_thread(
-                    _sync_generate, api_key, system_instr, task, model
+                    _sync_generate, api_key, system_instr, task, model, anthropic_api_key
                 )
                 response_text = (response_text or "").strip()
 
@@ -821,8 +823,8 @@ def _sync_generate(
     Gemini models explicitly and stay Gemini-only"; they were given the active
     chain in #116, that sentence quietly stopped being true when the Anthropic
     rung was promoted to primary in #187, and every Mastodon post shipped
-    untagged for two days as a result. The visual-prompt step and the Phase 4b
-    reply path do still name Gemini models explicitly.
+    untagged for two days as a result. The visual-prompt step still names
+    Gemini models explicitly; the mention and Phase 4b reply paths get the chain.
     """
     if is_anthropic_model(model):
         # A caller working to a tighter budget than the module default passes
@@ -1833,7 +1835,12 @@ def _record_handled_mention(uri: str) -> None:
     update_replied_to(lambda current: current if uri in current else [*current, uri])
 
 
-async def handle_interactions(client: Any, api_key: str) -> None:
+async def handle_interactions(
+    client: Any,
+    api_key: str,
+    model_priority: Optional[List[str]] = None,
+    anthropic_api_key: Optional[str] = None,
+) -> None:
     """Checks and handles interactions asynchronously (Fortress v4.4)."""
     SafeLogger.info("interactions_check_started", "Checking for interactions", platform="bluesky")
     try:
@@ -1852,7 +1859,13 @@ async def handle_interactions(client: Any, api_key: str) -> None:
             return
         replied_to = set(known_replied)
         notifications = await client.app.bsky.notification.list_notifications()
-        mentions = [n for n in notifications.notifications if n.reason == 'mention' and not n.is_read]
+        # By age, not by is_read: "read" flips whenever Frederik opens the app, and
+        # replied_to already prevents a second answer. No timestamp counts as old.
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=MENTION_MAX_AGE_HOURS)
+        mentions = [
+            n for n in notifications.notifications
+            if n.reason == 'mention' and (_parse_iso(getattr(n, 'indexed_at', None)) or cutoff) > cutoff
+        ]
         
         if not mentions: return
 
@@ -1875,9 +1888,31 @@ async def handle_interactions(client: Any, api_key: str) -> None:
             await asyncio.sleep(_sample_reply_delay_seconds())
             
             reply_system, reply_task = _build_mention_reply_prompt(sanitized_text)
-            ai_reply = await asyncio.to_thread(
-                _sync_generate, api_key, reply_system, reply_task, GEMINI_MODEL_PRIORITY[0]
-            )
+            # The same chain as the posts (Sonnet first since 2026-10-12), so the
+            # replies keep the voice. All models down: leave the mention unrecorded
+            # so the next run tries again.
+            for model in (model_priority or GEMINI_MODEL_PRIORITY):
+                try:
+                    ai_reply = await asyncio.to_thread(
+                        _sync_generate, api_key, reply_system, reply_task, model, anthropic_api_key
+                    )
+                    break
+                except Exception as exc:
+                    SafeLogger.warn(
+                        "mention_reply_model_failed",
+                        "Mention reply model call failed; trying the next model",
+                        platform="bluesky",
+                        model=model,
+                        error_type=type(exc).__name__,
+                    )
+            else:
+                SafeLogger.error(
+                    "mention_reply_chain_exhausted",
+                    "Every model failed; the mention stays unanswered until the next run",
+                    platform="bluesky",
+                    mention_uri=mention.uri,
+                )
+                continue
             
             reply_text = _fit_reply(ai_reply, REPLY_MAX_CHARS)
             if not reply_text:
@@ -1896,10 +1931,12 @@ async def handle_interactions(client: Any, api_key: str) -> None:
                 _record_handled_mention(mention.uri)
                 continue
 
-            await client.send_post(
-                text=reply_text,
-                reply_to={'parent': {'cid': mention.cid, 'uri': mention.uri}, 'root': {'cid': mention.cid, 'uri': mention.uri}}
-            )
+            # A mention inside someone else's thread keeps that thread's root;
+            # only a mention that starts a conversation is its own root.
+            parent = {'cid': mention.cid, 'uri': mention.uri}
+            thread = getattr(mention.record, 'reply', None)
+            root = {'cid': thread.root.cid, 'uri': thread.root.uri} if thread else parent
+            await client.send_post(text=reply_text, reply_to={'parent': parent, 'root': root})
             replied_to.add(mention.uri)
             # Recorded here, immediately after the reply lands, and never at the
             # end of the loop: everything below this line can still fail, and a

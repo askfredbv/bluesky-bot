@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from src.agents import generate_content, handle_interactions, _fit_reply, _sync_generate, generate_post_image, _build_generate_kwargs, _validate_thread_shape
@@ -250,7 +252,7 @@ async def test_handle_interactions_fits_reply_at_a_sentence_and_applies_delay(mo
 
     class DummyMention:
         reason = "mention"
-        is_read = False
+        indexed_at = datetime.now(timezone.utc).isoformat()
         uri = "at://mention/1"
         cid = "cid-1"
 
@@ -366,7 +368,7 @@ async def test_handle_interactions_can_skip_reply_for_human_cadence(monkeypatch)
 
     class DummyMention:
         reason = "mention"
-        is_read = False
+        indexed_at = datetime.now(timezone.utc).isoformat()
         uri = "at://mention/skip"
         cid = "cid-skip"
 
@@ -1184,7 +1186,7 @@ async def test_pioneer_post_without_link_field_skips_url_check(monkeypatch):
 def _mention(uri: str, text: str = "Any advice on architecture tradeoffs?"):
     class DummyMention:
         reason = "mention"
-        is_read = False
+        indexed_at = datetime.now(timezone.utc).isoformat()
 
         class record:
             pass
