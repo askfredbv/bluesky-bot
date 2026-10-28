@@ -35,7 +35,8 @@ from datetime import datetime, timezone
 from src import proactive
 from src.agents import generate_proactive_reply
 from src.bluesky_session import load_or_login
-from src.config import GEMINI_MODEL_PRIORITY, load_watchlist
+from src.llm import compose_model_chain
+from src.config import ANTHROPIC_CHAIN_POSITION, ANTHROPIC_MODELS, GEMINI_MODEL_PRIORITY, load_watchlist
 from src.logger import SafeLogger
 
 
@@ -51,6 +52,7 @@ async def _run() -> int:
     username = os.environ.get("BLUESKY_USERNAME", "").strip()
     password = os.environ.get("BLUESKY_APP_PASSWORD", "").strip()
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or None
     if not username or not password or not api_key:
         SafeLogger.error(
             "proactive_scan_creds_missing",
@@ -129,7 +131,12 @@ async def _run() -> int:
         api_key=api_key,
         parent_author=candidate["parent_author"],
         parent_text=candidate["parent_text"],
-        model_priority=GEMINI_MODEL_PRIORITY,
+        # Same chain as the posts, so a reply sounds like the feed.
+        model_priority=compose_model_chain(
+            GEMINI_MODEL_PRIORITY, ANTHROPIC_MODELS, ANTHROPIC_CHAIN_POSITION,
+            has_anthropic_key=bool(anthropic_key),
+        ),
+        anthropic_api_key=anthropic_key,
     )
 
     if draft_reply is None:

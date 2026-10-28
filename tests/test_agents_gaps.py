@@ -20,7 +20,7 @@ numbers refer to agents.py at 0eff828. Left alone as equivalent or noise:
   - L1259 and L1284, the visual-prompt timeout and summary cap.
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +31,7 @@ from src.config import (
     GEMINI_MODEL_PRIORITY,
     MENTOR_PERSONA_VARIANTS,
     MENTOR_TOPICS,
+    REPLY_CAP_PER_RUN,
     SECONDARY_TOPICS,
     Mode,
 )
@@ -65,13 +66,18 @@ def _script_generate(monkeypatch, answer):
 # These reach real people, so every skip must skip only its own mention.
 # ---------------------------------------------------------------------------
 
-def _notification(uri, *, reason="mention", is_read=False):
-    return SimpleNamespace(uri=uri, cid=f"cid-{uri}", reason=reason, is_read=is_read,
-                           record=SimpleNamespace(text="Any advice on architecture tradeoffs?"),
+def _notification(uri, *, reason="mention", age_hours=1, thread_root=None):
+    reply = None
+    if thread_root:
+        reply = SimpleNamespace(root=SimpleNamespace(uri=thread_root, cid=f"cid-{thread_root}"))
+    indexed_at = (datetime.now(timezone.utc) - timedelta(hours=age_hours)).isoformat()
+    return SimpleNamespace(uri=uri, cid=f"cid-{uri}", reason=reason, indexed_at=indexed_at,
+                           record=SimpleNamespace(text="Any advice on architecture tradeoffs?", reply=reply),
                            author=SimpleNamespace(handle="alice.example"))
 
 
-async def _handle(monkeypatch, notifications, *, replies=("A perfectly good reply.",), rolls=(), known=()):
+async def _handle(monkeypatch, notifications, *, replies=("A perfectly good reply.",), rolls=(), known=(),
+                  chain=None, failing=(), roots=None):
     """Run handle_interactions. Returns (replied-to URIs, recorded URIs, models used)."""
     sent, recorded, models = [], [], []
     replies, rolls = list(replies), list(rolls)
@@ -81,9 +87,13 @@ async def _handle(monkeypatch, notifications, *, replies=("A perfectly good repl
 
     async def send_post(text, reply_to):
         sent.append(reply_to["parent"]["uri"])
+        if roots is not None:
+            roots.append(reply_to["root"]["uri"])
 
     def generate(api_key, system_instr, task, model, anthropic_api_key=None):
-        models.append(model)
+        models.append((model, anthropic_api_key) if chain else model)
+        if model in failing:
+            raise RuntimeError("model down")
         return replies.pop(0) if len(replies) > 1 else replies[0]
 
     def update(mutator):
@@ -100,21 +110,59 @@ async def _handle(monkeypatch, notifications, *, replies=("A perfectly good repl
     monkeypatch.setattr(agents.random, "random", lambda: rolls.pop(0) if rolls else 0.95)  # 0.95: never skip
     monkeypatch.setattr(agents.random, "uniform", lambda _a, _b: 0.0)
     monkeypatch.setattr(agents.asyncio, "sleep", _no_sleep)
-    await agents.handle_interactions(client, "key")
+    await agents.handle_interactions(client, "key", model_priority=chain,
+                                     anthropic_api_key="anthropic-key" if chain else None)
     return sent, recorded, models
 
 
 @pytest.mark.asyncio
-async def test_only_unread_mentions_get_a_reply(monkeypatch):
+async def test_only_recent_mentions_get_a_reply_read_or_not(monkeypatch):
+    # is_read is gone from the rule: opening the app must not decide who gets an answer.
     notifications = [
         _notification("at://like", reason="like"),
         _notification("at://reply", reason="reply"),
-        _notification("at://read-mention", is_read=True),
+        _notification("at://old-mention", age_hours=72),
         _notification("at://new-mention"),
+        _notification("at://no-offset-mention"),
     ]
+    # A timestamp without an offset is read as UTC instead of crashing the comparison.
+    notifications[-1].indexed_at = notifications[-1].indexed_at.replace("+00:00", "")
     sent, _recorded, models = await _handle(monkeypatch, notifications)
-    assert sent == ["at://new-mention"]
-    assert models == [GEMINI_MODEL_PRIORITY[0]]
+    assert sent == ["at://new-mention", "at://no-offset-mention"]
+    assert models == [GEMINI_MODEL_PRIORITY[0]] * 2
+
+
+@pytest.mark.asyncio
+async def test_answered_mentions_do_not_fill_the_reply_cap(monkeypatch):
+    answered = [f"at://old{i}" for i in range(REPLY_CAP_PER_RUN)]
+    notifications = [_notification(uri) for uri in answered] + [_notification("at://waiting")]
+    sent, _recorded, _models = await _handle(monkeypatch, notifications, known=answered)
+    assert sent == ["at://waiting"]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_inside_a_thread_keeps_that_threads_root(monkeypatch):
+    roots = []
+    await _handle(monkeypatch, [_notification("at://deep", thread_root="at://op"),
+                                _notification("at://fresh")], roots=roots)
+    assert roots == ["at://op", "at://fresh"]
+
+
+@pytest.mark.asyncio
+async def test_replies_use_the_post_chain_and_fall_back_on_failure(monkeypatch):
+    chain = ["claude-sonnet-5-5", "gemini-3.7-flash"]
+    sent, _recorded, models = await _handle(
+        monkeypatch, [_notification("at://m1")], chain=chain, failing={"claude-sonnet-5-5"})
+    assert sent == ["at://m1"]
+    assert models == [("claude-sonnet-5-5", "anthropic-key"), ("gemini-3.7-flash", "anthropic-key")]
+
+
+@pytest.mark.asyncio
+async def test_a_mention_stays_unrecorded_when_every_model_fails(monkeypatch):
+    chain = ["claude-sonnet-5-5", "gemini-3.7-flash"]
+    sent, recorded, _models = await _handle(
+        monkeypatch, [_notification("at://m1")], chain=chain, failing=set(chain))
+    assert sent == [] and recorded == []
 
 
 @pytest.mark.asyncio

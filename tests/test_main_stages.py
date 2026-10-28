@@ -327,7 +327,7 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
             bsky_broadcast_client="client",
         )
 
-    async def fake_automation(broadcast_payload, creds):
+    async def fake_automation(broadcast_payload, creds, active_models=None):
         calls.append(("automation", broadcast_payload.mode, creds is settings.credentials))
         return main.AutomationPayload(mode="mentor", seen_data={"links": [], "recent_topics": []}, news_items=[])
 

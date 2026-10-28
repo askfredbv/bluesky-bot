@@ -566,7 +566,7 @@ async def test_generate_falls_through_to_next_model_on_api_error(monkeypatch):
     """First model raises (API error), second model succeeds → return second model's output."""
     calls = {"models_seen": []}
 
-    def stub(_api_key, _instr, _task, model):
+    def stub(_api_key, _instr, _task, model, _anthropic_key=None):
         calls["models_seen"].append(model)
         if model == "gemini-2.5-pro":
             raise RuntimeError("quota exhausted")

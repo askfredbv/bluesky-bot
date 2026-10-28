@@ -874,7 +874,7 @@ def build_automation_payload(broadcast: BroadcastPayload) -> AutomationPayload:
     )
 
 
-async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> AutomationPayload:
+async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any, active_models: Optional[List[str]] = None) -> AutomationPayload:
     """Best-effort work that follows a delivered post: mention handling.
 
     Runs AFTER persistence. Nothing here feeds the state write, and everything
@@ -884,7 +884,10 @@ async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any) -> 
     automation_tasks = []
     if broadcast.bsky_broadcast_client is not None:
         automation_tasks.append(
-            handle_interactions(broadcast.bsky_broadcast_client, creds.gemini_api_key)
+            handle_interactions(
+                broadcast.bsky_broadcast_client, creds.gemini_api_key,
+                model_priority=active_models, anthropic_api_key=creds.anthropic_api_key,
+            )
         )
     await asyncio.gather(*automation_tasks, return_exceptions=True)
 
@@ -1047,7 +1050,7 @@ async def main():
 
     await capture_post_metrics_stage(broadcast, creds)
     await capture_follower_snapshot_stage(broadcast, creds)
-    automation = await post_run_automation_stage(broadcast, creds)
+    automation = await post_run_automation_stage(broadcast, creds, active_models=active_models)
 
     SafeLogger.info("run_completed", "Intelligence cycle complete", mode=automation.mode, platform="system")
 
