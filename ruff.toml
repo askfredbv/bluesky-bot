@@ -2,7 +2,7 @@
 #
 # Wired into CI 2026-05-08 to catch dead imports + style drift as they land,
 # rather than discovering 8 unused imports six weeks later (which is what
-# happened on the first scan). See BACKLOG §2 "Wire ruff into CI" for the
+# happened on the first scan). See BACKLOG_ARCHIVE.md §2 and git history for the
 # decision trail.
 
 # Match the project's Python version (matches .github/workflows/tests.yml).

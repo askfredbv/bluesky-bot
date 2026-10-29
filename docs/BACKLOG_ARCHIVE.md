@@ -37,14 +37,6 @@ AI *practice* territories (deliberately not news — the Curator owns that), and
 SECONDARY_TOPICS gains five horizon ones. The afternoon pool goes 12 → 42, so a topic
 returns on the order of two months rather than two weeks.
 
-*Left open on purpose, recorded rather than fixed:* six of the original 19 Strategist
-topics are broad territory words of exactly the shape the v4.20 finding says produces soft
-output ("mental health and burnout prevention", "digital minimalism and focus", …). They
-have never run, so there is no evidence either way. Read the first weeks of Strategist
-posts and cut the ones that come out soft. *Also open:* `get_recent_posts` fetches
-`limit=10` — about five days — so when a topic comes round the model cannot see its own
-previous take, which is why the repeats are near-verbatim rather than merely similar.
-
 **FINDING 2026-10-19 — our review effort is aimed at `.py`, and that is not where the
 bugs were.**
 

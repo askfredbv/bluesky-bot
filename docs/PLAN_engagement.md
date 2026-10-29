@@ -51,7 +51,7 @@ Four phases, executed in order. **Each phase has a hard gate before the next sta
 
 Telemetry + delivery-safety, with zero change to what the bot posts. Every post writes a row to `post_metrics.json` (engagement + formatting features, refreshed ~daily, pruned >30d); every feed fetch records into `feed_health.json`; follower counts snapshot to `growth.json`. Partial thread deliveries stopped being silent — `@retry_with_backoff` was dropped from the broadcasters in favour of per-post retry with a per-thread shared budget and a `BroadcastResult` / `*_partial_delivery` contract. Landed as six shippable commits (retry-helper split → `FeedFetchResult`/feed_health → `BroadcastResult` → drop the decorator → metrics_context plumbing → refresh+prune), production-confirmed across three runs on 2026-05-04/05. Code lives in `src/metrics.py` plus `capture_post_metrics_stage` + `capture_follower_snapshot_stage` in `main.py`.
 
-_The original ~190-line implementation spec + per-commit progress table lived here through 2026-08-19; it is preserved in git history and summarised in `BACKLOG.md`._
+_The original ~190-line implementation spec + per-commit progress table lived here through 2026-08-19; it is preserved in git history and summarised in `BACKLOG_ARCHIVE.md`._
 
 ---
 

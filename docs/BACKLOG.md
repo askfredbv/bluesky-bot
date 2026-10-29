@@ -107,6 +107,14 @@ Nothing here is open. The summary of what was resolved is in [`BACKLOG_ARCHIVE.m
 
   **Not precedent:** v4.26.0 shipped Mastodon discovery tags outside this gate, on a *mechanism* argument (a followed tag is Mastodon's discovery engine, the tags sit at the broadcaster, generation is unchanged). That says nothing about emojis, question hooks, or hashtags on the Bluesky copy.
 
+- **Two follow-ups from the 2026-10-20 finding (the afternoon pool, #208).** *Left open on purpose, recorded rather than fixed:* six of the original 19 Strategist
+  topics are broad territory words of exactly the shape the v4.20 finding says produces soft
+  output ("mental health and burnout prevention", "digital minimalism and focus", …). They
+  have never run, so there is no evidence either way. Read the first weeks of Strategist
+  posts and cut the ones that come out soft. *Also open:* `get_recent_posts` fetches
+  `limit=10` — about five days — so when a topic comes round the model cannot see its own
+  previous take, which is why the repeats are near-verbatim rather than merely similar.
+
 These are judgement calls, not data questions. Engagement at this scale cannot settle any of them — decide by reading the feed.
 
 ---
