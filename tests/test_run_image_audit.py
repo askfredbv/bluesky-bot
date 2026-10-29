@@ -123,7 +123,7 @@ def test_report_renders_one_image_per_item():
     """The constraint: the output is the pictures, not a description of them.
 
     If this ever fails because the report became a table or a summary, the
-    corrective has been undone — see docs/BACKLOG.md 2026-10-19.
+    corrective has been undone — see docs/BACKLOG_ARCHIVE.md 2026-10-19.
     """
     illustrations, cards = audit.classify_feed(
         [_image_post(), _card_post()], "askfred.be")

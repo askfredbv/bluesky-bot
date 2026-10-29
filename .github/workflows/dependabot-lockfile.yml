@@ -4,7 +4,7 @@ name: Dependabot lockfile fix-up
 # so its PRs fail the required `lockfile` (and often `tests`) check. Two ways
 # this has gone wrong before:
 #   - it keeps extras that CI strips, e.g. `google-auth[requests]` versus
-#     `google-auth` (#46, #47, #49, see BACKLOG);
+#     `google-auth` (#46, #47, #49, see BACKLOG_ARCHIVE);
 #   - it bumps a pin that cannot resolve. #96 (2026-08-29) moved pydantic-core
 #     on its own, but pydantic pins pydantic-core exactly.
 #

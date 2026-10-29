@@ -20,7 +20,7 @@ Why this exists: model availability is account- and time-specific, and
 Claude's training cutoff can't see recent releases. The honest way to pick
 a primary model is to find what's actually reachable now, then test the
 best candidate by reading one run's feed output — not by assuming. See the
-"Primary-model upgrade evaluation" item in docs/BACKLOG.md §3 for the full
+"Primary-model upgrade evaluation" item added to docs/BACKLOG.md in 5881c49 for the full
 finding and the two switch-time gotchas (thinking-budget + SDK ceiling).
 """
 

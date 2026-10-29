@@ -309,7 +309,7 @@ CONSENSUS_SYNERGY_BONUS: float = 1.5
 # the window. The base sits below the 7-point source-tier spread on purpose — a
 # diversity signal may break a tie, it may not overrule where a story came from.
 # Replaced a flat -12.0 that, with "General" never being recorded, had become a
-# standing blocklist on four of the five categories (2026-10-06, see BACKLOG).
+# standing blocklist on four of the five categories (2026-10-06, see BACKLOG_ARCHIVE).
 TOPIC_REPEAT_PENALTY: float = 6.0   # at distance 0 (the topic posted last run)
 TOPIC_REPEAT_DECAY: float = 0.55    # multiplier per run of additional distance
 RECENT_TOPICS_WINDOW: int = 5       # how many posted topics we remember
@@ -443,7 +443,7 @@ ANTHROPIC_MODELS: List[str] = [
 # ABOVE, "fallback" puts it BELOW. One word, because it is the revert switch
 # for the trial below.
 #
-# TRIAL, opened 2026-10-12: Sonnet as primary. KEPT 2026-10-26 (docs/BACKLOG.md,
+# TRIAL, opened 2026-10-12: Sonnet as primary. KEPT 2026-10-26 (docs/BACKLOG_ARCHIVE.md,
 # "Priority order", has the decision and what the two weeks of live runs showed).
 # ----------------------------------------------------------------------
 # Basis is craft, not metrics, and the honest version of that is written down
@@ -634,7 +634,7 @@ RSS_FEEDS = [
 # Every seed traces to one article: frederikvanhecke.com (all his), or
 # askfred.be (his up to 2024; the 2026 posts are partly AI-rewritten, so they
 # lend a SUBJECT only, which is all a seed takes). Frederik picked these 21
-# from a drafted 25; the source list is in docs/BACKLOG.md.
+# from a drafted 25; the source list is in docs/BACKLOG_ARCHIVE.md.
 #
 # Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory,
 # and the afternoon alternates with Strategist (main.py mode_selection_stage),

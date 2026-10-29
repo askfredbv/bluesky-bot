@@ -2,7 +2,7 @@ name: Image Audit (monthly)
 
 # Puts the bot's recent post images in front of a human, as pictures.
 #
-# Corrective 3 of the 2026-10-19 finding (docs/BACKLOG.md). The image-prompt
+# Corrective 3 of the 2026-10-19 finding (docs/BACKLOG_ARCHIVE.md). The image-prompt
 # bug shipped 2026-04-18 and ran six months, putting rendered captions into
 # post images — one read `USER: ADNIN > LDAD`. ruff, mypy, pytest, CodeQL and a
 # paid external security scan were all clean throughout, because it is neither
