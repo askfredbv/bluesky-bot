@@ -12,7 +12,7 @@ The afternoon run also runs a **pioneer dimension** — curated tech-history fac
 
 **Morning run — The Curator.** Fetches AI/tech RSS feeds, scores items by source quality, recency, and topic diversity, then writes about the most consequential development — the "…which means" that follows the headline, not the headline itself. One post by default; 2–3 only if the story needs it.
 
-**Afternoon run — The Mentor and The Strategist, alternating.** A specific, observational take: the kind of thing that is obvious in hindsight but rarely articulated. The two alternate on day parity, drawing from separate topic pools — the Mentor on practice ("what AI makes faster, and what it quietly makes slower"), the Strategist on the longer horizon ("what does this look like in five years"). Either may instead run a Pioneer post about a figure or moment in computing history. The Strategist also stands in for a morning Curator run when news volume is too low to post anything worth reading.
+**Afternoon run — The Mentor and The Strategist, alternating.** A specific, observational take: the kind of thing that is obvious in hindsight but rarely articulated. The two alternate on day parity, drawing from separate topic pools — the Mentor on working life, change and adoption (seeded from Frederik's own articles on frederikvanhecke.com and askfred.be, with a handful of AI-practice topics), the Strategist on the longer horizon ("what does this look like in five years"). Either may instead run a Pioneer post about a figure or moment in computing history. The Strategist also stands in for a morning Curator run when news volume is too low to post anything worth reading.
 
 **Voice** — first-person, dry, no hype, no reader-bait questions, no day-of-week openers. Default zero hashtags, max two when they're a clear topic anchor.
 
@@ -42,6 +42,7 @@ Two runs a day, 09:00 and 19:00 Belgian local time (UTC shifts with DST: winter 
 - **Mastodon thread numbering** — multi-part posts carry "1/2", "2/2" on Mastodon. Mastodon lists a self-thread newest-first, so a timeline reader meets part 2 before part 1. The first part ends with "1/2"; every later part opens with its number ("2/2: …"), so the part a reader meets first says at once that it continues something. Bluesky's app already numbers self-threads on its own, so the Bluesky copy is left as it is. Added at the broadcaster, before the discovery tags; the generated text is unchanged.
 - **Mastodon source link** — Curator posts carry their source URL in the Mastodon text whenever the generated text does not already include it. Bluesky shows the same link as a card built from the article's metadata; Mastodon can only show a link that is in the text, and without this most Curator posts reached Mastodon with no source at all.
 - **Models** — one ordered failover chain spanning two providers: `ANTHROPIC_MODELS` (`claude-sonnet-5-5` → `claude-haiku-5-5`) and `GEMINI_MODEL_PRIORITY` (`gemini-3.7-flash` → `gemini-3.5-flash` → `gemini-2.5-pro` → `gemini-2.5-flash`). Which provider leads is the single constant `ANTHROPIC_CHAIN_POSITION`, **`"primary"` since 2026-10-12** — so Claude writes the posts and the Gemini chain is the fallback. That began as a two-week trial and was kept on 2026-10-26 (`docs/BACKLOG.md`); setting the constant to `"fallback"` restores Gemini-first with no other change. With no `ANTHROPIC_API_KEY` configured the chain is Gemini-only. An API failure advances to the next model, and the Gemini rungs are pruned at startup to what the key can actually reach. Thinking budget is pinned per model so it doesn't eat the output budget.
+- **Mention replies** — a mention from the last 48 hours (`MENTION_MAX_AGE_HOURS`) that has not been handled yet is considered, at most 10 per run. About one in five is deliberately left unanswered (`MENTION_NO_REPLY_PROB = 0.2`) so the cadence feels human, and is then marked handled for good. Replies walk the same model chain as the posts, so Sonnet writes them and the Gemini rungs are the fallback; if every model fails, the mention stays unanswered and the next run tries again. A mention inside someone else's thread is answered in that thread. Mentions are picked by age, not by "unread", because opening the Bluesky app marks them read.
 - **Reliability** — concurrent delivery (one platform failing doesn't block the other); per-thread shared retry budgets for rate-limit + transient errors with partial-delivery semantics (no re-sending posts already on the wire); Gist-backed state with local-file fallback; a cached Bluesky session string to skip warm-run logins; a fully exhausted model chain skips the run cleanly (no placeholder posts).
 - **Telemetry** — three Gist JSON files: `post_metrics.json` (per-post engagement + formatting features, refreshed ~daily), `feed_health.json` (per-feed fetch health, rolling window), `growth.json` (follower snapshots). All three are recorded for observability, not as optimisation targets: audience growth is deprioritised (see `AGENTS.md`, "What this project is"), and at this scale the engagement numbers are noise rather than signal — nothing in the pipeline reads them back into a decision. A configured feed flagged as broken or stale opens a GitHub issue labelled `feed-health`, which closes itself once every feed is healthy again.
 
@@ -60,7 +61,7 @@ Add these as GitHub repo secrets (`Settings > Secrets and variables > Actions`):
 | `BLUESKY_APP_PASSWORD` | Yes | App-specific password from Bluesky settings |
 | `MASTODON_ACCESS_TOKEN` | Optional | Access token from your Mastodon instance |
 | `MASTODON_API_BASE_URL` | Optional | Your Mastodon instance URL (the API base, e.g. `https://mastodon.social`) |
-| `ANTHROPIC_API_KEY` | Optional, but **load-bearing since 2026-10-12** | `ANTHROPIC_CHAIN_POSITION` is `"primary"`, so Anthropic writes the posts and Gemini is the fallback. Unset or revoked is still never a failed run: the chain silently reverts to Gemini-only and keeps posting in the old voice, which means a dead key is invisible except in the `model_used` log line. Use a **workspace-scoped** key, never an org admin key. |
+| `ANTHROPIC_API_KEY` | Optional, but **load-bearing since 2026-10-12** | `ANTHROPIC_CHAIN_POSITION` is `"primary"`, so Anthropic writes the posts and the mention replies, and Gemini is the fallback. Unset or revoked is still never a failed run: the chain silently reverts to Gemini-only and keeps posting in the old voice, which means a dead key is invisible except in the `model_used` log line. Use a **workspace-scoped** key, never an org admin key. |
 | `GIST_TOKEN` | Yes | GitHub PAT with `gist` scope — for persistent state |
 | `GIST_ID` | Yes | ID of the private Gist holding the state files |
 
@@ -79,7 +80,7 @@ Create a `.env` from `.env.example` for local credentials.
 pytest
 ```
 
-CI enforces a single **global 80% coverage floor** across `main.py` and `src/` (`pytest --cov-fail-under=80`), alongside `ruff` and a whole-codebase `mypy` gate. A separate `dependency-audit.yml` workflow checks the runtime lockfile for known vulnerabilities (`pip-audit`) on every PR, on pushes to `main`, and weekly.
+CI enforces a single **global 80% coverage floor** across `main.py` and `src/` (`pytest --cov-fail-under=80`), alongside `ruff` and a whole-codebase `mypy` gate. A separate `dependency-audit.yml` workflow checks the runtime lockfile for known vulnerabilities (`pip-audit`) on every PR, on pushes to `main`, and daily.
 
 ### Dependency management
 
@@ -90,6 +91,8 @@ pip install pip-tools
 pip-compile --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml
 pip-compile --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml
 ```
+
+**Dependabot** proposes one grouped PR a week (Monday 07:00 Brussels) with every minor and patch bump, and only for releases at least seven days old. Its lockfile edits never quite match `pip-compile`, so `dependabot-lockfile.yml` regenerates both lockfiles on the Dependabot PR and pushes them back, which makes the PR pass `lockfile` by construction. Majors stay a human decision: they mean raising a ceiling in `pyproject.toml`. Security updates skip both the group and the wait.
 
 Production installs `requirements.txt` (runtime only); CI and local dev install `requirements-dev.txt` (runtime + tooling).
 
@@ -140,8 +143,11 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 ├── scripts/                # One-shot tools: watchlist audit, model discovery, voice audit
 ├── tests/                  # pytest suite
 ├── docs/                   # PLAN, BACKLOG, RELEASING (release checklist), retros, VOICE_AUDIT
-├── .github/workflows/      # daily_post, schedule-health, lockfile-check, codeql, dependency-audit,
-│                           #   proactive_scan + approve_pending_reply (dormant), voice-audit, model-discovery
+├── .github/workflows/      # daily_post, schedule-health, tests, lockfile-check, dependabot-lockfile,
+│                           #   codeql, dependency-audit, workflow-lint, image-audit, refresh_momentum,
+│                           #   voice-audit, the manual probes (model-discovery, image-probe,
+│                           #   mastodon-tag-probe, fallback-probe), and proactive_scan +
+│                           #   approve_pending_reply (dormant)
 ├── AGENTS.md               # Briefs the Codex PR reviewer on project principles
 ├── pyproject.toml          # Dependency constraints (runtime + dev extra) + project metadata
 ├── requirements.txt        # Pinned runtime lockfile (generated)
