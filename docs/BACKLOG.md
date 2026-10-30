@@ -10,421 +10,37 @@ Living list of pending work and parked ideas. Bot is shipping at **v4.32.0** (20
 
 ## Priority order
 
-Updated 2026-10-22. Items 1-3 and 5 are closed. **Correctives 1 and 2 of the 2026-10-19
-finding shipped the same day; corrective 3 is tracked as #203.** Item 4 remains gated
-on `keyword_substring_only_matches` data; it is not blocked.
+Updated 2026-10-29. Open: items 4 and 6, plus the §3 observational items. Closed
+items, findings and older changelog entries moved verbatim to [`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 
 *Anything recorded here that is meant to be built gets a GitHub issue, not a bullet.
 A bullet has no state and nothing closes it — which is how the corrective in
 `RETRO_2026-05-08` sat unautomated through three occurrences of the same bug.*
 
-**FINDING 2026-10-20 — a third of the content design was never reachable, and the
-afternoon could not produce an AI post.**
-
-Frederik noticed the same "senior reviews your code" theme recurring and asked whether it
-was him. It was not. Measured over 2026-09-01..10-20: of 50 afternoon posts, 13 were
-Pioneer and the other **37 came from a pool of 12 topics** — migrations and internal
-documentation five times each, code-review dynamics three, four more themes four times.
-The repeats are near-verbatim, not merely same-theme: 09-12 and 10-05 both open "Starting
-from a blank page forces you to...".
-
-Two causes, and the interesting one is not pool size.
-
-**`Mode.STRATEGIST` was unreachable on a schedule.** `mode_selection_stage` read
-`Mode.CURATOR if current_hour < 11 else Mode.MENTOR`, so Strategist fired only as a
-*morning degradation* when news volume was too low. Its 19 topics had effectively never
-reached a reader. A whole mode, written and tested, was dead in production — and nothing
-reported that, because a mode that never runs logs nothing.
-
-**Not one of the 12 Mentor topics touched AI**, on an account whose subject is AI
-mentorship. Every AI post it has ever made was the morning Curator; the afternoon was
-structurally incapable of one.
-
-Fixed together: the afternoon now alternates Mentor/Strategist on day parity (stateless —
-no Gist field, and a missed or re-run day cannot desynchronise it), MENTOR_TOPICS gains six
-AI *practice* territories (deliberately not news — the Curator owns that), and
-SECONDARY_TOPICS gains five horizon ones. The afternoon pool goes 12 → 42, so a topic
-returns on the order of two months rather than two weeks.
-
-*Left open on purpose, recorded rather than fixed:* six of the original 19 Strategist
-topics are broad territory words of exactly the shape the v4.20 finding says produces soft
-output ("mental health and burnout prevention", "digital minimalism and focus", …). They
-have never run, so there is no evidence either way. Read the first weeks of Strategist
-posts and cut the ones that come out soft. *Also open:* `get_recent_posts` fetches
-`limit=10` — about five days — so when a topic comes round the model cannot see its own
-previous take, which is why the repeats are near-verbatim rather than merely similar.
-
-**FINDING 2026-10-19 — our review effort is aimed at `.py`, and that is not where the
-bugs were.**
-
-A security scan on 2026-10-14 (#189-#195, four P1s closed) did not prevent a run of
-defects five days later. Most of that is not the scan's fault and the distinction is the
-useful part:
-
-- The workflow-injection P1, the committed `seen_articles.json.bak` P1 and the eight
-  reservation P2s were all in code written **that same day**. A scan certifies a commit,
-  not a repository; its half-life here is days. The review loop caught all of them.
-- **The exception is the one that counts.** `git log -S` dates the image-prompt bug to
-  **2026-04-18 (v4.11.0)**. Six months, through the scan, through every release since,
-  through a green test suite and a clean mypy. `No text, no people, no hands` was in the
-  instruction to the prompt-*writing* model; the prompt it produced reached the image
-  model carrying nothing. Live posts on 10-17 and 10-18 rendered captions, one reading
-  `USER: ADNIN > LDAD`. No scanner looks for "this instruction went to the wrong model".
-  What found it was opening three images.
-
-**This is the third occurrence of the same meta-lesson.** `RETRO_2026-05-08` (six weeks
-on top of a placeholder fallback; corrective: *open the live feed first*) and the
-2026-10-12 cold read (2 of 20) say the same thing. It has been written down twice and
-automated zero times, so it only fires when somebody happens to look.
-
-**The structural read:** every finding that day outside the reservation work was in
-something that is **not source code** — a `.yml`, a `.bak`, a `.png`. The scan, Codex,
-pytest and mypy are all aimed at `.py`. The highest-severity item was found by reading a
-*file list*. The three correctives below close that gap in the three places it opened.
-They are deliberately unnumbered: the numbered list under them is the standing
-priority order and renumbering it to insert these would break every reference to it.
-
-**[DONE 2026-10-19] Corrective 1 — lint the workflows.** `workflow-lint.yml` runs
-`zizmor --offline --min-confidence high` on every PR. Verified against a repro of the
-real bug before shipping, not assumed: zizmor flags it `error[template-injection]` at
-High confidence, and the gate passes on the workflows as they stand. The confidence
-threshold is the deliberate part — all 19 current findings are Low confidence (14
-`artipacked`, now tracked as #204) while the P1 was High, so gating on confidence
-separates them exactly without switching any audit off. Original note: The self-inflicted P1 that day was `${{ inputs.topics }}` interpolated
-into a `run:` block, which GitHub substitutes into the script text before bash parses
-it: a dispatcher supplying `$(...)` would have executed it in a step holding
-`GEMINI_API_KEY` and both Cloudflare secrets. That is a textbook class a linter
-catches permanently for one CI step. **Cheapest item here and the only one that closes
-a class rather than an instance.**
-
-**[DONE 2026-10-19] Corrective 2 — fail CI on a tracked state artifact.**
-`tests/test_repo_hygiene.py` asserts no state file or sibling is tracked, and that
-`.gitignore` still carries the patterns — the second test catches the edit that would
-let the next one through, which is the failure that actually happened. Proved by
-force-adding a `.bak` and watching it fail, then pass again once removed. Original note: A test run wrote `seen_articles.json.bak`, `.gitignore` covered only the bare name, and
-it was committed. A committed `.bak` defeats the 2026-09-11 stray-`.bak` guard
-specifically: `_load_json_with_repair_strict` returns `from_file=True` for a restored
-backup, so an empty-but-**trusted** state would overwrite the real Gist and erase every
-seen link, topic and Pioneer cooldown. The patterns are fixed (#200), but the class is
-not: roughly ten lines asserting `git ls-files` returns nothing state-shaped turns a
-human noticing into a gate. A human noticing is what we got, and only by luck.
-
-**[DONE 2026-10-19 → #203] Corrective 3 — look at the output on a schedule.** The only
-possible detector for the item that actually shipped damage for six months.
-`voice-audit.yml` already did this for the text; the gap was visual.
-`image-audit.yml` now runs on the 1st of each month and opens an issue whose body **is**
-the pictures — GitHub renders the Bluesky CDN URLs inline, so the human step is scrolling
-images, not reading a report about images. Both halves of the visual surface are in it:
-the generated illustrations (an unambiguous `app.bsky.embed.images`) and the Curator link
-cards, whose thumb may be the article's own or one the bot generated — the public feed
-cannot tell them apart, so the report says so instead of guessing. The images also ride
-along as an artifact, for full resolution and for after a post is deleted.
-
-Deliberately **no score, no dashboard, no pass/fail**, and
-`test_report_renders_one_image_per_item` fails if the output ever becomes a summary
-instead of pictures. A number would have read green for all six months; what found the
-bug was opening three images. Two minutes a month, which is what the operating goal
-allows.
-
-1. **[DONE 2026-10-08] Live-verify the 2026-10-06 scoring changes.** Read on the 07:00 UTC
-runs of 10-07 and 10-08. Both beat the baselines (a primary source in the shortlist in
-2 of 21 runs before; 13 of 21 runs offering one publisher; 79 of 105 slots arXiv):
-10-07 offered four distinct publishers including two tier-1, 10-08 three including two
-tier-1, and `tier1_source_promoted` fired on 10-08. `recent_topics` now records
-`General`, so the cooldown washes through as designed.
-`keyword_substring_only_matches` put a number on the loose matching across the whole
-pool, not just titles: 311 of 1165 items on 10-07 and 338 of 1328 on 10-08, almost all
-of it the three-letter `app`. That is the data item 4 is gated on.
-2. **[DONE 2026-10-08] Cut the release.** v4.28.0, seventeen commits since v4.27.1.
-
-**[KEPT 2026-10-26] TRIAL: Sonnet as primary. Opened 2026-10-12, decided 2026-10-26.**
-`ANTHROPIC_CHAIN_POSITION = "primary"`, so `claude-sonnet-5-5` writes the posts and
-the Gemini chain is the fallback. **Revert is one word**: set that constant to
-`"fallback"` and the 2026-10-11 behaviour returns exactly, no other change needed.
-
-*Basis is craft, not metrics, and that is the honest version:* Frederik prefers how
-Claude writes. The supporting evidence is weak and recorded as weak — `gemini-3.7-flash`
-drew **zero of ten** blind picks across two sessions and four articles, but ten picks
-cannot carry a conclusion and the 2026-10-10 result did not replicate. Sonnet over Haiku
-because the 2026-10-12 picks split 1-1, which at n=2 is no information rather than a
-tie; what was informative is *which* article each won — Haiku took the one with an
-obvious angle, Sonnet the dry tabular-ML benchmark. The Curator's diet is mostly dry
-(arXiv held 79 of 105 candidate slots historically), so an edge on hard material is an
-edge on most real runs. Cost is not the deciding factor: ~$3/month against ~$0.16.
-
-*Decide by reading the live feed*, which is this project's established method
-(2026-06-12, 2026-08-19) and costs no extra time. **A blind read is not the method
-here:** on 2026-10-12 only 2 of 18 trial entries cleared Frederik's "would I post this"
-bar, across all three models, which says the side-by-side bar is not the production bar
-and may say the prompt matters more than the model. That 11% is itself worth chasing
-separately — see the note under item 5.
-
-**Decision, 2026-10-26: KEEP.** Frederik's call, on the craft basis the trial opened
-with. `ANTHROPIC_CHAIN_POSITION` stays `"primary"`; the revert switch above still works
-if that ever changes. No count of "would I post this" yeses was taken for the trial
-window, so there is no number to set against the 2-of-20 Gemini baseline below.
-
-*What the two weeks showed, read from the live output on the day, not from the repo:*
-- **28 of 28 daily runs green, none missed.** The `model_used` log line names
-  `claude-sonnet-5-5` on 27 and `claude-haiku-5-5` on one (10-21 07:00), where Sonnet
-  overshot 300 characters twice, `validate_summary` rejected both and the chain fell
-  through as designed. Nothing unvalidated was posted.
-- **Length overshoot is Sonnet's one measurable habit:** 4 of 28 runs, against 2 of 29
-  for `gemini-3.7-flash` in the window before. Every one was caught. Not worth a change
-  on its own; worth knowing if the Curator prompt is edited.
-- **Mastodon carried the same 28.** The untagged ones are the #194 outage (four) and
-  one `mastodon_tags_empty` on 10-21, which is the reviewer working.
-
-**Unblocked by this decision:** the Mentor-prompt work under item 5, held since
-2026-10-12 so that two changes would not confound each other on the same output.
-3. **[DONE 2026-10-10] Wiki debt.** Wiki `bc7e2e6..f83dc21`, verified on the rendered
-pages rather than the raw files: `Home.md` (tests 980 → 998, the model chain now
-ending in `claude-haiku-5-5`), `Configuration.md` (the optional `ANTHROPIC_API_KEY`
-secret and `ANTHROPIC_FALLBACK_MODELS`), `Troubleshooting.md`
-(`fallback_provider_armed`), `Architecture.md` (`src/llm.py`, `fallback-probe.yml`,
-the dispatch rule and the append-after-`filter_available_models` ordering).
-
-**Most of this list was already written and the item was stale.** The scoring
-constants (`TOPIC_REPEAT_*`, `TIME_DECAY_*`, `TIER1_SOURCE_SCORE`,
-`MIN`/`MAX_GEM_CANDIDATES`, `MIN_TIER1_CANDIDATES`), the monthly `MOMENTUM_PRODUCTS`
-note, the four v4.28.0 log events, source-mixed `select_candidates` and the host
-matching were all present before today — only the fallback entries and the test
-count were genuinely missing. The v4.28.0 release recorded itself as having updated
-Home only, so the ledger over-reported the debt for two releases.
-**Lesson for `RELEASING.md` §3: check each page before carrying a debt list forward.**
-An item that overstates what is outstanding gets deferred as if it were large, which
-is how this one survived three releases.
 4. **De-bias phase 2 — bound the keyword magnitudes.** `PRODUCT` (+5) and `GROUNDBREAKING`
 (+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
 provenance. **Deliberately gated on a week of item 1's
 `keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
 which is what the abandoned landmark gate (§3) teaches against doing without data.
-5. **[DONE 2026-10-20 — RAN IT, then re-ran it after review. Item 1 worked; the claim about the model did not survive. → #210, closed 2026-10-22 with no change made]**
-**Re-run the Curator judgement test.** Position entropy cannot tell a wise choice from
-an arbitrary one; tier capture when candidate quality *varies within a batch* can
-(framing from an outside review, 2026-10-06). The baseline was unanswerable: only
-**5 of 21** batches posed a real test at all, and the model captured the top-tier item
-in 1 of those 5 — n too small to mean anything. Item 1's fix is what makes the metric
-meaningful, and it did.
 
-**Ran it, got it wrong, and re-ran it.** The first pass reported "16 of 20 batches test,
-tier capture 1 of 13" and concluded the model was the source of the arXiv skew. Codex took
-that apart on #211 and was right on all four counts: the window mixed pre- and post-fix
-runs, the tier lookup reimplemented a substring bug `source_tier()` had removed in #169,
-three runs were excluded on a criterion correlated with the outcome, and the choice counts
-had no exposure denominator. What follows is the corrected run. The method section below
-exists so the next person does not repeat the same four mistakes.
-
-**Item 1 worked, and by more than the first pass credited.**
-
-| | pre-fix (to 10-06) | post-fix (10-07 on) |
-| --- | --- | --- |
-| batches posing a real test | 2 / 6 | **14 / 14** |
-| floor-tier slots offered | **67%** (20 / 30) | 29% (20 / 70) |
-
-Four of the six pre-fix mornings had an all-floor shortlist — five arXiv items out of five,
-so the model had nothing to choose between. After the fix every batch varies. The scorer is
-doing its job on the supply side, which is the precondition this metric was waiting on.
-
-*That 67% is itself a correction Codex caught on #211.* The first version of this table said
-pre-fix exposure was **0%**, which contradicted the sentence above it. The cause was in the
-script, not the prose: exposure was averaged over the batches that *vary*, and the four
-all-floor batches do not vary, so the batches that are the entire pre-fix story were excluded
-from their own denominator. Same class of error as the three runs dropped on the first pass.
-**Exposure is counted over every batch in the window, including the ones that pose no test.**
-
-**Tier capture, post-fix: 1 of 14.** The top-tier item won once, on 10-20
-(engineering.fb.com). On 10-08 the shortlist was `[10, 10, 9, 3, 3]` and a 3 won; on 10-09
-`[10, 10, 8, 3, 3]` → 3; on 10-15 and 10-16 the same shape, same outcome.
-
-**But the exposure denominator does not support "the model reaches for arXiv".** Floor-tier
-items are **29% of offered candidate slots and 43% of choices** — over-selected by roughly
-1.5×, not grabbed indiscriminately. At n=14 that margin is **not statistically meaningful**,
-and the honest statement is the weaker one: the scorer now offers variety, the top tier
-rarely wins, and whether that is a model preference or noise is **not established by 14
-runs**. The first pass claimed it was. It should not have.
-
-**What does survive.** Tier capture of 1 in 14 is low however the floor picks are read, and
-seven of the thirteen misses went to tier 7–8 (the-decoder, simonwillison) rather than to
-the floor. Those are plausibly the *better* read — Simon carries a contestable claim and a
-corporate blog usually does not — which means tier capture is measuring the wrong thing as
-much as it is measuring a problem. A metric that separates "chose a lower tier that reads
-better" from "chose the floor" is a precondition for acting on any of this.
-
-**And the 14 runs are two selectors, not one** (Codex, #211). `claude-sonnet-5-5` became
-primary after the 10-12 morning run, so the window is 6 Gemini mornings and 8 Sonnet ones.
-Taken from each run's `model_used` log line rather than from the trial's opening date:
-
-| post-fix arm | runs | floor offered | floor chosen | top tier captured |
-| --- | --- | --- | --- | --- |
-| `gemini-3.7-flash` (10-07 → 10-12) | 6 | 30% | 50% | 0 / 6 |
-| `claude-sonnet-5-5` (10-13 → 10-20) | 8 | 28% | 38% | 1 / 8 |
-
-Pooling was not hiding a reversal — both arms over-select the floor, Gemini by 1.7× and
-Sonnet by 1.4×. What the split actually shows is how little is behind the pooled number:
-**six runs and eight runs**. Neither arm can carry a claim about either model, and the one
-top-tier capture in the whole window is Sonnet's, on 10-20.
-
-Tracked as **#210** — **closed 2026-10-22 with no change made.** The issue set its own
-precondition, to read the floor picks as posts before touching anything. That was done:
-all six pulled from the public feed, and they are good posts. Five of the six open with a
-finding rather than a summary, each carries concrete specifics, and the closing lines land
-("Tokenization was a compute crutch", "Slow and correct can still be wrong"). So tier
-capture measures provenance, not quality — a tier-10 corporate announcement usually
-carries no contestable claim, and a contestable claim is what this voice needs. Acting on
-1-of-14 would have optimised away exactly those posts. The metric this item asked for was
-never built, deliberately: it was a precondition for deciding whether a problem existed,
-and reading the output answered that more cheaply than building it would have.
-
-*Left on the table rather than built, because nothing shows it is needed:*
-`select_candidates` already mixes the shortlist and `calculate_relevance_score` already
-penalises a repeated **topic**, but nothing penalises the same **host** winning
-repeatedly — six arXiv papers can be six distinct topics and pay nothing. A host-repetition
-cooldown beside the topic one would be about ten lines with no prompt edit and no voice
-risk. Whether 43% of mornings from one host reads as monotonous is a question about
-variety rather than quality, and it is a reader's call, not a measurement.
-
-*Method, so it can be re-run — and so the first pass's four errors are not repeated:*
-score the window from **2026-10-07 only** (the scoring fix's first live run; earlier runs
-answer a different question); tier every link with **`src.news.source_tier`**, never a
-dict lookup over `SOURCE_TIERS`, because production matches on hostname with exact-or-suffix
-and most-specific-wins and a substring test was removed in #169 as a spoofing hole; take the
-chosen link from the **public Bluesky feed's link-card URI**, not from `chosen_link` in the
-log, because `main.py` only logs that inside `curator_link_realigned` when the choice
-*differs* from the top item, so absence correlates with the outcome; and report **offered
-versus selected** per tier, since a choice count alone cannot distinguish preference from
-availability, counting exposure over **every** batch in the window and not only the ones that
-vary, or the all-floor batches vanish from the denominator they define; and read `model_used`
-off each run, because the window spans a change of primary model and the date the trial opened
-is not the date the model changed.
-
-**Data point, 2026-10-10 (n=1, human):** during the fallback model trial, `ttok 1.0`
-scored **12.1**, second-highest of that day's pool, and Frederik — reading five models'
-posts about it blind — reported he "didn't quite catch the second article as being
-interesting" and could not judge voice on it. So a near-top score bought an item the
-author found unpostable. That is the gap this item is about, observed from the human
-side rather than from tier capture: the scorer ranks *provenance and keywords*, and
-nothing in it ranks whether there is a "so what". One observation on one article
-proves nothing on its own; it is recorded so the 10-20 re-run has something concrete
-to look for, and because the same pool's top item (`Python 3.15`, 8.8) read fine.
-
-**Measured 2026-10-12, and it is bigger than this item.** See the cold-read finding
-immediately below: the thing that predicts a postable Curator post is whether the
-item carries a *contestable claim*, and no scoring signal rewards that. Tuning
-keyword magnitudes (item 4) optimises a different axis.
-
-**FINDING 2026-10-12 — the prompt is the binding constraint, not the model. Mentor is 0/10.**
-
-Frederik read the last 20 live posts (2026-10-02 → 10-12) cold, stripped of dates,
-engagement and model labels, answering one question: *would I post this?* **He said yes
-to 2.** That 10% **replicates the 11%** (2 of 18) from the same day's blind model trial,
-which settles a confound: the side-by-side bar and the production bar are the same bar,
-so the trial figure was not an artefact of reading variants back to back. All 20 posts
-were Gemini-written; the Sonnet trial began at 14:30 that day.
-
-**Split: Curator 2/10, Mentor 0/10.** Mentor is half the output and produced nothing
-publishable in ten attempts.
-
-**The yeses contest; the misses relay.** Both picks name a specific party's specific
-claim and undercut it ("Sixteen million downloads … *sounds like adoption until you
-check what was tuned*"; "Odyssey-3 *claims* top physics scores … *Demos show capability.
-Production needs rigor.*"). That is the shape of Frederik's own canon line, *"Your
-sell-in numbers tell you what left your warehouse."* The 18 misses are competent and
-readable. They inform and take no position. **Useful negative result:** the two Pioneer
-posts in the window (Dartmouth 1955, Dijkstra's 1,318 manuscripts) are concrete, dated
-and specific, and were both rejected — so concreteness is *not* sufficient. Taking a
-position is the variable.
-
-**Why Mentor fails structurally.** The Curator receives an artefact: a named party, a
-number, a URL. The Mentor receives a category from `MENTOR_TOPICS`. There is nothing to
-push against, so it must invent both subject and opinion, and generality is the only
-available output. Three things in `SYSTEM_INSTRUCTIONS_MENTOR` then push it further that
-way: the line *"Observational is often stronger than prescriptive"* explicitly asks for
-an unattributed general pattern; the task line asks it to *"find the angle on this topic
-that most people don't articulate"*; and **its one worked example is itself an aphorism**
-("The first 10 minutes of a retro set the tone for the next six weeks"), which matters
-because models anchor hard on examples.
-
-**Candidate fixes, by expected effect:** replace "observational over prescriptive" with a
-requirement to name a belief and undercut it; swap the exemplar for two of Frederik's
-real lines; require a concrete anchor (a number, a named tool, a specific situation),
-which `STYLE_GUIDELINES` demands and the Mentor prompt never asks for; deepest and
-largest, feed Mentor an artefact rather than a topic.
-
-**Deliberately not acted on before 2026-10-26.** The Sonnet trial is running. Changing
-the Mentor prompt now moves two variables at once and neither result would mean
-anything — the failure mode `RETRO_2026-05-08.md` exists to warn about.
-
-**2026-10-26: the subject was the binding constraint, not the prompt.** Frederik re-read
-the 28 live Sonnet-trial posts and marked voice and subject separately. Voice passed 27 of
-28. Subject passed 21 of 28 overall, but only 2 of 7 Mentor posts. All five rejected Mentor
-subjects came from the developer-flavoured seeds: drafts versus blank pages, writing for
-someone who has decided, technical-looking decisions, senior code review, advice versus
-outcomes. His reason: *"I'm not a developer nor do I document features ... People who know
-me would not understand I posted this."*
-
-So the prompt fix was tested and not shipped. All three rewrites of
-`SYSTEM_INSTRUCTIONS_MENTOR`, sampled through the real `generate_content`, turned their own
-wording into the post's opener: "The belief:" on 4 of 5 posts, then "Everyone says", then
-"Early in your career you assume" on 5 of 5. With Sonnet writing, the unchanged prompt
-already takes positions.
-
-**What shipped instead: `MENTOR_TOPICS` rebuilt from his own articles.** Read live
-2026-10-26. Frederik kept 21 of 25 drafted seeds. Sources:
-
-| Seeds | Source article |
-| --- | --- |
-| right things vs things right; listening first; validating your read | fvh.com "Juiste dingen doen, dingen juist doen en dingen gedaan krijgen" (2021-12-28) |
-| a tool as a way to avoid the work | fvh.com "Dingen gedaan krijgen versus dingen doen" (2019-11-06) |
-| leaving when the board stops listening to numbers | fvh.com "Opstarten als zelfstandige…" (2017-12-29) |
-| a network in your phone; "thank you", "well done", "no" | fvh.com "Duizend dagen zelfstandig" (2019-09-22) |
-| change not forced by running out of the old way | fvh.com "Het stenen tijdperk is niet gestopt…" (2019-06-10) |
-| maintenance mistaken for progress | fvh.com "Over mobiliteit en tijd" (2019-04-28) |
-| a project against a dated plan, milestone by milestone | fvh.com "Verbouwen in de hoogste versnelling" (2010-07-12) |
-| supplier negotiation prep | askfred.be "Preparing a Negotiation Box for Supplier Deals" (2023-12-07) |
-| a sales team that stopped trusting its CRM data | askfred.be "CRM Data Quality: What Goes Wrong and How to Fix It" (2024-10-23) |
-| a shared library nobody uses | askfred.be ResourceSpace DAM post (2016-11-10) |
-| change management in the last two weeks | askfred.be "The tool rarely fails. Adoption fails." (2026-04-29) |
-| the unofficial spreadsheet | askfred.be "Digital Transformation in SMEs…" (2026-06-13) |
-| sell-in vs sell-through | askfred.be "Knowing Your End User When You Never Meet Them" (2026-03-10) |
-| an AI vendor that survives five years | askfred.be "Don't buy the best AI. Buy the one that survives." (2026-05-30) |
-| four AI-practice seeds | kept from #208 |
-
-Cut by Frederik from the draft: independent's insurance, who helps you start out, the
-post-migration cleanup, measuring after every change. The 2026 askfred.be posts are partly
-AI-rewritten, so they lend a subject only. **Lesson for the next pool edit: judge a seed by
-"would people who know me recognise this as mine", not by whether the post reads well.**
-Sonnet writes a wrong subject well, which is exactly why the earlier reads missed it.
-
-**Engagement cannot adjudicate this, and was checked.** Across the same 20 posts: 10
-likes, 1 repost, **0 real replies**. The six `replyCount` hits were the bot replying to
-itself, the second part of two-part threads — verify with `getPostThread` before ever
-reporting replies as engagement. The whole range is 0–2 interactions per post and the
-newest pick was 2 hours old against 235 for the oldest, so there is no variance to
-explain and no age-fair comparison to make. One mildly encouraging number: 12 of 20 drew
-at least one interaction, against the historic 41-of-42-zero baseline in `AGENTS.md`.
+<!-- original numbering kept: closed items 1-3, 5 and 7 are in BACKLOG_ARCHIVE.md -->
 
 6. **Explicit `--mode`.** `main.py` picks the mode from `current_hour < 11`, so a dispatch
 delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
 observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it
 needs a four-hour delay, so this is cheap insurance, not a live defect. The workflow
 already has a `force_mode` input; the cron dispatches just do not pass it.
-7. **Remaining open issues** — fix when convenient (see §2)
+
+<!-- original numbering kept: closed items 1-3, 5 and 7 are in BACKLOG_ARCHIVE.md -->
+
 8. **Observational items** — wait for more runs, then decide (see §3)
 9. **The plan** — `PLAN_engagement.md` covers everything else (see §4). Phase 2 and 3 stay
 data-gated. Phase 4b is code-complete and **parked by decision**, not merely dormant
 (see §1).
 
-**CLOSED 2026-10-06 — voice: the em-dash rule works, no follow-up needed.** The 2026-09-12
-rule said to add reject-and-regenerate only if `em_dash_detected` did not fall to ~0. Across
-44 production runs from 2026-09-13 to 10-06: **`em_dash_detected` 0, `hype_words_detected`
-0.** Both detectors stay as measurement; neither needs escalating to a hard reject.
-
-Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for the retro.
-
 ---
 
-## §1 — Goal change executed: Option 1 (build a following) — **SUPERSEDED 2026-10-06**
+## §1 — Operating goal (since 2026-10-06)
 
 > **SUPERSEDED 2026-10-06.** The goal is now: run reliably, cost no recurring human time,
 > never embarrass its author. Growth is deprioritised. The record below is history, not
@@ -448,42 +64,13 @@ Post-length hard enforcement **shipped in v4.15.3** (2026-04-22) — see §2 for
 > in 28 days, otherwise revert (#230). This is one test, not a change to the goal:
 > `AGENTS.md` still applies to everything else.
 
-**2026-05-08:** explicit commitment to Option 1 over Options 2 (representation) or 3 (craft). See `RETRO_2026-05-08.md` for the framing decision and `PLAN_engagement.md`'s GOAL CHANGE block for the phase re-ordering.
-
-### Shipped 2026-05-08 → v4.19.0
-
-Nine commits (`8c99378` … `27a1b1f`) landed Option 1 work and were validated in production over the following days: `gemini-2.5-pro` as primary model, `growth.json` follower-count snapshots, Curator "lead with the finding" prompt rewrite, Mentor topic pool 4 → 12, ruff CI integration. See the 2026-05-11 release notes for the substantiating live-feed read.
-
-**Reading discipline (binding per retro):** pull the live feed via `app.bsky.feed.getAuthorFeed` and read the posts. Metrics are not a substitute for reading.
-
-### Next after validation
-
-1. **Phase 4b — proactive replies** [**code-complete, dormant**]. The only audience-acquisition lever in the plan. Watchlist exists from Phase 4a (two seeded handles, kept in the gitignored `scripts/watchlist_candidates.py` / loaded at runtime from the `PROACTIVE_REPLY_WATCHLIST` env var — named targets are out of the public repo as of 2026-06-15). **Shipped:** commit 1 `0d04426` (state schema + I/O); commit 2 `639fa05` (`generate_proactive_reply` + SKIP contract); commit 3 `f0484b6` (scan/filter/pick/stage); commit 4 `1f3585e` (scan workflow + entry point); commit 5 `6e1e838` (approve/reject + posting workflow — first commit where a reply can actually go live on Bluesky, via explicit `workflow_dispatch action=approve`). Daily run is unchanged; kill-switch verified intact across all five commits. **Both workflows ship dormant.** Production activation requires manual steps: enable both workflows in the Actions UI; add a cron-job.org trigger for `proactive_scan.yml` at ~10:00 UTC; manually fire `approve_pending_reply.yml` when you want to approve or reject a staged draft. Phase 4b is complete as code and dormant — the README notes the pipeline (`src/proactive.py`, "dormant; human-gated"), and the real-handle scrub since then also covered the few-shot examples and test fixtures (Type B/C, #63/#64). The 2-week production validators per `PLAN_engagement.md §4b` begin from the day the workflows are activated. See `PLAN_engagement.md §4b` for the full map.
-2. **Custom-feed outreach** (user action, async, ~1h). Identify 3–5 relevant AI/tech Bluesky custom feeds; ask curators to include `@askfred.be`.
-
-~~Bluesky session cache fix~~ shipped 2026-05-15 in v4.20.1 (`76f1287`) — cache actually works now, was decorative before due to missed REFRESH events.
-~~Reach data spike~~ shipped 2026-05-12 in v4.19 (`48333a9`) — Bluesky exposes `quoteCount` and `bookmarkCount`, not impressions; both now captured in `post_metrics.json`.
-
-**Phase 2 (weekly digest) and Phase 3 (scoring multipliers)** remain data-gated and lower priority under Option 1. Building them before 4b ships is the trap the retro documented.
+The Option 1 history (2026-05-08 to 2026-10-06) is in [`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 
 ---
 
 ## §2 — Closed issues
 
-Nothing here is open. Every item this section tracked was resolved, and the detail
-lives where it belongs: the commit that fixed it, its PR, and the release notes.
-
-The two lessons that were worth keeping are promoted into `AGENTS.md` review
-priorities §3 (capture the error message, not just its type) and §4 (state-persistence
-failures log at ERROR, not WARN) — binding rules rather than stories.
-
-Resolved here, newest first: the 2026-09-09 freeze-audit leftovers (#133–#139); phantom
-writes to post-dependent state (v4.25.1); the duplicate-source-posts follow-ups
-(`2be1148`, `76f1287`); the whole-codebase mypy gate; `ruff` in CI; post-length hard
-enforcement (v4.15.3); broken-promise teasers; the `post_metrics.json` formatting-feature
-schema; the Bluesky session cache; the model-priority chain; and the Imagen 3 image path.
-Full evidence for the freeze audit is in its ledger at
-`C:/claude/bluesky-bot/scratch/AUDIT_2026-09-09_ledger.md` (local, not in the repo).
+Nothing here is open. The summary of what was resolved is in [`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 
 ---
 
@@ -513,13 +100,20 @@ Full evidence for the freeze audit is in its ledger at
 - **`google-genai` 2.x migration.** Currently pinned at `1.75.0` and shipping fine — `gemini-3.5-flash` is producing sharp content. Latest is `2.2.0`, but 1.x is still receiving releases (`1.75.0` exists alongside `2.2.0`), no Dependabot alerts open against the package, and no 2.x capability is on the immediate roadmap. Migrating now is the exact "infrastructure-over-output" trap the 2026-05-08 retro named. Triggers to revisit: (a) a run fails with a 1.x-specific SDK bug (diagnostic surface will catch it), (b) Dependabot files a CVE, (c) Phase 4b or another planned feature needs a 2.x-only capability. Until one fires, the pin stays.
 - **`config.py` split — trigger long since passed.** The `utils.py` half of this item is **done**: #81–#84 split it into `state_store` / `net_safety` / `retry` / `news`, and it is 196 lines now, not the 923 this item was written against. `config.py` went the other way — 525 lines then, **1007 now**. The remaining plan: constants stay, prompt text moves to `prompts.py`, curated data to `src/data/`. Mechanical, ~3h with tests. Not urgent, but stop citing a trigger that already fired.
 - **Mentor estimation-topic over-saturation — revisit if it recurs.** A snapshot on 2026-05-21 showed 4 estimation-variant posts in 25, suggesting the seed "estimating your own time vs estimating someone else's" was over-firing. On re-check 2026-05-24, post-rewrite data showed 1 estimation post in 2 Mentor runs — within expected range for a 12-seed pool with 5-slot dedup (`main.py:553`). The earlier saturation likely came from the pre-2026-05-15 pool where broad anchors like "Career" pulled toward estimation under multiple seeds. **Revisit if Mentor shows >25% estimation rate over a 2-week window.** Fix options when triggered: widen dedup window from 5 to 8, or split the estimation seed into two narrower seeds, or drop it temporarily. Don't act prophylactically — let the validators run.
-- **~~Lockfile-check vs Dependabot `--strip-extras` friction~~ — CLOSED 2026-10-27 by #234.** Dependabot kept proposing `google-auth[requests]` where CI strips the extra, so every Dependabot PR failed `lockfile` until someone hand-edited it (#46, #47, #49→#50), and from #98 the bumps were switched off altogether. The fix went the other way from the one parked here: CI keeps `--strip-extras`, and `.github/workflows/dependabot-lockfile.yml` regenerates both lockfiles with the same `pip-compile` commands on every Dependabot PR and pushes the result back. Weekly minor/patch bumps are on again, as one grouped PR; #235 was the first and passed without a hand-edit.
 - **Audit script Mastodon path.** `scripts/audit_watchlist.py` returns opaque HTML errors when the Mastodon side fails. **2026-05-05**: added a `account_verify_credentials` preflight that runs once before iterating candidates and surfaces a clear message ("token belongs to @user" on success; "MASTODON_API_BASE_URL is wrong / token under-scoped" on failure with the curl command to verify). Root-cause fix is still in `.env` — the user has `MASTODON_API_BASE_URL=https://mastodon.social/@askfred` (a profile URL) where `https://mastodon.social` (the API base) is needed. Bot's posting still works in Actions because the GitHub secret has the right value; only local audit runs are affected. Revisit when adding new Mastodon-only candidates would benefit from automated scoring.
 - **Voice formatting A/B — Track C is moot under the current goal.** Observation 2026-04-27: the feed feels flat, so maybe occasional emojis or a topical hashtag would lift engagement. Track A (instrumentation) and Track B (image reliability) both shipped. **Track C never will in this form:** it was gated on "4+ weeks of engagement data" plus brand approval, and engagement data at this scale is noise (68 posts, 42 interactions, 41 of them zero), so it cannot decide anything. `AGENTS.md` now says not to tune on it.
 
   What survives is the brand question, which never needed the data: **voice is a brand decision, not a metric decision.** If emojis or question hooks are ever wanted, it is Frederik's call on how the feed should read, made once and applied consistently — not an experiment. A reader returning to a feed that starts using emojis after 137 dry posts notices the inconsistency either way.
 
   **Not precedent:** v4.26.0 shipped Mastodon discovery tags outside this gate, on a *mechanism* argument (a followed tag is Mastodon's discovery engine, the tags sit at the broadcaster, generation is unchanged). That says nothing about emojis, question hooks, or hashtags on the Bluesky copy.
+
+- **Two follow-ups from the 2026-10-20 finding (the afternoon pool, #208).** *Left open on purpose, recorded rather than fixed:* six of the original 19 Strategist
+  topics are broad territory words of exactly the shape the v4.20 finding says produces soft
+  output ("mental health and burnout prevention", "digital minimalism and focus", …). They
+  have never run, so there is no evidence either way. Read the first weeks of Strategist
+  posts and cut the ones that come out soft. *Also open:* `get_recent_posts` fetches
+  `limit=10` — about five days — so when a topic comes round the model cannot see its own
+  previous take, which is why the repeats are near-verbatim rather than merely similar.
 
 These are judgement calls, not data questions. Engagement at this scale cannot settle any of them — decide by reading the feed.
 
@@ -543,18 +137,9 @@ in the priority order above. Stage 0 (native structured output for the Curator c
 is the one piece worth doing on its own merits regardless of the rest. Grew out of the
 single Anthropic fallback shipped in #180.
 
-**`docs/PLAN_engagement.md`** is the plan covering everything that needs sequencing:
+**`docs/PLAN_engagement.md`** is parked with the growth goal (§1). Its phase table is in
+[`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 
-| Phase | What | Effort | Trigger |
-|---|---|---|---|
-| 1 | Capture: metrics + feed health + per-post idempotency | ~5h | **Now** (this is §1 above) |
-| 2 | Surface: weekly digest (posts + feeds + strategist-fallback freq + partial-delivery counts) | ~1h | After Phase 1 has run 2+ weeks |
-| 3 | Act: scoring multiplier, Mentor topic weighting, pioneer pruning | ~3h | After 4+ weeks of Phase 1 data |
-| 4a | Recon: virtual-follow watchlist script | ~1.5h | Anytime after Phase 1 ships |
-| 4b | MVP replies: 2–3 handles, human approval gate | ~4h | After 4a produces ranked watchlist |
-| 4c | Expansion: 8–10 handles, gate maybe lifted on trusted handles | ongoing | After 2+ weeks of 4b approved-reply data |
-
-Total path-to-finish: ~14.5h spread over 2–3 months of calendar time, gated by data accumulation. Each phase has explicit success criteria that gate the next.
 
 ---
 
@@ -566,32 +151,6 @@ Total path-to-finish: ~14.5h spread over 2–3 months of calendar time, gated by
 
 ## Changelog
 
-- 2026-04-22: Pioneer-dimension telemetry item removed from §5 — subsumed by engagement plan (post metrics already capture `pioneer_id` context, so pioneer-category performance falls out of the digest for free).
-- 2026-04-22: Consolidated §5 future ideas into §4 plans. Promoted per-post idempotency and feed health into their own plan docs. Strategist-fallback frequency folded into the engagement plan's digest (free rider — `mode` is in the post_metrics schema).
-- 2026-04-22: **Collapsed five plan files into one.** `PLAN_engagement.md` is now THE plan, with four phases covering metrics + feed health + per-post idempotency (Phase 1), weekly digest (Phase 2), scoring feedback (Phase 3), and proactive replies (Phase 4 a/b/c). Deleted: `PLAN_engagement_feedback.md`, `PLAN_per_post_idempotency.md`, `PLAN_feed_health.md`, `PLAN_proactive_replies.md`, `PLAN_v4.16_slim.md`. The v4.16 slim refactor moved to BACKLOG §3 as a one-liner with the layout inline (no plan doc needed for a mechanical file split). §5 removed entirely — the unified plan structure makes a "future ideas" bucket redundant; new ideas either fit into a phase or live in §3 until a trigger.
-- 2026-08-29: **mypy foothold → whole-codebase gate.** All 32 known mypy errors across the 8 remaining modules cleared incrementally (#88–#92); CI now type-checks `src/ main.py` wholesale. Two real fixes surfaced (`main.py` gather `BaseException` guard; `agents.py` Gemini `.text` Optional contract); the rest were over-narrow annotations. Closed as a §2 resolved entry; the §3 `pyproject.toml` migration trigger is now fired (mypy + pytest-cov both landed).
-- 2026-08-29: **`pyproject.toml` migration.** `requirements.in` → `pyproject.toml` (runtime deps + `dev` optional-dependency group). Pinned lockfiles kept: `requirements.txt` (runtime, production) + `requirements-dev.txt` (runtime + dev, CI), both generated from `pyproject.toml` by `lockfile-check.yml`. Dev tooling (ruff/pytest/mypy/pytest-cov) no longer installs into production runs. §3 trigger closed.
-- 2026-08-31: **Request-level SDK timeout on every google-genai call (shutdown-hang fix).** Deferred from PR #101, where Codex noted the `asyncio.wait_for` around `generate_post_image` cancels only the awaiting coroutine, not the `asyncio.to_thread` worker — so a truly-hung synchronous call keeps its thread alive and `asyncio.run()` blocks in `shutdown_default_executor()` at exit, starving `daily_post.yml`'s post-run Gist snapshot. Fix: centralised client creation in `agents._get_client`, which sets `HttpOptions(timeout=IMAGE_GENERATION_TIMEOUT_SECONDS * 1000)` (ms) so the call itself raises and the thread finishes; covers text posts, image generation, and model discovery uniformly. `wait_for` kept as belt-and-suspenders (POST still ships without the image). Verified on the runner first (image-probe extended: generous per-request/client timeout still returns image bytes for the live `IMAGE_MODEL`; a 1 ms budget fails fast — proving the ms unit).
-- 2026-08-31: **De-staled the image-probe "model is dead" notes (#103, doc-only).** The #102 probe run showed `gemini-3.1-flash-image` returning image bytes again (608 KB), contradicting the docstring in `scripts/probe_image_models.py` and the comment in `image-probe.yml`, which still said it "went unreachable ~2026-08-26". Both reframed as history (brief outage → reachable again by 2026-08-31) plus a standing diagnostic that also verifies the request-level `HttpOptions` timeout; the `# (now-dead) model` candidate comment corrected to `# the bot's live IMAGE_MODEL`. Comments/docstrings only — no behaviour change.
-- 2026-08-31: **Release v4.24.0.** Cut from `main` after #98–#104. Bumps the version (README title, `main.py` startup banner, `pyproject.toml` `[project]`, BACKLOG header) v4.23.0 → v4.24.0. A visuals-and-resilience release: 100% image rate + Curator fallback image (#101), image telemetry + FORCE_MODE/FORCE_IMAGE hooks (#100), the request-level SDK timeout shutdown-hang fix (#102), the image-probe diagnostic workflow (#99), doc de-staling (#103/#104), and dependabot narrowed to security-updates-only (#98). No voice/content-shaping change beyond the version string; #101's 100%-image behaviour is the one runtime change and it landed earlier.
-- 2026-09-03/04: **News coverage: primary-source feeds + feed-health alert + image rate 0.85.** Prompted by missing an obvious Google model launch. Root cause had two halves. **Half one, fixed here — coverage:** removed the dead `www.anthropic.com/news.rss` (404 since the claude.com rebrand, no usable replacement exists — it had been silently failing every run) and added verified-live primary vendor blogs (`blog.google/technology/ai`, `blog.google/products/gemini`, `mistral.ai`, `developers.openai.com`, `blogs.nvidia.com`) with matching `SOURCE_TIERS`, so a flagship launch enters the pool first-hand at tier 10 instead of arriving hours later via a lower-tier aggregator. **Feed-health alert:** `check_feed_health_alerts` warns on a *configured* feed that has died quietly, as **two distinct time-based signals**: **broken** (no successful fetch in `FEED_HEALTH_BROKEN_AFTER_DAYS`) and **stale** (fetches fine but no usable entry in `FEED_HEALTH_STALE_AFTER_DAYS`, catching a 404-served-as-HTML or a format change while tolerating a genuinely quiet publisher). Deliberately not merged into one metric: a single-metric version oscillated between false-positiving on quiet feeds and missing feeds whose entries never parse — different failure modes, different thresholds. Time-based rather than counted over recent attempts, so it does not depend on runs-per-day. Scoped to `RSS_FEEDS` so a removed feed's row cannot alert forever, and skips feeds with no successful fetch on record (no baseline). **Image:** `IMAGE_GENERATION_PROBABILITY` 1.0 → 0.85 for cadence variety. Gates images the bot *generates* — the Mentor/Strategist post image and the Curator fallback card image — on both paths (Curator is the morning mode; gating only the afternoon halved the intended rate). It deliberately does not strip an article's own OG thumbnail: that is the publisher's image and part of a normal link card. **Half two, deferred:** the magnitude-blind −12 topic-diversity penalty that buries a flagship story when we posted on its topic recently. A "landmark" gate to waive it went through ten Codex review rounds without converging — first as launch-language parsing (leaked on word order, punctuation, decimal versions, mid-word stems, field boundaries), then as publisher-consensus counting (blind to headline wording, then inflated by loose name matching, then split by aliases, then by same-org domains). Split out to its own PR rather than hold this release: see the `landmark-consensus-gate` branch. The feed work above already addresses the original miss from the coverage side.
-- 2026-09-04: **v4.25.1 — phantom writes to post-dependent state.** `persistence_stage` wrote three cooldowns unconditionally (`recent_topics`, `recent_mode_topics`, `pioneer_recent`) because `main()` calls it regardless of outcome and `AutomationPayload` dropped the `sent_uris` `BroadcastPayload` already carried. A run that delivered nothing therefore suppressed content that never ran — a false −12 topic penalty, a skipped Mentor topic, and a Pioneer entry burning its multi-week cooldown unposted (from a block commented *"only when a pioneer post actually fired"*). Separately the Curator recorded `news_items[0]`'s category even when the model wrote about a different item via the `chosen_link` contract (#51) — the link card was realigned, the topic memory was not. Both fixed in #110: `delivered = bool(bsky_sent_uris or mastodon_sent_ids)` gates every post-dependent write, and the posted category is resolved once in `broadcasting_stage` alongside the link-card realignment so the two consumers of the choice cannot drift again. No migration needed (both stores self-heal). **Process note:** the approach was reviewed by Codex *before* implementation (#110 began as a plan-only draft) — it passed review first time, against eleven rounds for the abandoned landmark gate built the other way round.
-- 2026-09-09: **v4.26.0 — Mastodon-only discovery tags.** Hashtags help posts spread on Mastodon and do nothing on Bluesky, because only one of those platforms uses followed tags as a discovery mechanism. So 1–2 tags are appended to the Mastodon root post only, at broadcast time, and the Bluesky copy is untouched. Root post only: it is what gets boosted, and tagging every post in a thread spams the tag timeline with one item.
-
-  **Rejected first: a fixed per-category tag map.** It was built, then thrown away — it would stamp the same two tags on every Mentor post forever (a bot tell in the profile view) and put posts in tag timelines they do not belong in. The repo already held that position: `_extract_style_fingerprints` tracks `repeated_hashtags` and tells the model to vary its selection. Tags are instead named per-post by a model that reads the finished text.
-
-  **Four gates stand between a suggestion and the feed.** A lexical gate rejecting `BANNED_HYPE_WORDS` / `BANNED_TEASER_PATTERNS` (normalised to bare alphanumerics and matched by containment, so `#GameChanging` and `#RevolutionaryAI` are caught) plus the mood tags in `MASTODON_TAGS_EXCLUDED`; a semantic review by a **different** model (`gemini-3.7-flash` proposes, `gemini-3.5-flash` reviews, and **no distinct reviewer means no tags**); a strict verdict parser requiring a complete decision set (real ints, in range, no duplicates, full coverage) or the whole response is discarded; and the shared `MAX_HASHTAGS_PER_POST` ceiling applied to the post *total* rather than per source, so a Mastodon post can never carry more hashtags than the same post on Bluesky is allowed.
-
-  **Cannot fail or delay a run.** Tagging happens inside the Mastodon coroutine, so both broadcasts start together and only Mastodon pays for its own tags; one attempt per call inside a shared 20s budget; every failure path — model error, unparseable verdict, nothing surviving either gate, the deadline expiring, no Mastodon token — ships the post untagged. `BroadcastResult.delivered_texts` carries what actually went on the wire, so a metrics row cannot describe a post that was never sent.
-
-  **The process is the story.** The feature was enabled, reverted fifteen minutes later, and re-enabled two hours after that. Both holes that forced the revert were found by Codex review that landed ~90 seconds *after* each merge and was not read in time. What changed the outcome was not more care in the abstract but a specific discipline: measure **rejection**, not agreement. Ten posts the model tagged sensibly said nothing about what it does with a bad tag. See §3 for what the probe still cannot prove.
-
-- 2026-09-09: **Freeze audit, #121–#131.** A whole-system audit against the freeze tag `audit-freeze-2026-09-09` (v4.26.0). Two reviewers, Claude and then Codex, got the same fixed scope, and every finding was cross-examined with a trace before any code was written. Ten fixes merged: the Curator no longer marks every candidate as seen (#121); a failed state read no longer erases the seen state (#124) or `replied_to` (#130), and skips the mention pass so nobody gets answered twice; a 3xx is no longer reported as a stored write (#122); a bad og:image no longer discards the headline (#123); an idempotency key stops a Mastodon timeout retry from double-posting (#125); each mention reply is recorded as it lands (#126); state is persisted before the best-effort stages (#128); settings knobs nothing read were removed (#127); and four small rows were batched, including the mypy config moving into `pyproject.toml` (#129). Six confirmed findings were left for later and filed in §2 (#131). Five were refuted under cross-examination and are recorded in the audit ledger so they are not re-filed.
-- 2026-09-10: **Audit leftovers, #132–#140.** Mastodon thread parts are numbered "1/2", "2/2", because Mastodon lists a self-thread newest-first (#132). Curator posts carry their source link in the Mastodon text (#133): the audit had rated this medium, and the live feed showed 4 of the last 5 Curator posts reaching Mastodon with no source. The proactive scan and the approval share one concurrency group, closing a write race before Phase 4b is activated (#134). Cleanups: an unused `handle_interactions` parameter (#135), `scripts/` in the mypy gate (#136), one image compressor for every path (#137), the publisher thumbnail validated so the Curator's fallback image can run (#138), the `src.utils` re-export shim retired (#139), and three dead items removed, including the `retry_with_backoff` decorator that #85 had kept (#140). Verified in production the same day, from the state Gist's revision history: a Curator run now adds one seen link instead of five (#121), and state is written six seconds after the post, before the metrics stages (#128). #132 and #133 wait on the next Curator run for their live check.
-- 2026-09-11: **v4.27.0 — Mastodon parity and the freeze-audit fixes.** Release of #121–#148, the first cut with `docs/RELEASING.md` (#149). Since the two entries above came the repo-quality pass (#142–#147): required CI on `main`, `check_untyped_defs`, mention replies fitted to a whole sentence, feeds 33 → 28 with Hacker News on its own feed, and a mutation run whose gaps in the posting, retry and state code are now pinned. Then #148 stopped a stray local `.bak` from making an empty state look trusted. Live-verified on the 2026-09-11 09:00 CEST run: the Mastodon source link and thread numbering, the official HN feed, and a clean run on the real entry point. Test-covered only: the reply fitting (no mentions yet), the `.bak` path (never reached on Actions), the Mastodon idempotency key, and the Phase 4b concurrency group.
-- 2026-09-12: **v4.27.1 — Feed-health issues and a second mutation run.** Release of #151–#157. A dead feed opens a `feed-health` GitHub issue after the run that notices it, and closes it once every feed is healthy (#153): its first two runs logged `0 flagged, action=nothing`. `pip-audit` replaces the Snyk check (#151). A second mutation run covered `net_safety.py`, `news.py` and `agents.py`: 213 survivors, 156 killed by new tests, the rest equivalent and listed in each test file (#155, #156). Small fixes: whole-link source-link match and the dead `hnrss.org` tier (#154), a 75-second test sleep (#152), the Mastodon bio copy (#157). 728 → 861 tests, coverage 92% → 95%. Nothing in the feed changed.
-- 2026-10-08: **v4.28.0 — The Curator picks better news.** Release of #159–#178. The topic-diversity signal had inverted: `recent_topics` only ever recorded a non-"General" topic, and "General" is the label for an item matching no topic keyword — by far the commonest one — so the window almost never advanced and whatever landed in it stayed for months, permanently penalising four of the five on-brand AI categories at a flat -12.0, more than the entire source-tier spread. The penalty is now a cooldown that decays with recency, and "General" is recorded like any other topic (#168), which also unstuck the monthly `MOMENTUM_PRODUCTS` refresh: it had failed on both of its runs with exit 127, because it installed `requirements.txt` and then validated with `ruff` and `pytest`, which live in `requirements-dev.txt`, so the +4.0 flagship-launch bonus never fired on "Gemini 4 Argon". The shortlist is now mixed by source rather than top-5-by-score, with a floor and a cap for research sources and a best-effort floor of primary ones (#173) — floors never fabricate a candidate and never promote a negative-scoring one. Time decay was 0.5/hour over 48 hours, 24 points on age alone against a tier spread of 7; it is now 0.25/hour and bounded, and age is clamped at zero (#173). Keywords match as whole words instead of substrings (#172): "app", worth +5.0, had been firing on "mapping", "approach" and "apparently", and the loose rule took ten times more points off arXiv than off everything else. Voice: no em-dashes in posts (#159, #161), and the flat corporate-LLM register is banned alongside carnival hype (#171). Mastodon's later thread parts open with their position marker, since Mastodon lists a self-thread newest-first (#160). Feed health exempts Microsoft Research, FB AI research and Raschka from the stale signal and drops Stability (#165, #167). `urllib3` to 2.8.0 for PYSEC-2026-4175/4176/4177 (#170). Every Curator run now logs the five items it offered the model (#162) and what the old keyword rule would have matched (#172) — that second line is what phase 2 is gated on. 861 → 980 tests. Live-verified on the 07:00 UTC runs of 10-07 and 10-08: both beat all three baselines from the 21 runs of 2026-09-13 to 10-04. **`RELEASING.md` §4 closed 2026-10-10**, all three boxes checked against the live evidence rather than from memory: `main`'s CI is green on the release commit `48ea597`, `gh release list` shows v4.28.0 as Latest, and the 2026-10-10 07:00 UTC run (`38032875037`) logs `--- AskFred Engine v4.28.0 ---` in its `run_started` line, which is the proof that production runs the release. It had stayed open for two days because nobody read a post-release run.
-- 2026-10-11: **v4.29.0 — A rung that is not Gemini.** Release of #180–#184. `GEMINI_MODEL_PRIORITY` was four models deep, but all four sat on one key and one account, so a revoked key, a quota decision or a surprise deprecation took the whole chain down at once and the run was simply missed. One Anthropic model, `claude-haiku-5-5`, now sits below those four (#180), armed only when the optional `ANTHROPIC_API_KEY` secret is set: unset, the chain behaves exactly as before and a missing key never becomes a failed run. The model was measured, not assumed. Five candidates ran against the real Curator prompt on 2026-10-10, 8 samples each, scored by the repo's own validators: Haiku produced valid in-bounds output 7 of 8 and was the fastest at 1.6s mean, while `gpt-6-luna` ignored the JSON output contract in 3 of 8 and was rejected on that alone. It sits **last** deliberately: two rounds of blind voice picks the same day did not show a stable preference between Haiku and the Gemini line (round 1 favoured Haiku 3/4, round 2 reversed), so this is insurance, not a second opinion. The fallback is appended *after* `filter_available_models`, never passed into it, because that call asks Gemini which models it serves, so a `claude-*` entry would be pruned at startup and gone on the day it was needed. No validator bypass (AGENTS.md §2): fallback output goes through the same JSON parse, `_validate_thread_shape`, `validate_summary` and `_apply_voice_trim`, and a test asserts that prose instead of JSON yields no post. Text only, since Anthropic generates no images, so a fallback run posts without a generated visual, which is already a supported outcome. Because this path never runs in normal operation, `scripts/probe_fallback.py` and `fallback-probe.yml` simulate a total Gemini outage and apply the production validators to the result. Docs: the wiki debt closed, with the lesson that a carried-forward debt list was two releases stale (#181), `RELEASING.md` §4 closed for v4.28.0 and the section re-armed so the post-release check is scheduled before the laptop closes (#182, #183), and the provider-agnostic BHAG written down as `PLAN_provider_agnostic.md` (#184). 998 tests, ruff and mypy clean. Nothing in the feed changed. **Live-verified** on the 2026-10-11 07:00 UTC run (`38119884058`), which ran this release's code under the previous version string: `fallback_provider_armed` logged `fallback_models=['claude-haiku-5-5']` and `chain_length=5`, `gemini-3.7-flash` wrote the post as expected, the run had no WARNING or ERROR line, and the post is live on both platforms (Bluesky 07:01:37Z, Mastodon 07:01:40Z). **Probe-verified only, not live:** the Claude rung itself. No daily run has needed it, which is the point. Its proof is the probe workflow, run `38064483957`, 3 of 3 publishable posts after walking all four Gemini models. **Superseded 2026-10-12:** the Anthropic rung was promoted to primary for a trial, so the "sits last deliberately" reasoning above describes v4.29.0 and is no longer the live configuration. See the open trial in the priority order. **`RELEASING.md` §4 closed 2026-10-12:** the banner box is satisfied by the 2026-10-11 **14:30 UTC** run (`38147420984`), which logs `--- AskFred Engine v4.29.0 ---`. That was the same day's Mentor run rather than the next morning's, because the release merged at ~09:40 UTC; CI-green on `8efe49b` and "Latest" were both checked at cut time. Confirmed still holding on the 2026-10-12 07:00 UTC run (`38215347619`): v4.29.0 banner, `fallback_provider_armed` with `chain_length: 5`, `gemini-3.7-flash` wrote the post, and not one WARNING or ERROR line in the run.
-- 2026-10-14: **v4.30.0 — A guard that never fired.** Release of #186-#194. An external security scan was run against `c00cc02` on 2026-10-13 and returned ten findings on current code; five PRs closed the four that mattered and reported honestly on the rest. The headline was not in the scan's wording: it reported an IDNA edge case in the DNS-rebinding pin, and the real defect was that **the pin had never fired at all**. `_resolver_pinned_to_ips` compared `str(host).lower()` against the parsed hostname, but httpcore hands `socket.getaddrinfo` a BYTES host, so `str(b"example.com")` rendered as `"b'example.com'"`, never matched, and the guard took its passthrough branch on every request since the day it was written. Measured against the locked httpx 0.28.1 / httpcore 1.0.9 with a resolver rebinding to `169.254.169.254`: blocked for the str form, allowed for the bytes form (#192). It is now matched on a normalised key set, and the test drives a live httpx request through a spy rather than a hand-written fixture, because a fixture is what would drift again. The other three: any Bluesky user could type `>>>` in a mention and close the untrusted region of the reply prompt themselves, since `_sanitize_mention` left the reserved markers alone; the region now carries a per-call random tag the author cannot guess, and `>>>` is deliberately NOT stripped because this account talks to a Python-literate audience where it is a REPL prompt (#189). `scripts/refresh_momentum.py` ran its own httpx client with `follow_redirects=True` and none of the repo's public-address, DNS-pin, per-hop or body-size controls, which is the one job that reached the open network unguarded (#190). A feed link carrying an embedded newline reached a published Mastodon status intact, appending a mention and a hashtag the prose never made, after `validate_summary` had already passed it (#191). That last one took two passes: the first check was the ASCII class and Codex caught that U+2028, U+2029, U+0085 and U+00A0 all render as a break while sitting outside it, so the injection stayed open through any of them for as long as the fix claimed to be closed (#193). Smaller: CGNAT shared space and deprecated IPv6 site-local passed as public addresses, fixed with `is_global` AND the existing denies rather than `is_global` alone, which would have newly ALLOWED the NAT64 prefix; safe fetches gained a working-time deadline, corrected in #193 so a task queued behind the resolver lock is not charged for the wait; and four state loaders turned a transient Gist read failure into writable empty state, presenting the repo's committed copy as current and saving it back over real history (#192, #193). Deliberately not closed and said so in the PRs: the Curator prompt still has no untrusted-data boundary around RSS title and summary, and `workflow_dispatch` still lets a repository writer pick the branch. Separately, the scan's one `informational` row turned out to be the only finding a reader of the feed could see: #187 promoted `claude-sonnet-5-5` to primary, the Mastodon tag pass is handed that same active chain but was only ever given the Gemini key, so `_sync_generate` dispatched to `generate_anthropic(None, ...)`, which raises, and `generate_mastodon_tags` swallowed it by design and shipped untagged. Every Mastodon post from 2026-10-12 14:33 UTC onward carried no discovery tags; the last tagged post was 07:04 that morning, two hours before #187 merged. The key now reaches both tag calls, and tagging selects from a declared economy list instead of the head of the chain, because the chain is ordered by who should write a post and that is not the question "who should name two hashtags" (#194). A run without the `ANTHROPIC_API_KEY` selects exactly as before. 998 → 1130 tests, ruff and mypy clean. **Live-verified** on the 2026-10-14 14:30 UTC run (`38581053907`), the first scheduled run to execute this code: it ran under the previous version string, as v4.29.0's did. The tag regression is closed on the live feed, which is the only item here a reader could see: the Mastodon post at 14:35 UTC carries `writing, persuasion` after five consecutive untagged posts, and `mastodon_tags_generated` names `model: claude-haiku-5-5`, `reviewer: gemini-3.7-flash` — both halves of #194 at once, the economy rung doing the proposing rather than Sonnet, and a cross-provider pair rather than two models of one family. `model_used` shows `claude-sonnet-5-5` wrote the post, so the trial is still running. The run logged no WARNING and no ERROR line at all: `fetch_deadline_exceeded`, `url_rejected_unsafe_chars`, `mastodon_source_link_rejected`, `mastodon_tags_failed` and every `*_read_untrusted` and `*_gist_malformed` event were absent, which is what a healthy run of this release looks like — the new guards are silent by design and only speak when they refuse something. Both platforms delivered at 14:35 UTC. **Test-covered only, not live-verified:** everything a daily run cannot exercise, which is most of the security work. Nothing in that run resolved an IDNA hostname, met a slow-drip server, hit a CGNAT address, received a hostile mention or read a corrupt Gist payload, and a green run does not imply any of it. The DNS-pin fix in particular is proven only by the test that drives a live httpx request through a spy. **`RELEASING.md` §4 CLOSED retroactively 2026-10-21:** the 2026-10-14 14:30 UTC run still logged v4.29.0, correctly, and the next scheduled run (`38695846275`, 2026-10-15 07:00 UTC) logged `AskFred Engine v4.30.0`. The proof existed six days before anyone wrote it down — the run passed, nobody re-read this line, and the entry went on claiming the release was unproven. A §4 line is there to be closed, so leaving it open is indistinguishable from a release that never landed.
+- Entries before v4.31.0 are in [`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 - 2026-10-20: **v4.31.0 — The images stopped talking.** Release of #197–#206. The headline is a bug that shipped on 2026-04-18 in v4.11.0 and ran **six months**: `build_visual_prompt` handed the no-text/no-people constraint to the model that *writes* the image prompt and never to the model that *draws*, so the constraint was advice to the wrong reader. Post images carried rendered captions the whole time — `UNIT 1` and `COUNTERWEIGHT` on 10-17, `C:\WINDOWS\SYSTEM\VIEW` and `USER: ADNIN > LDAD` on 10-18 — on an account whose images are a brand surface. Nothing in the toolchain was ever going to find it: ruff, mypy, pytest, CodeQL and a paid external security scan were all clean throughout, correctly, because it is neither a security bug nor a type error. **What found it was opening three images.** The constraint now reaches the image model, and the prompt text moved to `FALLBACK_VISUAL_PROMPT` / `VISUAL_PROMPT_CONSTRAINTS` in `src/config.py` so a probe cannot test a drifting copy of it (#199). The rest of the release is the answer to the question that followed — why a scan five days earlier had not prevented this — and the answer is that review effort was aimed at `.py` while the defects were not. Three correctives: `workflow-lint.yml` runs zizmor at `--min-confidence high`, chosen because all 19 current findings are Low and the real P1 (a `${{ inputs.topics }}` template injection this repo wrote itself, in a step holding `GEMINI_API_KEY` and both Cloudflare secrets) is High, so the gate separates signal from noise exactly while leaving every audit switched on; `tests/test_repo_hygiene.py` fails if any state file or sibling is ever tracked, after a test run wrote `seen_articles.json.bak` into a commit and `.gitignore` covered only the bare name — a committed `.bak` is restored on a fresh runner by `_load_json_with_repair_strict`, marked TRUSTED, and overwrites the real Gist (#205); and `image-audit.yml` opens a monthly issue whose body **is** the pictures, with no score and no dashboard, because a number would have read green for all six months (#206). Also in: the broadcast is now reserved in remote state *before* it goes out and settled after, closing a latent repost window where a run that posted and then died would re-select the same story (#198); and the settlement read learned to tell "the claim is absent" from "I could not read the state", which the first version could not and which would have made the guard report the very story it exists to protect (#200). Plus a read of Shreyas's BluBot with a Cloudflare Workers AI image probe, tiered into should/could/rejected rather than a wish list (#197), and the finding itself written down (#202). 1130 → 1326 tests, ruff and mypy clean. **Live-verified**, and unusually all of it within 24 hours of the cut: the image fix on the 2026-10-19 14:30 UTC run at `4d989a3` (a clean balance-scale illustration, no text anywhere) and again on 2026-10-20 14:32 (a scale weighing a rolled document against a boulder, against a post about advisers and owners — no text, no people, no hands); the reservation on the 2026-10-20 07:00 UTC run (`39383701435`), which logged `broadcast_reserved` → `broadcast_settled`, zero ERROR and zero WARNING lines, and none of `broadcast_reservation_not_readable`, `broadcast_claim_release_failed` or `broadcast_release_not_readable`; the image audit by a manual dispatch on 2026-10-19 (`39300876246`) that produced issue #207 with 92 images, where the load-bearing assumption — that GitHub would render `cdn.bsky.app` URLs — was checked rather than assumed, since camo serves them (`200 image/webp 23,788 bytes 1024x1024`, byte-identical to the file opened locally); and `workflow-lint` green on main's own pushes at 17:19 and 18:14 UTC. **Test-covered only:** the two new guards have never fired in anger, which is the point of them — no state file has been committed since `test_repo_hygiene.py` landed, and no High-confidence workflow finding has occurred since the gate went in, so both are proven against reproductions of the original bugs rather than by a live catch. The Cloudflare image probe is a manual workflow the daily path never touches and this release's green runs say nothing about it. The image audit's own defences — the malformed-entry guard, the 60,000-character trim, the string-URL checks — are covered by tests only; the one real dispatch exercised none of them. **Known limit, recorded not closed:** a generated image delivered only to Mastodon (a failed Bluesky blob upload while Mastodon's independent upload succeeds) is outside the audit sheet; it is a sampling gap rather than a blind spot, since the same prompt produces both, and it reopens if a defect is ever found on Mastodon the sheet had missed. **`RELEASING.md` §4 CLOSED 2026-10-21:** the first scheduled run after the merge (`39558964006`, 07:00 UTC) logged `AskFred Engine v4.31.0`. The release is proven end to end. That same run is also the trial's first fallthrough and worth recording here, because a banner check that only reads the banner would have called it clean: `claude-sonnet-5-5` returned 309 then 305 characters against the 300-character limit, failed `validate_summary` on both attempts, and `claude-haiku-5-5` wrote the post that shipped — 17 of the first 18 trial runs were Sonnet, this was the exception, and the failure mode is length compliance rather than availability. Six WARNING lines, no ERROR: the two generation failures, their two `post_length_exceeded` partners, and a `dns_validated_request_blocked` / `feed_fetch_blocked` pair that cost the run the Microsoft Research feed to strict DNS containment (#212). Note for the next release: "no WARNING lines" was asserted about this run before the counts were read, from a grep for a lowercase `level` value that `record.levelname` emits in uppercase — a pattern that cannot match returns zero and reads as health.
 - 2026-10-29: **v4.32.0 — The afternoon sounds like Frederik.** Release of #208–#237. The afternoon was hardwired to Mentor, so the Strategist's topics had almost never reached a reader, and 37 of 50 afternoon posts between 2026-09-01 and 10-20 came from a pool of twelve topics. It now alternates Mentor and Strategist by date parity, and the afternoon may now talk about AI, which it never had (#208). The Mentor pool was then rebuilt from Frederik's own articles on frederikvanhecke.com and askfred.be: 21 seeds about working life, change, procurement and adoption, picked by him from a drafted 25, with developer-only topics kept out by a test (#231). The Sonnet trial closed as KEEP on craft grounds (#228), the docs stopped saying Gemini writes (#227), and the afternoon slot moved to 19:00 Brussels for a four-week test that runs to 2026-11-24 (#229, readout in #230). Mention replies now walk the same Sonnet-first chain as the posts, stay in the thread they were made in, and are picked by age (48 hours) instead of by an "unread" flag that flipped whenever the app was opened (#236). Fixes: the DNS pin no longer refuses a resolver's rotated answer, which had been silently dropping The Register and Microsoft Research on some mornings (#212, #216); a corrupt Gist no longer blocks settling a broadcast claim that only the Gist holds (#201, #218); Pillow 13 and certifi 2026.10.19 close nine advisories, one of which needed the Pillow ceiling raised before a fix was even reachable (#214). Internals: `pip-audit` runs daily and a red run opens one self-closing issue (#215, #217), both audit jobs are bounded at ten minutes (#233), weekly grouped Dependabot bumps are back with a lockfile fix-up workflow (#234; #235 was the first and passed untouched), the workflows were swept for the artipacked class (#219), the Gemini reviewer got a repo style guide, with a test that keeps its rules in step with `AGENTS.md` (#220, #222, #224, #225), six small simplifications (#232), and the docs and wiki were caught up with all of the above (#237). 1326 → 1471 tests. **Live-verified** on the three scheduled runs since #236 merged, all on `9f0f998`: `40740977716` (2026-10-28 18:00 UTC, Strategist), `40839037163` (2026-10-29 08:00 UTC, Curator) and `40926629875` (2026-10-29 18:00 UTC, Mentor, a Pioneer post on RFC 1149). All three show `model_used: claude-sonnet-5-5`, Mastodon tags from `claude-haiku-5-5` reviewed by `gemini-3.7-flash`, a generated image, and every line at INFO, with no WARNING or ERROR. The mention pass ran on the new code each time (`interactions_check_started`), so the 48-hour selection is in production. **Test-covered only:** no mention arrived in those windows, so a Sonnet-written reply, the thread-root fix and `mention_reply_chain_exhausted` have not been seen live yet; the DNS-pin and corrupt-Gist fixes are only exercised when a resolver rotates or the Gist is corrupt. **`RELEASING.md` §4 open:** the next scheduled run should log `AskFred Engine v4.32.0`.
