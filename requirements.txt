@@ -27,7 +27,7 @@ libipld==3.5.0
 mastodon-py==2.3.3
 opentelemetry-api==1.45.1
 pillow==13.0.0
-pyasn1==0.6.4
+pyasn1==0.6.5
 pyasn1-modules==0.4.2
 pycparser==3.11
 pydantic==2.14.1
