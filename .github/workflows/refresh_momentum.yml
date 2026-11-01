@@ -84,7 +84,8 @@ jobs:
             --title "chore(config): refresh MOMENTUM_PRODUCTS from the news cycle" \
             --body "Automated monthly refresh of the flagship-model scoring list from recent RSS headlines (Gemini-extracted, hard-sanitised in \`scripts/refresh_momentum.py\`). **Review the diff** — merge if the new names look right, close if not. Codex reviews this PR normally. Note: the pull_request CI (ruff+pytest) does not auto-run on a bot-authored PR (GITHUB_TOKEN recursion guard) — the refresh job already ran those exact checks before opening this PR (see its logs); push any commit to the branch to re-run them here. Nothing lands on main unattended." \
             --head "$BRANCH" --base main; then
-            gh pr view "$BRANCH" --json url --jq .url || {
+            # `gh pr view` would also match a closed or merged PR; only an open one counts.
+            gh pr list --head "$BRANCH" --base main --state open --json url --jq '.[0].url // empty' | grep . || {
               echo "::error::No PR open for $BRANCH. If the error above says Actions may not create pull requests, enable that in Settings > Actions > General, or open the PR from the branch by hand."
               exit 1
             }
