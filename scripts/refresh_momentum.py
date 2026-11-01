@@ -62,7 +62,8 @@ _PROMPT = (
     "both shipped and clearly-anticipated named systems. Exclude generic terms, "
     "companies, people, and events.\n\n"
     "Return ONLY a JSON array of 12-18 lowercase strings, no prose. Each string "
-    "is a short product/model name (letters, digits, spaces, dots, hyphens only)."
+    "is a short product/model name (letters, digits, spaces, dots, hyphens only) "
+    "that carries a version or qualifier: 'claude 5', not 'claude'."
     "\n\nHEADLINES:\n{headlines}"
 )
 
@@ -180,8 +181,9 @@ def sanitize_products(raw: list) -> list[str]:
     """Hard allowlist filter: only short, safe product-name strings survive.
 
     This is the injection guard — the output is written verbatim (quoted) into
-    config.py, so anything not matching _SAFE_NAME is dropped. Deduped, order
-    preserved, capped at MAX_PRODUCTS.
+    config.py, so anything not matching _SAFE_NAME is dropped. A bare word with
+    no digit, space or hyphen is dropped too. Deduped, order preserved, capped
+    at MAX_PRODUCTS.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -189,7 +191,10 @@ def sanitize_products(raw: list) -> list[str]:
         if not isinstance(item, str):
             continue
         name = item.strip().lower()
-        if name and name not in seen and _SAFE_NAME.match(name):
+        # Same rule as test_momentum_products_are_substring_safe: a bare word
+        # ("claude", "timestral") substring-matches unrelated copy.
+        qualified = any(c.isdigit() for c in name) or " " in name or "-" in name
+        if name and name not in seen and qualified and _SAFE_NAME.match(name):
             seen.add(name)
             out.append(name)
         if len(out) >= MAX_PRODUCTS:
