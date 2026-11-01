@@ -79,6 +79,13 @@ def test_sanitize_drops_unsafe_lowercases_dedupes():
     assert not any('"' in x or ";" in x or "\n" in x for x in out)
 
 
+def test_sanitize_drops_bare_words():
+    # The 2026-11-01 batch: bare words failed the in-job test and no PR opened.
+    raw = ["gemini 4 argon", "timestral", "gemini", "chatgpt", "claude",
+           "le chonk", "nemotron-halloween"]
+    assert sanitize_products(raw) == ["gemini 4 argon", "le chonk", "nemotron-halloween"]
+
+
 def test_sanitize_caps_count():
     assert len(sanitize_products([f"model-{i}" for i in range(50)])) <= 18
 
