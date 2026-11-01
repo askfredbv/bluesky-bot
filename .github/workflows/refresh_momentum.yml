@@ -76,7 +76,16 @@ jobs:
           git add src/config.py
           git commit -m "chore(config): refresh MOMENTUM_PRODUCTS from the news cycle"
           git push -u origin "$BRANCH" --force
-          gh pr create \
+          # A failed create is fine only when a PR for this branch already exists
+          # (a same-day re-run). Anything else must go red: on 2026-11-01 a bare
+          # `|| echo` turned "Actions may not create PRs" into a green run that
+          # left a pushed branch nobody was told about.
+          if ! gh pr create \
             --title "chore(config): refresh MOMENTUM_PRODUCTS from the news cycle" \
             --body "Automated monthly refresh of the flagship-model scoring list from recent RSS headlines (Gemini-extracted, hard-sanitised in \`scripts/refresh_momentum.py\`). **Review the diff** — merge if the new names look right, close if not. Codex reviews this PR normally. Note: the pull_request CI (ruff+pytest) does not auto-run on a bot-authored PR (GITHUB_TOKEN recursion guard) — the refresh job already ran those exact checks before opening this PR (see its logs); push any commit to the branch to re-run them here. Nothing lands on main unattended." \
-            --head "$BRANCH" --base main || echo "PR may already exist for this branch."
+            --head "$BRANCH" --base main; then
+            gh pr view "$BRANCH" --json url --jq .url || {
+              echo "::error::No PR open for $BRANCH. If the error above says Actions may not create pull requests, enable that in Settings > Actions > General, or open the PR from the branch by hand."
+              exit 1
+            }
+          fi
