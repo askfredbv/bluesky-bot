@@ -268,7 +268,8 @@ def select_candidates(ranked: List[Dict[str, Any]], limit: int) -> List[Dict[str
 
     * at most MAX_GEM_CANDIDATES research items (arXiv et al), so a nightly
       preprint batch cannot take every slot;
-    * at least MIN_GEM_CANDIDATES research item, the original Hidden Gem floor;
+    * at least MIN_GEM_CANDIDATES research items (0 since 2026-11-05: the
+      original Hidden Gem floor is gone, a paper scores its way in or not);
     * at least MIN_TIER1_CANDIDATES primary sources when the pool holds them.
 
     Floors are best-effort and never fabricate: if the pool has no primary
