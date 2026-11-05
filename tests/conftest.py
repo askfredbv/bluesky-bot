@@ -43,6 +43,19 @@ def _stub_broadcast_reservation(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _stub_curator_grounding(monkeypatch):
+    """Default every test to a passing grounding check. The check is a second
+    model call inside generate_content, so without this every Curator test that
+    stubs _sync_generate with one canned post would feed that post to the
+    checker as its verdict. test_curator_grounding.py covers the check itself
+    and restores the real function."""
+    async def _grounded(*args, **kwargs):
+        return True, []
+
+    monkeypatch.setattr("src.agents.check_curator_grounding", _grounded)
+
+
+@pytest.fixture(autouse=True)
 def _deterministic_image_gate(monkeypatch):
     """Pin the image probability to 1.0 so the suite is deterministic.
 
