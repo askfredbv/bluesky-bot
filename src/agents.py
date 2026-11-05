@@ -5,6 +5,7 @@ import re
 import secrets
 from typing import List, Tuple, Dict, Any, Optional, cast
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from google import genai
 from google.genai import types
 from src.config import (
@@ -28,6 +29,7 @@ from src.config import (
     MASTODON_TAGS_ENABLED, MASTODON_TAGS_EXCLUDED,
     MASTODON_TAG_ECONOMY_MODELS,
     MASTODON_TAGS_TIMEOUT_SECONDS, MAX_HASHTAGS_PER_POST,
+    CURATOR_GROUNDING_TIMEOUT_SECONDS,
 )
 from src.llm import generate_anthropic, is_anthropic_model
 from src.state_store import load_replied_to_strict, prune_pioneer_recent, update_replied_to
@@ -1149,6 +1151,111 @@ async def review_mastodon_tags(
     return decisions, [t for i, t in enumerate(candidates) if decisions[i]]
 
 
+_CURATOR_GROUNDING_PROMPT = (
+    "SOURCE (the only text the writer had about this story):\n"
+    "Published by: {publisher}\nTitle: {title}\nSummary: {summary}\n\n"
+    "POST:\n{post}\n\n"
+    "Check every claim the POST makes about this story against the SOURCE.\n"
+    "A claim FAILS if it:\n"
+    "- is not stated in the source;\n"
+    "- states as plain fact what the source hedges or attributes (\"appears\", "
+    "\"alleged\", \"says\", \"experts warned\");\n"
+    "- turns an association, or a chain of links, into a direct link;\n"
+    "- escalates: an address into an identity, a risk into an incident, a claim "
+    "into a result;\n"
+    "- adds a number, name, date or cause the source does not contain.\n"
+    "These are NOT story claims and do not fail on their own:\n"
+    "- naming the publisher, or attributing a statement to it;\n"
+    "- general background any practitioner would accept (how Git works, what a "
+    "proxy is);\n"
+    "- interpretation: a sentence that draws a conclusion from the source's "
+    "facts (what it means, why it matters, what it suggests). It fails only if "
+    "it slips in a new fact or is stronger than those facts support.\n"
+    "If you are unsure whether a story claim is supported, it fails.\n\n"
+    "Output ONLY a JSON object: "
+    '{{"grounded": true, "problems": []}} or '
+    '{{"grounded": false, "problems": ["one short line per failing claim"]}}'
+)
+
+
+def _grounding_reviewer(writer: str, chain: List[str]) -> Optional[str]:
+    """Pick the model that checks the writer's post, or None.
+
+    Another provider first, so a misreading the writer made is less likely to
+    be shared by its checker; cheap models first, as for the tag reviewer.
+    """
+    ordered = [m for m in chain if m in MASTODON_TAG_ECONOMY_MODELS] + chain
+    other = [m for m in ordered if m != writer]
+    return next(
+        (m for m in other if is_anthropic_model(m) != is_anthropic_model(writer)),
+        next(iter(other), None),
+    )
+
+
+async def check_curator_grounding(
+    api_key: str,
+    posts: List[str],
+    item: Dict[str, Any],
+    writer: str,
+    chain: List[str],
+    anthropic_api_key: Optional[str] = None,
+) -> Tuple[bool, List[str]]:
+    """Does the Curator post claim only what its source says? ``(ok, problems)``.
+
+    The voice validators check words. Nothing checked claims, and on
+    2026-11-05 a post turned Krebs's "security experts warned" and a
+    founder's former hosting firm into flat facts about the White House and
+    2016 election attacks. The check reads the same title and summary the
+    writer saw, so it judges the post against its evidence, not against the
+    full article neither model read.
+
+    Fails closed: no reviewer, a failed call, or an unusable verdict all
+    return False. Missing a run beats shipping an overstated claim.
+    """
+    reviewer = _grounding_reviewer(writer, chain)
+    if reviewer is None:
+        return False, ["no reviewer model distinct from the writer"]
+    task = _CURATOR_GROUNDING_PROMPT.format(
+        publisher=urlparse(str(item.get("link", ""))).netloc or "unknown",
+        title=item.get("title", ""),
+        summary=item.get("description", ""),
+        post="\n\n".join(posts),
+    )
+    try:
+        response = await asyncio.to_thread(
+            _sync_generate,
+            api_key,
+            "You return only JSON. No prose, no explanation.",
+            task,
+            reviewer,
+            anthropic_api_key,
+            CURATOR_GROUNDING_TIMEOUT_SECONDS,
+        )
+        verdict = json.loads(response.replace("```json", "").replace("```", "").strip())
+    except Exception as e:
+        SafeLogger.warn(
+            "curator_grounding_unavailable",
+            "Grounding check could not run; treating the post as unchecked",
+            reviewer=reviewer,
+            error_type=type(e).__name__,
+            error_msg=str(e)[:200],
+        )
+        return False, ["grounding check unavailable"]
+    grounded = verdict.get("grounded") if isinstance(verdict, dict) else None
+    problems = verdict.get("problems") if isinstance(verdict, dict) else None
+    if (
+        not isinstance(grounded, bool)
+        or not isinstance(problems, list)
+        or not all(isinstance(p, str) for p in problems)
+        or grounded == bool(problems)  # a pass must list nothing, a fail something
+    ):
+        return False, ["unusable grounding verdict"]
+    if grounded:
+        SafeLogger.info("curator_grounding_passed", "Post claims only what its source says",
+                        reviewer=reviewer)
+    return grounded, [p[:200] for p in problems]
+
+
 def _select_tag_models(
     model_priority: Optional[List[str]] = None,
 ) -> Tuple[str, Optional[str]]:
@@ -1599,8 +1706,8 @@ async def generate_content(
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             "ITEMS TO WORK WITH:\n"
             f"{news_text}\n\n"
-            "Write the thread. Start with whichever item has the most interesting 'so what', "
-            "not necessarily the most prominent headline. Connect where it makes sense, but don't force links."
+            "Write the thread. Start with whichever item is the most consequential, "
+            "not the most alarming or the most prominent headline. Connect where it makes sense, but don't force links."
         )
     elif mode == Mode.STRATEGIST:
         topic = _pick_topic_avoiding_recent(SECONDARY_TOPICS, recent_mode_topics)
@@ -1633,7 +1740,7 @@ async def generate_content(
 
     # v4.21: Curator returns a {"url", "posts"} object instead of a bare
     # array so the link card can be built from the item the model actually
-    # wrote about. The Curator task invites picking the most interesting
+    # wrote about. The Curator task invites picking the most consequential
     # item, not the top-scored one; the URL tells us which it picked.
     curator_structured = mode == Mode.CURATOR and bool(news_items)
     if curator_structured:
@@ -1764,6 +1871,23 @@ async def generate_content(
                             chosen_item = news_items[0]
                         topic = chosen_item.get("title", topic)
                         chosen_link = chosen_item.get("link")
+
+                        grounded, problems = await check_curator_grounding(
+                            api_key, content_list, chosen_item, model,
+                            list(model_priority or GEMINI_MODEL_PRIORITY),
+                            anthropic_api_key,
+                        )
+                        if not grounded:
+                            SafeLogger.warn(
+                                "curator_grounding_failed",
+                                "Post claims more than its source; regenerating",
+                                model=model,
+                                link=str(chosen_link)[:200],
+                                problems=problems,
+                                post=" / ".join(content_list)[:600],
+                            )
+                            # ValueError: the same retry path as any other content failure.
+                            raise ValueError(f"grounding: {'; '.join(problems)[:180]}")
 
                     SafeLogger.info("model_used", "Content generated successfully", model=model)
                     return content_list, topic, chosen_link

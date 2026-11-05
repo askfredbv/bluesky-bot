@@ -152,6 +152,10 @@ MASTODON_TAG_ECONOMY_MODELS: List[str] = [
 # a decoration. On expiry the post ships untagged.
 MASTODON_TAGS_TIMEOUT_SECONDS: float = 20.0
 
+# Budget for the Curator grounding check (post vs. the source text the writer
+# saw). It gates the post, so it runs before the broadcast, not beside it.
+CURATOR_GROUNDING_TIMEOUT_SECONDS: float = 30.0
+
 # Mood tags — excluded unconditionally because they say nothing about the
 # post, which is the same rule STYLE_GUIDELINES already applies inline
 # ("never a generic mood tag"). This is a brand exclusion, NOT a claim about
@@ -1092,6 +1096,13 @@ Read the news items provided. Pick the ONE most consequential development, not t
 You are sharing because you find it interesting. **You are not reporting on it.** A paraphrase of what the paper says is not the post. The post is what YOU NOTICED about what the paper says.
 
 DEFAULT TO ONE POST. A second post only if the story genuinely needs context the link won't carry. Three posts is rare and needs a real multi-part reason.
+
+TRUTH COMES FIRST. A post that says more than its source is worse than no post, and a separate check rejects it.
+- Every claim about the story (who did what, who is linked to whom, numbers, what happened) must be stated in the item text you are given. You have the feed summary, not the full article: do not fill its gaps with what is probably true. General background any practitioner would accept (how Git works, what a residential proxy is) is fine.
+- Keep the source's certainty. If it says "appears", "alleged", "says" or "experts warned", keep that hedge or name who makes the claim. A report or an allegation never becomes a plain fact.
+- Do not shorten a chain of association into a direct link. "The founder's former hosting firm was used in the attacks" is not "the company is tied to the attacks".
+- Do not escalate. An IP address is not an identity, a vulnerability is not a breach, a claim is not a result.
+- Do not end on the most alarming detail as a kicker. End on what the finding means, stated no stronger than the source supports.
 
 THE THREE-PART STRUCTURE (memorise this: it is the load-bearing rule):
 
