@@ -349,10 +349,17 @@ TIME_DECAY_MIN_AGE_HOURS: float = 0.0
 # arXiv over three weeks, and 2 of 21 runs offered any primary source. Both ends
 # are bounded now. Tier-1 means TIER1_SOURCE_SCORE in SOURCE_TIERS — an AI lab's
 # own blog, so LWN at 9 does not qualify.
+#
+# 2026-11-05: research gets no reserved seat and at most one, and lab blogs one
+# reserved seat instead of two. With floors of 1+2 and a gem cap of 2, every
+# shortlist that day was two arXiv papers, two OpenAI posts and ONE open slot,
+# and the one open slot went to the alarming Krebs story the grounding check
+# (#248) was built after. A paper still gets its seat by scoring well: the
+# keyword bonuses already lift most abstracts to 13-15 against 8-9 for news.
 TIER1_SOURCE_SCORE: float = 10.0
-MIN_GEM_CANDIDATES: int = 1    # keep the original Hidden Gem floor
-MAX_GEM_CANDIDATES: int = 2    # ... but it is a floor, not a monopoly
-MIN_TIER1_CANDIDATES: int = 2  # best-effort: only if the pool holds that many
+MIN_GEM_CANDIDATES: int = 0    # no reserved research seat: it must score its way in
+MAX_GEM_CANDIDATES: int = 1    # ... and at most one paper on the menu
+MIN_TIER1_CANDIDATES: int = 1  # best-effort: only if the pool holds one
 
 # Flagship AI products — a post about the current frontier model is categorically
 # more consequential than a generic "new feature" story. `refresh_momentum.py`

@@ -311,12 +311,14 @@ def test_candidates_come_back_best_first_and_five_by_default(monkeypatch):
     assert [i["s"] for i in result] == [7.0, 6.0, 5.0, 4.0, 3.0]
 
 
-def test_the_best_hidden_gem_takes_the_last_slot_when_none_made_the_top(monkeypatch):
+def test_no_hidden_gem_is_forced_into_the_last_slot(monkeypatch):
+    """Until 2026-11-05 the best paper took the last slot even when it had not
+    scored its way in. The reserved research seat is gone."""
     items = [_story(1, 10.0), _story(2, 9.0), _story(3, 8.0), _story(4, 7.0),
              _story(5, 6.0, "arxiv.org"), _story(6, 5.0, "arxiv.org")]
     result, _calls, _health = _run_news(monkeypatch, items, limit=3)
     assert [i["link"] for i in result] == ["https://example.com/1", "https://example.com/2",
-                                           "https://arxiv.org/5"]
+                                           "https://example.com/3"]
 
 
 def test_no_gem_is_forced_in_when_one_already_made_the_top(monkeypatch):
@@ -372,6 +374,30 @@ def test_a_primary_source_is_promoted_into_the_shortlist():
     result = news.select_candidates(ranked, 5)
 
     assert sum(1 for i in result if news._is_tier1(i["link"])) >= news.MIN_TIER1_CANDIDATES
+
+
+def test_a_low_scoring_paper_is_not_promoted_onto_the_menu():
+    """No reserved research seat (2026-11-05): a paper that does not score its way
+    in stays out, and the menu is the five best news items instead."""
+    ranked = [_cand(n, 10.0 - n, "theregister.com") for n in range(6)]
+    ranked += [_cand(20, 1.0, "arxiv.org")]
+    result = news.select_candidates(ranked, 5)
+
+    assert not any(news._is_gem(i["link"]) for i in result)
+
+
+def test_the_shortlist_leaves_room_for_news():
+    """The 2026-11-05 shape: papers top the ranking, a lab blog sits low. At most
+    one paper and one reserved lab seat leave three slots for ordinary news."""
+    ranked = [_cand(n, 15.0 - n, "arxiv.org") for n in range(3)]
+    ranked += [_cand(10 + n, 9.0 - n, "theregister.com") for n in range(4)]
+    ranked += [_cand(20, 7.0, "openai.com"), _cand(21, 6.0, "openai.com")]
+    result = news.select_candidates(ranked, 5)
+
+    hosts = [i["link"].split("/")[2] for i in result]
+    assert hosts.count("arxiv.org") == 1
+    assert hosts.count("openai.com") == 1
+    assert hosts.count("theregister.com") == 3
 
 
 def test_the_primary_source_floor_never_fabricates():
