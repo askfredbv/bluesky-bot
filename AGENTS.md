@@ -80,12 +80,9 @@ mirror keeps the old wording, so the discipline above is still yours to keep.
    Mastodon text, `ensure_mastodon_source_link`), Mastodon-only discovery hashtags
    (`apply_mastodon_tags`, added because
    Mastodon has no algorithmic feed and a followed tag is its discovery mechanism),
-   or Mastodon-only thread-position markers (`number_mastodon_thread`, "1/2",
-   "2/2", added because Mastodon lists a self-thread newest-first, so part 2 reaches
-   a timeline reader before part 1; Bluesky's client already labels self-threads
-   this way, so the marker gives Mastodon readers what Bluesky readers see. The
-   first part ends with its marker; later parts open with theirs, so the part a
-   timeline reader meets first says at once where it belongs).
+   or Mastodon-only thread-position markers (`number_mastodon_thread`, "1/2", "2/2",
+   because Mastodon lists a self-thread newest-first; placement and reasoning in its
+   docstring).
    Its *intent* may not: no different take, link, framing, or one-platform voice rule,
    and generation stays platform-neutral — divergence lives in the broadcaster, never
    in the prompt. Partial delivery must be handled cleanly (`*_partial_delivery`),
@@ -108,6 +105,15 @@ mirror keeps the old wording, so the discipline above is still yours to keep.
    behaviour — especially defensive and failure paths — needs tests. The strongest
    reviews here have caught missing-edge-case handling (e.g. a required field that wasn't
    validated, letting a bad path silently fall through). That's the bar.
+
+## What "live" means here
+
+This bot has no staging. A change is live when **the next scheduled run on `main` has
+used it, and the post it produced reads correctly on the public Bluesky and Mastodon
+APIs** (not in the Actions log, which shows what was sent, not what readers see).
+A green CI run or a merged PR is not live. A change that only affects a path not taken
+on every run (a fallback, a thread, a Curator pick) is live-verified only once a run has
+actually taken that path; until then say "merged, not yet exercised".
 
 ## How to review
 
