@@ -12,7 +12,7 @@ coverage==7.17.0
 cryptography==50.0.2
 decorator==5.3.1
 distro==1.9.0
-dnspython==2.9.0
+dnspython==2.9.2
 docstring-parser==0.18.0
 feedparser==6.0.14
 feedparser-sgmllib==2.1.0
