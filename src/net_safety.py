@@ -549,6 +549,14 @@ async def get_with_safe_redirects(
                             url=current_url, deadline_seconds=total_timeout,
                             error_type=type(e).__name__, error_msg=str(e)[:200])
             return None
+        except httpx.TimeoutException as e:
+            # A slow origin, not a block: the DNS pin refuses via gaierror, which
+            # httpx raises as ConnectError, so that still lands in the block label.
+            # str() of an httpx timeout is often empty, hence the timeout setting too.
+            SafeLogger.warn("fetch_timed_out", "Request timed out",
+                            url=current_url, error_type=type(e).__name__,
+                            error_msg=str(e)[:200], timeout=str(timeout))
+            return None
         except Exception as e:
             SafeLogger.warn("dns_validated_request_blocked",
                             "Blocked URL request after DNS validation",
