@@ -614,6 +614,37 @@ def test_a_fetch_that_outlives_its_deadline_returns_none(monkeypatch, stubbed_fe
     assert asyncio.run(go()) is None
 
 
+@pytest.mark.parametrize("raised, event", [
+    (httpx.ReadTimeout(""), "fetch_timed_out"),
+    (httpx.ConnectTimeout(""), "fetch_timed_out"),
+    # The DNS pin refuses via gaierror, which httpx surfaces as ConnectError:
+    # that is a real block and must keep the block label.
+    (httpx.ConnectError("No allowed DNS records found for example.com"),
+     "dns_validated_request_blocked"),
+])
+def test_a_timeout_is_not_logged_as_a_block(monkeypatch, stubbed_fetch_path, raised, event):
+    """the-decoder.com, 2026-11: a slow origin's ReadTimeout logged as
+    "Blocked URL request after DNS validation" with an empty error_msg."""
+    seen = _captured_warnings(monkeypatch)
+
+    async def fails(*_args, **_kwargs):
+        raise raised
+
+    monkeypatch.setattr(net_safety, "_capped_stream_get", fails)
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            return await net_safety.get_with_safe_redirects(
+                client, "https://example.com/feed", timeout=10.0)
+
+    assert asyncio.run(go()) is None
+    assert [e for e, _ in seen] == [event]
+    fields = seen[0][1]
+    assert fields["error_type"] == type(raised).__name__
+    if event == "fetch_timed_out":
+        assert fields["timeout"] == "10.0"
+
+
 def test_the_deadline_does_not_interfere_with_a_prompt_fetch(monkeypatch, stubbed_fetch_path):
     sentinel = httpx.Response(200, content=b"ok")
 
