@@ -21,7 +21,7 @@ A bullet has no state and nothing closes it — which is how the corrective in
 (+7) can total +12 against a tier spread of 7 (3.0 → 10.0), so text signals outvote
 provenance. **Deliberately gated on a week of item 1's
 `keyword_substring_only_matches` data** — phase 2 is re-tuning magic numbers by hand,
-which is what the abandoned landmark gate (§3) teaches against doing without data.
+which is what the abandoned landmark gate (§3) teaches against doing without data. Tracked in #264.
 
 <!-- original numbering kept: closed items 1-3, 5 and 7 are in BACKLOG_ARCHIVE.md -->
 
@@ -29,7 +29,7 @@ which is what the abandoned landmark gate (§3) teaches against doing without da
 delayed past 11:00 UTC would silently turn a Curator run into a Mentor run. Never
 observed (44 of 44 runs mapped correctly, 22× 07:00→curator, 22× 14:30→mentor) and it
 needs a four-hour delay, so this is cheap insurance, not a live defect. The workflow
-already has a `force_mode` input; the cron dispatches just do not pass it.
+already has a `force_mode` input; the cron dispatches just do not pass it. Tracked in #265.
 
 <!-- original numbering kept: closed items 1-3, 5 and 7 are in BACKLOG_ARCHIVE.md -->
 
