@@ -39,7 +39,7 @@ class BroadcastResult:
     Step 3b uses it to avoid re-sending posts that already made the wire.
     For Bluesky this holds `at://…` URIs; for Mastodon, string status IDs.
     `client` is the authenticated Bluesky AsyncClient (None for Mastodon) so
-    downstream stages (handle_interactions) can reuse the session.
+    downstream stages (post metrics) can reuse the session.
     """
     client: Any = None
     sent_uris: List[str] = field(default_factory=list)

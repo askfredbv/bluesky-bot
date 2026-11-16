@@ -240,35 +240,11 @@ async def test_broadcasting_stage_uses_fallback_client_when_bluesky_task_fails(m
     assert payload.content_list == ["hello"]
 
 
-@pytest.mark.asyncio
-async def test_post_run_automation_stage_runs_expected_tasks(monkeypatch):
-    calls = {"handle": 0}
-    creds = SimpleNamespace(
-        bluesky_username="u",
-        gemini_api_key="g", anthropic_api_key=None,
-        mastodon_access_token="t",
-        mastodon_api_base_url="https://masto",
-    )
-
-    async def fake_handle(*args, **kwargs):
-        calls["handle"] += 1
-
-    monkeypatch.setattr(main, "handle_interactions", fake_handle)
-
-    broadcast = main.BroadcastPayload(
-        mode="mentor",
-        seen_data={"links": [], "recent_topics": []},
-        news_items=[],
-        content_list=["x"],
-        chosen_topic="y",
-        thread_pause_profile="z",
-        bsky_broadcast_client="client",
-    )
-
-    payload = await main.post_run_automation_stage(broadcast, creds)
-
-    assert calls["handle"] == 1
-    assert payload.mode == "mentor"
+def test_the_daily_run_does_not_reply_to_mentions():
+    """Switched off 2026-11-16: an automatic reply is a model writing to a real
+    person in Frederik's name, unseen. The import was the only route in."""
+    assert not hasattr(main, "handle_interactions")
+    assert not hasattr(main, "post_run_automation_stage")
 
 
 @pytest.mark.asyncio
@@ -327,10 +303,6 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
             bsky_broadcast_client="client",
         )
 
-    async def fake_automation(broadcast_payload, creds, active_models=None):
-        calls.append(("automation", broadcast_payload.mode, creds is settings.credentials))
-        return main.AutomationPayload(mode="mentor", seen_data={"links": [], "recent_topics": []}, news_items=[])
-
     async def fake_persistence(automation_payload):
         calls.append(("persistence", automation_payload.mode))
 
@@ -350,7 +322,6 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     monkeypatch.setattr(main, "broadcasting_stage", fake_broadcast)
     monkeypatch.setattr(main, "capture_post_metrics_stage", fake_metrics)
     monkeypatch.setattr(main, "capture_follower_snapshot_stage", fake_followers)
-    monkeypatch.setattr(main, "post_run_automation_stage", fake_automation)
     monkeypatch.setattr(main, "persistence_stage", fake_persistence)
 
     await main.main()
@@ -368,7 +339,6 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
         ("persistence", "mentor"),
         "metrics",
         "followers",
-        ("automation", "mentor", True),
     ]
 
 
@@ -966,8 +936,7 @@ async def test_persistence_stage_partial_delivery_still_counts(monkeypatch):
         bsky_sent_uris=["at://x"],   # Bluesky landed
         mastodon_sent_ids=[],        # Mastodon did not
     )
-    automation = await main.post_run_automation_stage(broadcast, SimpleNamespace(
-        bluesky_username="u", gemini_api_key="g", anthropic_api_key=None))
+    automation = main.build_automation_payload(broadcast)
     assert automation.delivered is True
 
     await main.persistence_stage(automation)
