@@ -995,7 +995,7 @@ def test_build_avoidance_constraints_includes_recent_post_excerpts():
             "An earlier note on monitoring's blind spots.",
         ],
     )
-    assert "Recent post excerpts" in constraints
+    assert "Your own posts from the last 30 days" in constraints
     assert "do NOT produce" in constraints
     assert "cache invalidation" in constraints
     assert "monitoring's blind spots" in constraints

@@ -222,15 +222,66 @@ async def test_a_strategist_run_stays_a_strategist_run(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_mentor_run_given_news_items_still_writes_a_mentor_post(monkeypatch):
-    """News items are the Curator's input. A Mentor run that receives them keeps
-    its own topic pool and its bare-array output format."""
-    _script_generate(monkeypatch, lambda model, n: _BARE)
+async def test_a_mentor_run_given_news_items_writes_from_the_news(monkeypatch):
+    """Plan 2027, move 1: news items are the afternoon's subject. A Mentor run
+    that receives them names its item and is grounding-checked like the
+    Curator, instead of falling back to its list."""
     news = [{"title": "Some headline", "description": "d", "link": "https://example.com/a"}]
+    tasks = []
+
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None, *rest):
+        tasks.append((system_instr, task))
+        return json.dumps({"url": "https://example.com/a", "posts": [_GOOD_POST]})
+
+    async def grounded(*args, **kwargs):
+        return True, []
+
+    monkeypatch.setattr(agents, "_sync_generate", fake)
+    monkeypatch.setattr(agents, "check_curator_grounding", grounded)
     content, topic, link = await agents.generate_content("key", [], mode=Mode.MENTOR, news_items=news)
     assert content == [_GOOD_POST]
-    assert topic in MENTOR_TOPICS
-    assert link is None
+    assert topic == "Some headline"
+    assert link == "https://example.com/a"
+    system_instr, task = tasks[0]
+    assert system_instr.startswith(agents.SYSTEM_INSTRUCTIONS_MENTOR)
+    assert "the morning post did not use" in task
+    assert "Return ONLY a JSON object" in task
+
+
+@pytest.mark.asyncio
+async def test_an_ungrounded_afternoon_news_post_is_not_shipped(monkeypatch):
+    """The source check covers the afternoon too: missing a run beats shipping
+    a claim its source does not make."""
+    news = [{"title": "Some headline", "description": "d", "link": "https://example.com/a"}]
+    _script_generate(monkeypatch, lambda model, n: json.dumps(
+        {"url": "https://example.com/a", "posts": [_GOOD_POST]}))
+
+    async def ungrounded(*args, **kwargs):
+        return False, ["adds a number"]
+
+    monkeypatch.setattr(agents, "check_curator_grounding", ungrounded)
+    content, _topic, _link = await agents.generate_content(
+        "key", [], mode=Mode.STRATEGIST, news_items=news)
+    assert content == []
+
+
+@pytest.mark.parametrize("mode", [Mode.STRATEGIST, Mode.MENTOR])
+@pytest.mark.asyncio
+async def test_no_afternoon_task_asks_for_an_in_five_years_opening(monkeypatch, mode):
+    """"In five years..." opened 7 of 45 afternoon posts in a month because the
+    Strategist task line asked for exactly that horizon (#270)."""
+    tasks = []
+
+    def fake(api_key, system_instr, task, model, anthropic_api_key=None):
+        tasks.append(task)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(agents, "_sync_generate", fake)
+    news = [{"title": "H", "description": "d", "link": "https://example.com/a"}]
+    for items in (None, news):
+        await agents.generate_content("key", [], mode=mode, news_items=items)
+    for task in tasks:
+        assert "look like in five years" not in task
 
 
 @pytest.mark.parametrize("mode, news, expected", [
@@ -371,17 +422,19 @@ def test_style_memory_ranks_openers_and_hashtags_by_use():
     assert fingerprints["repeated_hashtags"] == ["#b", "#a", "#c"]  # used 3, 2 and 1 times
 
 
-def test_a_long_recent_post_is_excerpted_to_200_chars():
+def test_a_long_recent_post_is_excerpted_to_160_chars():
     constraints = agents._build_avoidance_constraints({}, ["word " * 60])
     excerpt = next(line for line in constraints.splitlines() if line.startswith("  1. "))[len("  1. "):]
-    assert len(excerpt) == 200
+    assert len(excerpt) == 160
     assert excerpt.endswith("…")
 
 
-def test_only_three_recent_posts_are_quoted():
-    constraints = agents._build_avoidance_constraints({}, [f"Recent post number {n}" for n in range(1, 6)])
-    assert "  3. Recent post number 3" in constraints
-    assert "  4. " not in constraints
+def test_a_month_of_own_posts_is_quoted_not_three():
+    """#270: with three excerpts the model could not see a take it posted two
+    weeks earlier, and wrote it again near-verbatim."""
+    constraints = agents._build_avoidance_constraints({}, [f"Recent post number {n}" for n in range(1, 71)])
+    assert "  60. Recent post number 60" in constraints
+    assert "  61. " not in constraints
 
 
 @pytest.mark.parametrize("model, budget", [
