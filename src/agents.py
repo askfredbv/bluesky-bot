@@ -1932,7 +1932,9 @@ async def generate_content(
                             # ValueError: the same retry path as any other content failure.
                             raise ValueError(f"grounding: {'; '.join(problems)[:180]}")
 
-                    SafeLogger.info("model_used", "Content generated successfully", model=model)
+                    # topic here because every successful run emits this event (#253).
+                    SafeLogger.info("model_used", "Content generated successfully",
+                                    model=model, topic=topic)
                     return content_list, topic, chosen_link
                 reason = post_validations[0][1]
                 raise ValueError(reason)
