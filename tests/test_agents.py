@@ -4,7 +4,7 @@ import pytest
 
 from src.agents import generate_content, handle_interactions, _fit_reply, _sync_generate, generate_post_image, _build_generate_kwargs, _validate_thread_shape
 from src import agents
-from src.config import REPLY_MAX_CHARS, VISUAL_PROMPT_CONSTRAINTS
+from src.config import MENTOR_TOPICS, REPLY_MAX_CHARS, VISUAL_PROMPT_CONSTRAINTS
 
 
 @pytest.mark.asyncio
@@ -587,12 +587,15 @@ async def test_model_used_event_logged_on_success(monkeypatch):
     monkeypatch.setattr("src.agents._sync_generate", _ok_generate)
     monkeypatch.setattr("src.agents.SafeLogger.info", _capture_info)
 
-    await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
+    _, topic, _ = await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
 
     assert any(event == "model_used" for event, _ in log_events)
     model_event = next((fields for event, fields in log_events if event == "model_used"), None)
     assert model_event is not None
     assert "model" in model_event
+    # #253: the seed is logged on every run, not only on the image and failure paths.
+    assert model_event["topic"] == topic
+    assert topic in MENTOR_TOPICS
 
 
 @pytest.mark.asyncio
