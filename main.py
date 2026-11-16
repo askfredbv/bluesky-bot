@@ -4,7 +4,7 @@ import asyncio
 import random
 import uuid
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
@@ -14,11 +14,11 @@ from src.config import (
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
     IMAGE_GENERATION_PROBABILITY, GEMINI_MODEL_PRIORITY, Mode,
     ANTHROPIC_MODELS, ANTHROPIC_CHAIN_POSITION,
-    RECENT_TOPICS_WINDOW, SEEN_LINKS_WINDOW,
+    RECENT_TOPICS_WINDOW, SEEN_LINKS_WINDOW, OWN_POST_HISTORY_DAYS,
 )
 from src.utils import get_link_metadata, compress_image, is_usable_image
 from src.state_store import (
-    load_seen_articles, update_seen_articles, prune_pioneer_recent,
+    load_seen_articles, update_seen_articles, prune_pioneer_recent, prune_mode_topic_history,
     reserve_broadcast, reserved_links, settle_broadcast,
 )
 from src.news import fetch_news
@@ -103,10 +103,30 @@ class AutomationPayload:
 
 
 async def get_recent_posts(client, handle: str) -> List[str]:
-    """Fetched recent posts silently from a logged-in client."""
+    """The bot's own top-level posts from the last OWN_POST_HISTORY_DAYS, newest first.
+
+    Was the last 10 feed items, about five days, so a subject that came round
+    again could not see its own previous take and came out near-verbatim
+    (#270). Reposts and thread continuations are left out: what the model must
+    not repeat is the subject a post opens with.
+    """
     try:
-        response = await client.app.bsky.feed.get_author_feed({"actor": handle, "limit": 10})
-        return [p.post.record.text for p in response.feed if hasattr(p.post.record, 'text')]
+        response = await client.app.bsky.feed.get_author_feed(
+            {"actor": handle, "limit": 100, "filter": "posts_no_replies"}
+        )
+        cutoff = datetime.now(timezone.utc) - timedelta(days=OWN_POST_HISTORY_DAYS)
+        posts = []
+        for p in response.feed:
+            record = p.post.record
+            if getattr(p, "reason", None) or getattr(record, "reply", None) or not hasattr(record, "text"):
+                continue
+            try:
+                created = datetime.fromisoformat(str(record.created_at).replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            if created >= cutoff:
+                posts.append(record.text)
+        return posts
     except Exception as e:
         SafeLogger.error("recent_posts_fetch_failed", "Failed to fetch recent posts", exception=e, platform="bluesky")
         return []
@@ -175,7 +195,7 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
     mode = mode_payload.mode
     seen_data = load_seen_articles()
 
-    news_items = []
+    news_items: List[Dict[str, Any]] = []
     link_meta = None
     source_domain: Optional[str] = None
     if mode == Mode.CURATOR:
@@ -190,18 +210,42 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
             SafeLogger.warn("news_volume_low", "Low high-signal news volume, shifting mode", mode=mode, selected_items=len(news_items))
             mode = Mode.STRATEGIST
             SafeLogger.configure(mode=mode)
-        else:
-            # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
-            link_meta = await get_link_metadata(news_items[0]['link'])
-            # (The no-thumbnail fallback image is applied later, in
-            # broadcasting_stage, once the model's chosen link is known — see
-            # _apply_curator_fallback_image.)
-            # Derive the publisher domain for post-metrics attribution.
-            try:
-                from urllib.parse import urlparse
-                source_domain = (urlparse(news_items[0]['link']).netloc or None)
-            except Exception:
-                source_domain = None
+
+    # The afternoon starts from the day's material, not from a list (plan 2027,
+    # move 1, #270). In order: a Pioneer entry (its anniversary, or the
+    # probability roll), then the news the morning did not use, and only when
+    # both come up empty a fallback list topic. Mentor or Strategist chooses
+    # the angle; the material is the subject.
+    pioneer_entry = None
+    if mode != Mode.CURATOR:
+        pioneer_entry = select_pioneer_topic(seen_data)
+        if pioneer_entry:
+            news_items = []
+        elif not news_items and mode_payload.mode != Mode.CURATOR:
+            # Not on a morning that already fell back for lack of news: the
+            # same feeds would only come back empty again.
+            news_items = await fetch_news(
+                seen_data["links"] + reserved_links(seen_data), seen_data["recent_topics"]
+            )
+        SafeLogger.info(
+            "afternoon_source",
+            "Afternoon subject source chosen",
+            source="pioneer" if pioneer_entry else ("news" if news_items else "topic_list"),
+            news_items=len(news_items),
+        )
+
+    if news_items:
+        # Sage 4.5: Scrape metadata for the top item for 'Rich Link Previews'
+        link_meta = await get_link_metadata(news_items[0]['link'])
+        # (The no-thumbnail fallback image is applied later, in
+        # broadcasting_stage, once the model's chosen link is known — see
+        # _apply_curator_fallback_image.)
+        # Derive the publisher domain for post-metrics attribution.
+        try:
+            from urllib.parse import urlparse
+            source_domain = (urlparse(news_items[0]['link']).netloc or None)
+        except Exception:
+            source_domain = None
 
     from atproto import AsyncClient
     bsky_client = None
@@ -219,11 +263,6 @@ async def content_prep_stage(mode_payload: ModeSelectionPayload, creds: Any) -> 
             error_type=type(exc).__name__,
             fallback_recent_posts_count=0,
         )
-
-    # Pioneer dimension only attaches to Mentor/Strategist (afternoon).
-    pioneer_entry = None
-    if mode != Mode.CURATOR:
-        pioneer_entry = select_pioneer_topic(seen_data)
 
     return ContentPrepPayload(
         mode=mode,
@@ -278,11 +317,12 @@ async def _apply_curator_fallback_image(
     return compressed
 
 
-def _should_attempt_image(mode: Mode, force_image: bool) -> bool:
-    """Whether to generate a post image. Never for Curator (it uses a link
-    card); always when FORCE_IMAGE is set (deterministic validation); otherwise
-    at the configured probability."""
-    if mode == Mode.CURATOR:
+def _should_attempt_image(from_news: bool, force_image: bool) -> bool:
+    """Whether to generate a post image. Never for a post written from a news
+    item (it uses a link card, and on Bluesky an image would replace the card);
+    always when FORCE_IMAGE is set (deterministic validation); otherwise at the
+    configured probability."""
+    if from_news:
         return False
     return force_image or random.random() < IMAGE_GENERATION_PROBABILITY
 
@@ -329,7 +369,12 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
         news_items=news_items,
         model_priority=active_models,
         pioneer_entry=content_prep.pioneer_entry,
-        recent_mode_topics=content_prep.seen_data.get("recent_mode_topics", []),
+        # Only this mode's topics from the last 30 days are on cooldown.
+        recent_mode_topics=[
+            h["topic"]
+            for h in prune_mode_topic_history(content_prep.seen_data.get("mode_topic_history"))
+            if h["mode"] == mode
+        ],
         anthropic_api_key=creds.anthropic_api_key,
     )
 
@@ -365,7 +410,9 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # chosen URL; only refetch when it differs from the pre-fetched top item.
     posted_topic_category: Optional[str] = None
     posted_link: Optional[str] = None
-    if mode == Mode.CURATOR:
+    # A post written from a news item (the Curator, or an afternoon that took
+    # the day's unused news) carries that item's link card and claims its URL.
+    if news_items:
         if chosen_link:
             if chosen_link != (news_items[0]["link"] if news_items else None):
                 link_meta = await get_link_metadata(chosen_link)
@@ -407,7 +454,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Curator is one of the two scheduled daily modes, so leaving it ungated meant
     # the 0.85 cadence-variety setting only reached half the feed.
     curator_fallback_image = None
-    if mode == Mode.CURATOR and _should_attempt_curator_fallback_image(force_image):
+    if news_items and _should_attempt_curator_fallback_image(force_image):
         fallback_topic = chosen_topic or (news_items[0].get("title") if news_items else "") or "AI and technology news"
         curator_fallback_image = await _apply_curator_fallback_image(
             link_meta, creds.gemini_api_key, fallback_topic)
@@ -415,7 +462,7 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # Generate image for non-Curator modes at configured probability.
     # Pass the finished thread so _craft_visual_prompt can tailor the Imagen prompt.
     image_bytes = None
-    if _should_attempt_image(mode, force_image):
+    if _should_attempt_image(bool(news_items), force_image):
         SafeLogger.info("image_requested", "Attempting post image",
                         mode=mode, forced=force_image, topic=chosen_topic)
         image_bytes = await generate_post_image(
@@ -457,8 +504,8 @@ async def broadcasting_stage(content_prep: ContentPrepPayload, settings: Setting
     # image generation does not leave a claim on a story that never reached the
     # broadcast at all.
     #
-    # Only the Curator has a URL to claim; Mentor and Strategist dedup on
-    # recent_mode_topics, which is a topic memory, not a per-story claim.
+    # Only a post written from a news item has a URL to claim; the other
+    # afternoon posts dedup on mode_topic_history, a topic memory.
     if posted_link and not reserve_broadcast(posted_link):
         SafeLogger.error(
             "broadcast_aborted_unreserved",
@@ -895,7 +942,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
         return
 
     dirty = bool(
-        (mode == Mode.CURATOR and news_items)
+        news_items
         or (mode in (Mode.MENTOR, Mode.STRATEGIST) and chosen_topic)
         or pioneer_entry
     )
@@ -917,7 +964,7 @@ async def persistence_stage(automation: AutomationPayload) -> None:
         current.setdefault("links", [])
         current.setdefault("recent_topics", [])
 
-        if mode == Mode.CURATOR and news_items:
+        if news_items:
             # Only the item that was actually published is marked seen. This used to
             # record every candidate fetch_news returned, which suppressed the four
             # stories the run did NOT write about — and because fetch_single_feed only
@@ -954,13 +1001,18 @@ async def persistence_stage(automation: AutomationPayload) -> None:
                 current["recent_topics"] + [topic_cat]
             )[-RECENT_TOPICS_WINDOW:]
 
-        # v4.16: track the LLM-chosen topic for Mentor/Strategist runs so the
-        # next run's topic picker can avoid repeating it. Curator already has
-        # its own categorical recent_topics; this is a separate field for the
-        # free-form Mentor/Strategist topic strings.
+        # Track the afternoon topic per mode and date, so a fallback list topic
+        # does not return in the same mode within MODE_TOPIC_COOLDOWN_DAYS
+        # (#270). Replaces recent_mode_topics, the last five picks shared by
+        # both modes, which protected a topic for about five days.
         if mode in (Mode.MENTOR, Mode.STRATEGIST) and chosen_topic:
-            existing = current.get("recent_mode_topics", []) or []
-            current["recent_mode_topics"] = (existing + [chosen_topic])[-5:]
+            history = prune_mode_topic_history(current.get("mode_topic_history"))
+            history.append({
+                "mode": str(mode),
+                "topic": chosen_topic,
+                "posted_at": datetime.now(timezone.utc).isoformat(),
+            })
+            current["mode_topic_history"] = history
 
         # Pioneer cooldown bookkeeping — only when a pioneer post actually fired
         if pioneer_entry:

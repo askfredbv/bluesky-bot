@@ -171,3 +171,10 @@ def test_prune_tolerates_malformed_entries():
 def test_prune_empty_list_is_empty():
     assert prune_pioneer_recent([]) == []
     assert prune_pioneer_recent(None) == []  # type: ignore[arg-type]
+
+
+def test_a_corrupted_non_list_history_is_treated_as_empty():
+    """A Gist field that is not a list must not crash the run (Gemini, #276)."""
+    from src.state_store import prune_mode_topic_history
+    assert prune_pioneer_recent(7) == []  # type: ignore[arg-type]
+    assert prune_mode_topic_history({"mode": "mentor"}) == []

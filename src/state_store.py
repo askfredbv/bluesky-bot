@@ -17,6 +17,7 @@ import httpx
 
 from src.config import (
     MAX_BROADCAST_RESERVATIONS,
+    MODE_TOPIC_COOLDOWN_DAYS,
     PIONEER_COOLDOWN_DAYS,
     REPLIED_FILE,
     SEEN_FILE,
@@ -381,18 +382,18 @@ def _load_json_with_repair(
     return _load_json_with_repair_strict(
         file_path, default_factory, migrate_list_to_seen_shape=migrate_list_to_seen_shape
     )[0]
-def prune_pioneer_recent(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Drop pioneer_recent entries older than PIONEER_COOLDOWN_DAYS.
+def _prune_dated(entries: Any, days: int, required: Tuple[str, ...]) -> List[Dict[str, Any]]:
+    """Keep the dict entries whose ``posted_at`` lies within ``days``.
 
-    Tolerant of malformed entries (missing keys, unparseable dates) — they're
+    Tolerant of malformed entries (missing keys, unparseable dates): they're
     dropped silently. Idempotent.
     """
-    if not entries:
+    if not isinstance(entries, list):
         return []
-    cutoff = datetime.now(timezone.utc) - timedelta(days=PIONEER_COOLDOWN_DAYS)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = []
     for entry in entries:
-        if not isinstance(entry, dict) or "id" not in entry or "posted_at" not in entry:
+        if not isinstance(entry, dict) or any(k not in entry for k in required + ("posted_at",)):
             continue
         try:
             posted_at = datetime.fromisoformat(entry["posted_at"].replace("Z", "+00:00"))
@@ -401,6 +402,22 @@ def prune_pioneer_recent(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if posted_at >= cutoff:
             kept.append(entry)
     return kept
+
+
+def prune_pioneer_recent(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop pioneer_recent entries older than PIONEER_COOLDOWN_DAYS."""
+    return _prune_dated(entries, PIONEER_COOLDOWN_DAYS, ("id",))
+
+
+def prune_mode_topic_history(entries: Any) -> List[Dict[str, Any]]:
+    """Drop afternoon topic records older than MODE_TOPIC_COOLDOWN_DAYS.
+
+    Each record is ``{"mode", "topic", "posted_at"}``. What is left is exactly
+    the set a fallback list topic must not repeat (#270).
+    """
+    return _prune_dated(entries, MODE_TOPIC_COOLDOWN_DAYS, ("mode", "topic"))
+
+
 def _ensure_pioneer_field(data: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure pioneer_recent key exists. In-place add for old state shapes."""
     if "pioneer_recent" not in data:

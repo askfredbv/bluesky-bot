@@ -677,11 +677,13 @@ def _extract_style_fingerprints(recent_posts: List[str]) -> Dict[str, List[str]]
         "repeated_hashtags": repeated_hashtags
     }
 
-# v4.16: how much of each recent post to include verbatim in the avoidance
-# block. Long enough to convey rhetorical shape; short enough that 3
-# excerpts plus the rest of the prompt stay well under the context window.
-_RECENT_POST_EXCERPT_CHARS: int = 200
-_RECENT_POST_EXCERPT_COUNT: int = 3
+# How much of each own post goes into the avoidance block. Since #270 that is
+# every top-level post of the last 30 days (about 60), not the last three: a
+# subject the model cannot see it already covered comes back near-verbatim.
+# 160 characters carries the subject and the opening; 60 of them are ~10k
+# characters, small next to the context window.
+_RECENT_POST_EXCERPT_CHARS: int = 160
+_RECENT_POST_EXCERPT_COUNT: int = 60
 
 
 def _build_avoidance_constraints(
@@ -711,9 +713,10 @@ def _build_avoidance_constraints(
     if excerpts:
         bullets = "\n".join(f"  {i + 1}. {ex}" for i, ex in enumerate(excerpts))
         excerpt_block = (
-            "\n- Recent post excerpts (do NOT produce text that is structurally or "
-            "rhetorically similar to any of these: different opening, different "
-            "metaphor, different sentence rhythm):\n"
+            "\n- Your own posts from the last 30 days, newest first. Do NOT make a "
+            "point one of these already made, and do NOT produce text that is "
+            "structurally or rhetorically similar to any of them: different opening, "
+            "different metaphor, different sentence rhythm:\n"
             f"{bullets}"
         )
 
@@ -1680,10 +1683,12 @@ async def generate_content(
     and overrides the normal Mentor/Strategist topic pick with a pioneer
     fact post. Curator mode never receives a pioneer entry.
 
-    ``recent_mode_topics`` is the rolling list of topics the bot picked
-    on its last few Mentor/Strategist runs — used to filter
-    ``random.choice`` so the same topic is not picked back-to-back.
-    Mentor's 4-topic pool especially benefits (P(repeat)=25% otherwise).
+    ``recent_mode_topics`` is the list topics this mode posted in the last
+    MODE_TOPIC_COOLDOWN_DAYS; the fallback pick avoids them (#270).
+
+    ``news_items`` in Mentor or Strategist mode is the day's unused news: the
+    model picks one item and writes its own angle on it, under the same URL
+    contract and grounding check as the Curator (plan 2027, move 1).
     """
     temporal = get_temporal_context()
     variant_name, variant_instruction = _select_persona_variant(mode)
@@ -1716,7 +1721,8 @@ async def generate_content(
             entry_id=entry["id"],
             category=entry.get("category"),
         )
-    elif mode == Mode.CURATOR and news_items:
+    elif news_items:
+        # The Curator, or an afternoon that starts from the day's unused news.
         # FIX: utils.py stores the field as 'description', not 'summary'
         news_text = "\n".join([f"- {i['title']}: {i.get('description', '')} ({i['link']})" for i in news_items])
         topic = news_items[0]['title']
@@ -1738,17 +1744,37 @@ async def generate_content(
                 for i in news_items
             ],
         )
+        system = SYSTEM_INSTRUCTIONS_CURATOR if mode == Mode.CURATOR else SYSTEM_INSTRUCTIONS_MENTOR
         instr = (
-            f"{SYSTEM_INSTRUCTIONS_CURATOR}\n\n"
+            f"{system}\n\n"
             f"PERSONA VARIANT ({variant_name}): {variant_instruction}\n\n"
             f"LANGUAGE: Write this entire thread in {language}. Do not mix languages."
         )
+        if mode == Mode.CURATOR:
+            ask = (
+                "Write the thread. Start with whichever item is the most consequential, "
+                "not the most alarming or the most prominent headline. Connect where it makes sense, but don't force links."
+            )
+        else:
+            # The item is the subject; the mode only sets the angle. Facts about
+            # the item come from its line here: the grounding check reads the same.
+            angle = (
+                "the longer-horizon take: what this changes, and what someone should be building toward because of it. "
+                "Do not open with a time frame such as 'In five years'."
+                if mode == Mode.STRATEGIST else
+                "the angle most people don't articulate: what it teaches someone who builds, runs or "
+                "buys technology, the thing that is obvious in hindsight but they genuinely haven't heard yet."
+            )
+            ask = (
+                "These are today's stories the morning post did not use. Pick the ONE item that gives "
+                "the most surprising, useful post, and write it as an observation, not a news summary: "
+                f"{angle} Every fact you state about the item must come from its line above."
+            )
         task = (
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             "ITEMS TO WORK WITH:\n"
             f"{news_text}\n\n"
-            "Write the thread. Start with whichever item is the most consequential, "
-            "not the most alarming or the most prominent headline. Connect where it makes sense, but don't force links."
+            f"{ask}"
         )
     elif mode == Mode.STRATEGIST:
         topic = _pick_topic_avoiding_recent(SECONDARY_TOPICS, recent_mode_topics)
@@ -1761,7 +1787,8 @@ async def generate_content(
             f"Context: {temporal['day']}, {temporal['session']}. Theme: {temporal['theme']}\n\n"
             f"TOPIC: {topic}\n\n"
             "Write the thread. This is the longer-horizon take: not 'what to do Monday' but "
-            "'what does this look like in five years and what should someone be building toward now'."
+            "what this is turning into and what someone should be building toward now. "
+            "Do not open with a time frame such as 'In five years'."
         )
     else:
         # MENTOR_TOPICS lives in config.py (was a 4-item inline list pre-v4.18.1).
@@ -1783,7 +1810,8 @@ async def generate_content(
     # array so the link card can be built from the item the model actually
     # wrote about. The Curator task invites picking the most consequential
     # item, not the top-scored one; the URL tells us which it picked.
-    curator_structured = mode == Mode.CURATOR and bool(news_items)
+    # Any post written from news items, Curator or afternoon, names its item.
+    curator_structured = bool(news_items)
     if curator_structured:
         format_instruction = (
             "OUTPUT FORMAT:\n"

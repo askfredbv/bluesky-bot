@@ -54,21 +54,21 @@ async def test_mode_selection_stage_ignores_blank_force_mode(monkeypatch):
 
 def test_should_attempt_image_never_for_curator(monkeypatch):
     monkeypatch.setattr(main.random, "random", lambda: 0.0)  # would pass the roll
-    assert main._should_attempt_image(main.Mode.CURATOR, force_image=True) is False
-    assert main._should_attempt_image(main.Mode.CURATOR, force_image=False) is False
+    assert main._should_attempt_image(True, force_image=True) is False
+    assert main._should_attempt_image(True, force_image=False) is False
 
 
 def test_should_attempt_image_forced_overrides_probability(monkeypatch):
     monkeypatch.setattr(main.random, "random", lambda: 0.99)  # would fail the roll
-    assert main._should_attempt_image(main.Mode.MENTOR, force_image=True) is True
+    assert main._should_attempt_image(False, force_image=True) is True
 
 
 def test_should_attempt_image_probability_gate(monkeypatch):
     monkeypatch.setattr(main, "IMAGE_GENERATION_PROBABILITY", 0.5)
     monkeypatch.setattr(main.random, "random", lambda: 0.4)  # below the gate
-    assert main._should_attempt_image(main.Mode.MENTOR, force_image=False) is True
+    assert main._should_attempt_image(False, force_image=False) is True
     monkeypatch.setattr(main.random, "random", lambda: 0.6)  # above the gate
-    assert main._should_attempt_image(main.Mode.MENTOR, force_image=False) is False
+    assert main._should_attempt_image(False, force_image=False) is False
 
 
 def test_should_attempt_curator_fallback_image_respects_probability(monkeypatch):
@@ -105,16 +105,86 @@ async def test_content_prep_stage_degrades_mode_when_news_is_low(monkeypatch):
 
     monkeypatch.setattr(main, "load_seen_articles", lambda: {"links": [], "recent_topics": []})
     monkeypatch.setattr(main, "fetch_news", fake_fetch_news)
-    monkeypatch.setattr(main, "get_link_metadata", lambda *_: {"title": "unused"})
+    async def fake_link_meta(*_):
+        return {"title": "unused"}
+
+    monkeypatch.setattr(main, "get_link_metadata", fake_link_meta)
     monkeypatch.setattr(main, "get_recent_posts", fake_get_recent_posts)
+    monkeypatch.setattr(main, "select_pioneer_topic", lambda *_: None)
     monkeypatch.setitem(__import__("sys").modules, "atproto", SimpleNamespace(AsyncClient=FakeClient))
 
     payload = await main.content_prep_stage(main.ModeSelectionPayload(mode="curator", current_hour_utc=8), creds)
 
     assert payload.mode == "strategist"
+    # The one item the morning found is the Strategist's material now, with its card.
     assert payload.news_items == [{"link": "https://one"}]
     assert payload.recent_posts == ["a", "b"]
+    assert payload.link_meta == {"title": "unused"}
+
+
+async def _afternoon_prep(monkeypatch, *, pioneer, news):
+    """Run content_prep_stage for a Mentor afternoon with a scripted source."""
+    creds = SimpleNamespace(bluesky_username="u", bluesky_password="p")
+    fetches = []
+
+    class FakeClient:
+        def on_session_change(self, cb): return cb
+        async def login(self, username, password):
+            return None
+
+    async def fake_fetch_news(seen, recent_topics, *args, **kwargs):
+        fetches.append(list(seen))
+        return news
+
+    async def fake_get_recent_posts(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(main, "load_seen_articles", lambda: {
+        "links": ["https://used-this-morning"], "recent_topics": [], "pioneer_recent": []})
+    monkeypatch.setattr(main, "fetch_news", fake_fetch_news)
+    async def fake_link_meta(link):
+        return {"url": link}
+
+    monkeypatch.setattr(main, "get_link_metadata", fake_link_meta)
+    monkeypatch.setattr(main, "get_recent_posts", fake_get_recent_posts)
+    monkeypatch.setattr(main, "select_pioneer_topic", lambda *_: pioneer)
+    monkeypatch.setitem(__import__("sys").modules, "atproto", SimpleNamespace(AsyncClient=FakeClient))
+    payload = await main.content_prep_stage(
+        main.ModeSelectionPayload(mode=main.Mode.MENTOR, current_hour_utc=18), creds)
+    return payload, fetches
+
+
+@pytest.mark.asyncio
+async def test_an_afternoon_without_pioneer_starts_from_unused_news(monkeypatch):
+    """Plan 2027, move 1: the afternoon's subject is the day's material."""
+    news = [{"link": "https://fresh-story", "title": "Fresh"}]
+    payload, fetches = await _afternoon_prep(monkeypatch, pioneer=None, news=news)
+    assert payload.mode == main.Mode.MENTOR
+    assert payload.news_items == news
+    assert payload.link_meta == {"url": "https://fresh-story"}
+    assert payload.source_domain == "fresh-story"
+    assert payload.pioneer_entry is None
+    # What the morning posted is excluded, so the afternoon cannot repeat it.
+    assert fetches == [["https://used-this-morning"]]
+
+
+@pytest.mark.asyncio
+async def test_a_pioneer_afternoon_does_not_fetch_news(monkeypatch):
+    pioneer = {"entry": {"id": "lynn-conway"}, "pool": "undated"}
+    payload, fetches = await _afternoon_prep(monkeypatch, pioneer=pioneer, news=[{"link": "https://x"}])
+    assert payload.pioneer_entry == pioneer
+    assert payload.news_items == []
     assert payload.link_meta is None
+    assert fetches == []
+
+
+@pytest.mark.asyncio
+async def test_an_afternoon_with_no_material_falls_back_to_the_list(monkeypatch):
+    payload, fetches = await _afternoon_prep(monkeypatch, pioneer=None, news=[])
+    assert payload.news_items == []
+    assert payload.pioneer_entry is None
+    assert payload.link_meta is None
+    assert len(fetches) == 1
 
 
 def _patch_gen(monkeypatch, gen_calls, returns=b"rawbytes"):
@@ -926,7 +996,7 @@ async def test_persistence_stage_partial_delivery_still_counts(monkeypatch):
 
     broadcast = main.BroadcastPayload(
         mode="mentor",
-        seen_data={"links": [], "recent_topics": [], "recent_mode_topics": [], "pioneer_recent": []},
+        seen_data={"links": [], "recent_topics": [], "pioneer_recent": []},
         news_items=[],
         content_list=["a post"],
         chosen_topic="Career",
@@ -940,7 +1010,8 @@ async def test_persistence_stage_partial_delivery_still_counts(monkeypatch):
     assert automation.delivered is True
 
     await main.persistence_stage(automation)
-    assert updated["value"]["recent_mode_topics"] == ["Career"]
+    history = updated["value"]["mode_topic_history"]
+    assert [(h["mode"], h["topic"]) for h in history] == [("mentor", "Career")]
     assert updated["value"]["pioneer_recent"][0]["id"] == "lynn-conway"
 
 
@@ -1236,3 +1307,96 @@ async def test_consecutive_days_never_repeat_the_same_afternoon_mode(monkeypatch
         seen.append((await main.mode_selection_stage()).mode)
     assert all(a != b for a, b in zip(seen, seen[1:])), seen
     assert seen.count("mentor") == seen.count("strategist") == 7
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_cooldown_is_this_modes_last_30_days(monkeypatch):
+    """#270: a list topic is on cooldown for 30 days in its own mode only. The
+    old memory was the last five picks shared by both modes, about five days."""
+    from datetime import datetime, timedelta, timezone
+    seen = {}
+
+    async def fake_generate_content(*args, **kwargs):
+        seen["cooled"] = kwargs["recent_mode_topics"]
+        return [], "topic", None
+
+    monkeypatch.setattr(main, "generate_content", fake_generate_content)
+    now = datetime.now(timezone.utc)
+    history = [
+        {"mode": "strategist", "topic": "AI ethics and responsible use",
+         "posted_at": (now - timedelta(days=16)).isoformat()},
+        {"mode": "strategist", "topic": "old enough to return",
+         "posted_at": (now - timedelta(days=31)).isoformat()},
+        {"mode": "mentor", "topic": "a Mentor topic", "posted_at": now.isoformat()},
+        {"mode": "strategist"},  # malformed: dropped, not a crash
+    ]
+    prep = main.ContentPrepPayload(
+        mode=main.Mode.STRATEGIST,
+        seen_data={"links": [], "recent_topics": [], "mode_topic_history": history},
+        news_items=[], link_meta=None, bsky_client="client", recent_posts=[],
+    )
+    settings = SimpleNamespace(platform=SimpleNamespace(post_jitter_min_seconds=0, post_jitter_max_seconds=0))
+    creds = SimpleNamespace(gemini_api_key="g", anthropic_api_key=None)
+    await main.broadcasting_stage(prep, settings, creds)
+    assert seen["cooled"] == ["AI ethics and responsible use"]
+
+
+@pytest.mark.asyncio
+async def test_the_topic_history_drops_entries_past_the_cooldown(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    old = {"mode": "mentor", "topic": "stale",
+           "posted_at": (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()}
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles",
+                        lambda t: updated.update(value=t({"mode_topic_history": [old]})))
+    await main.persistence_stage(main.AutomationPayload(
+        mode=main.Mode.STRATEGIST, seen_data={}, news_items=[],
+        chosen_topic="fresh", delivered=True))
+    history = updated["value"]["mode_topic_history"]
+    assert [(h["mode"], h["topic"]) for h in history] == [("strategist", "fresh")]
+
+
+@pytest.mark.asyncio
+async def test_an_afternoon_news_post_marks_its_link_seen(monkeypatch):
+    """The afternoon's news item must not come back the next morning."""
+    updated = {}
+    monkeypatch.setattr(main, "update_seen_articles", lambda t: updated.update(value=t({})))
+    item = {"link": "https://fresh-story", "detected_topic": "Security"}
+    await main.persistence_stage(main.AutomationPayload(
+        mode=main.Mode.MENTOR, seen_data={}, news_items=[item],
+        chosen_topic="Fresh", delivered=True, posted_link="https://fresh-story",
+        posted_topic_category="Security"))
+    assert main.canonical_url("https://fresh-story") in updated["value"]["links"]
+    assert updated["value"]["recent_topics"] == ["Security"]
+
+
+@pytest.mark.asyncio
+async def test_own_post_history_is_a_month_of_top_level_posts():
+    """#270: the avoidance context reads 30 days of the bot's own posts, not the
+    last 10 feed items, and leaves out reposts and thread continuations."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+
+    def item(text, days_ago, reason=None, reply=None):
+        record = SimpleNamespace(text=text, reply=reply,
+                                 created_at=(now - timedelta(days=days_ago)).isoformat().replace("+00:00", "Z"))
+        return SimpleNamespace(post=SimpleNamespace(record=record), reason=reason)
+
+    feed = [
+        item("today", 0),
+        item("a repost", 1, reason="repost"),
+        item("2/2 of a thread", 2, reply="parent"),
+        item("29 days ago", 29),
+        item("31 days ago", 31),
+    ]
+    calls = []
+
+    async def get_author_feed(params):
+        calls.append(params)
+        return SimpleNamespace(feed=feed)
+
+    client = SimpleNamespace(app=SimpleNamespace(bsky=SimpleNamespace(feed=SimpleNamespace(
+        get_author_feed=get_author_feed))))
+    assert await main.get_recent_posts(client, "me") == ["today", "29 days ago"]
+    assert calls[0]["limit"] == 100
+    assert calls[0]["filter"] == "posts_no_replies"

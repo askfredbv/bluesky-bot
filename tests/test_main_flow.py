@@ -153,10 +153,14 @@ async def test_curator_switches_to_strategist_when_feed_volume_is_low(monkeypatc
     monkeypatch.setattr(main, "get_recent_posts", fake_recent_posts)
     monkeypatch.setitem(sys.modules, "atproto", types.SimpleNamespace(AsyncClient=FakeAsyncClient))
     monkeypatch.setattr(main.SafeLogger, "warn", capture_warn)
+    # Pinned: the Pioneer roll is random, and when it misses the Strategist
+    # writes from the two items, which would fetch their link card.
+    monkeypatch.setattr(main, "select_pioneer_topic", lambda *_: {"entry": {"id": "x"}, "pool": "undated"})
 
     payload = await main.content_prep_stage(main.ModeSelectionPayload(mode="curator", current_hour_utc=8), creds)
 
     assert payload.mode == "strategist"
+    assert payload.news_items == []  # Pioneer wins over the thin news
     assert payload.link_meta is None
     assert payload.recent_posts == ["already posted"]
     assert any(event == "news_volume_low" for event, _ in calls["warn"])

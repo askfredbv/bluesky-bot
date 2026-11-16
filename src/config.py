@@ -648,10 +648,9 @@ RSS_FEEDS = [
 # lend a SUBJECT only, which is all a seed takes). Frederik picked these 21
 # from a drafted 25; the source list is in docs/BACKLOG_ARCHIVE.md.
 #
-# Dedup via seen_data["recent_mode_topics"] keeps a 5-slot rolling memory,
-# and the afternoon alternates with Strategist (main.py mode_selection_stage),
-# so a topic returns on the order of two months. test_agents_gaps pins the
-# pool at 15+ so a month of its own slot cannot repeat one.
+# Since plan 2027 move 1 this is a fallback only (see MODE_TOPIC_COOLDOWN_DAYS):
+# a topic does not return in the same mode within 30 days. test_agents_gaps
+# pins the pool at 15+ so a month of its own slot cannot exhaust it.
 MENTOR_TOPICS: List[str] = [
     # Getting things done, and doing the right things.
     "doing the right things versus doing things right, and actually getting them done",
@@ -758,13 +757,27 @@ SECONDARY_TOPICS = [
     "curiosity and lifelong learning",
 ]
 
+# Plan 2027, move 1 (#270): the lists above are now only the afternoon's
+# fallback, used when neither Pioneer nor the day's unused news gives a subject.
+# A list topic does not return in the same mode within this many days (it was
+# "not in the last 5 picks, shared by both modes": about five days).
+MODE_TOPIC_COOLDOWN_DAYS: int = 30
+# How far back the bot reads its own top-level posts for the avoidance context,
+# so a returning subject has to find a new angle instead of the old one (#270).
+OWN_POST_HISTORY_DAYS: int = 30
+
 # ── Pioneer / "On this day" dimension (v4.15) ────────────────────────────────
 # A curated path for obscure-but-true tech-history facts. Date-anchored entries
 # fire on their anniversary; the rest fire probabilistically. Mentor/Strategist
 # only — Curator (news mode) is unaffected.
 
 PIONEER_DIMENSION_ENABLED: bool = True
-PIONEER_FALLBACK_PROBABILITY: float = 0.35  # v4.20: 0.20 → 0.35. 7 afternoon slots × 0.35 ≈ 2.5 undated firings/week, plus dated anniversaries. The Pioneer dimension consistently produces the most distinctive posts in the feed (Lynn Conway, PARIS); user asked to bias toward more of it.
+# 2026-11-16 (plan 2027, move 1): 0.35 -> 0.5. Pioneer is now a main source of
+# the afternoon, next to the day's unused news, not a side branch: its posts get
+# the "I didn't know that" reaction the plan asks for. 52 undated entries at
+# about one fire every other afternoon is ~30 per 60-day cooldown window, which
+# still leaves ~20 fresh.
+PIONEER_FALLBACK_PROBABILITY: float = 0.5
 PIONEER_COOLDOWN_DAYS: int = 60             # 2026-06-04: 30 → 60. User noticed `computer-was-a-job` re-firing exactly 30 days after its previous use. Math: 37 undated entries × 0.35/day fire probability ≈ 21 firings per 60-day window — still leaves ~16 fresh entries available. The audience tolerates 30-day repeats fine; the user (who reads every post) does not.
 
 # Pioneer corpus (dated anniversaries + undated facts) lives in
