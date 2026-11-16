@@ -15,12 +15,16 @@ Gemini-only), a private GitHub Gist for state. **The voice is the product.** Rea
 `docs/RETRO_2026-05-08.md` and `docs/BACKLOG.md` for the hard-won context before proposing
 structural changes.
 
-**Operating goal (2026-10-06): run reliably, cost no recurring human time, never embarrass
-its author.** Audience growth is deprioritised. Reasoning and numbers: `docs/BACKLOG.md` §1.
+**Operating goal (2026-11-16): purposeful growth and professionalism.** Reach the people
+this perspective is for, without giving in on reliability, trust or professionalism. Not
+growth for the sake of growth. Canonical text and history: `docs/BACKLOG.md` §1.
 
-- **Do not propose growth, engagement-optimisation or reply-automation work**, and do not
-  justify a change by its effect on reach. Engagement data is noise at this scale (68 posts,
-  42 interactions, 41 of them zero), so it cannot support a decision either way.
+- **Growth work is in scope only on those terms.** It may never loosen voice, source
+  fidelity or the validators, and engagement never feeds back into generation.
+- **No automatic replies to people.** The account's replies are Frederik's own (#273);
+  any reply drafting stays behind a human approval.
+- **A growth change is a declared experiment**, with its decision rule fixed before it
+  starts, as #230 did. Engagement data is still too thin to decide on by itself.
 - **Prefer changes with no recurring human cost.** An experiment nobody reads is worse than
   no experiment. Voice and correctness still matter in full.
 

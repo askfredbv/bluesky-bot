@@ -40,10 +40,22 @@ data-gated. Phase 4b is code-complete and **parked by decision**, not merely dor
 
 ---
 
-## §1 — Operating goal (since 2026-10-06)
+## §1 — Operating goal (since 2026-11-16)
 
-> **SUPERSEDED 2026-10-06.** The goal is now: run reliably, cost no recurring human time,
-> never embarrass its author. Growth is deprioritised. The record below is history, not
+> **Purposeful growth and professionalism.** Reach the people this perspective is for,
+> without giving in on reliability, trust or professionalism. Not growth for the sake of
+> growth.
+>
+> **Why.** Frederik, 2026-11-16: reactions to the posts are growing, and he reads them and
+> answers the good ones himself. Reaching out to people is wanted; giving in on reliability,
+> trust or professionalism to do it is not. The same day the automatic mention replies were
+> switched off (#273): the account's replies are his own. This text is canonical;
+> `AGENTS.md` and `.gemini/styleguide.md` carry it verbatim.
+
+### Previous goal (2026-10-06 to 2026-11-16)
+
+> **SUPERSEDED 2026-11-16.** The goal was: run reliably, cost no recurring human time,
+> never embarrass its author. Growth was deprioritised. The record below is history, not
 > current intent.
 >
 > **Why.** Growth here needs replies, and replies need Phase 4b (§2.1), which is
@@ -61,8 +73,7 @@ data-gated. Phase 4b is code-complete and **parked by decision**, not merely dor
 > ours stayed flat. The test is allowed under the goal above because it costs nothing
 > recurring: same two posts a day, no new runs, no model spend, no code path, and one
 > readout command. Pass/fail rule, fixed before the test started: 30 or more new followers
-> in 28 days, otherwise revert (#230). This is one test, not a change to the goal:
-> `AGENTS.md` still applies to everything else.
+> in 28 days, otherwise revert (#230). This was one test, not a change to that goal.
 
 The Option 1 history (2026-05-08 to 2026-10-06) is in [`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 
@@ -137,7 +148,7 @@ in the priority order above. Stage 0 (native structured output for the Curator c
 is the one piece worth doing on its own merits regardless of the rest. Grew out of the
 single Anthropic fallback shipped in #180.
 
-**`docs/PLAN_engagement.md`** is parked with the growth goal (§1). Its phase table is in
+**`docs/PLAN_engagement.md`** stays parked: it predates the 2026-11-16 goal (§1), which does not reopen it. Its phase table is in
 [`BACKLOG_ARCHIVE.md`](BACKLOG_ARCHIVE.md).
 
 

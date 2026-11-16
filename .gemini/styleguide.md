@@ -16,14 +16,18 @@ daily via GitHub Actions. Python 3.11, a two-provider model chain for generation
 `ANTHROPIC_CHAIN_POSITION` in `src/config.py`; images stay Gemini-only), a private GitHub
 Gist for state. It runs unattended and it posts under a real person's name.
 
-**The voice is the product.** The operating goal (set 2026-10-06) is: run reliably, cost
-no recurring human time, never embarrass its author. Audience growth is deprioritised.
+**The voice is the product.** The operating goal (set 2026-11-16) is: purposeful growth
+and professionalism. Reach the people this perspective is for, without giving in on
+reliability, trust or professionalism. Not growth for the sake of growth.
 
-Two consequences for review:
+Consequences for review:
 
-- **Do not propose growth, engagement-optimisation or reply-automation work, and do not
-  justify a change by its effect on reach.** Engagement data is noise at this scale
-  (68 posts, 42 interactions, 41 of them zero), so it supports no decision either way.
+- **Growth work is in scope only on those terms.** It may never loosen voice, source
+  fidelity or the validators, and engagement never feeds back into generation.
+- **No automatic replies to people.** The account's replies are Frederik's own; any reply
+  drafting stays behind a human approval.
+- **A growth change is a declared experiment**, with its decision rule fixed before it
+  starts. Engagement data is still too thin to decide on by itself.
 - **Prefer changes with no recurring human cost.** An experiment nobody reads is worse
   than no experiment. Voice and correctness still matter in full.
 
