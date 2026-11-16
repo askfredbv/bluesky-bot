@@ -1,7 +1,5 @@
 # Plan: Engagement — measure, observe, act, participate
 
-> **Status — 2026-11-16. This whole plan stays parked.** Its premise — the GOAL CHANGE section below, "the project's explicit goal is now Option 1: build a following" — was superseded on 2026-10-06 (growth deprioritised). On 2026-11-16 growth came back as a goal, but a different one: purposeful growth and professionalism, not growth for the sake of growth (`BACKLOG.md` §1). That goal does not reopen this plan: replies to people are Frederik's own (#273), and Phase 4b's approval queue is still not staffed. A piece of this plan comes back only as its own decision against §1. Read what follows as history.
->
 > Phase 1 (capture) and Phase 4a (recon) are **shipped**; Phase 4b (proactive replies) is **code-complete but dormant**; Phases 2 (digest), 3 (scoring) and 4c (expansion) were already **parked**. Current primary model is **`gemini-3.7-flash`** — the `gemini-2.5-pro` below is historical.
 
 > **Read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md) before executing further on this plan.** The phase ordering below (capture → digest → act → participate) was followed through 2026-04 / 2026-05 and shipped a coherent Phase 1, but the retro documents why the implicit assumption ("an audience exists to engage with the content") was wrong from the start. Phase 4 (proactive replies) is the only path in this plan that creates an audience; running 1→2→3 before 4 measured a feed that had no readers. Question whether the plan's phase order still matches the project's goal before adding work on top.
