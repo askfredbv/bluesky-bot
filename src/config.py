@@ -363,7 +363,8 @@ MIN_TIER1_CANDIDATES: int = 1  # best-effort: only if the pool holds one
 
 # Flagship AI products — a post about the current frontier model is categorically
 # more consequential than a generic "new feature" story. `refresh_momentum.py`
-# rewrites this list monthly and opens a PR; hand edits are the stopgap.
+# can rewrite this list and open a PR, but only when run by hand (the monthly
+# schedule was dropped 2026-11-16, #254); hand edits remain the usual route.
 #
 # Every entry must be EVIDENCED (seen in the bot's own tier-1 feeds), not
 # recalled, and VERSION-QUALIFIED. Matching is a lowercase substring test, so a
