@@ -388,7 +388,7 @@ def _prune_dated(entries: Any, days: int, required: Tuple[str, ...]) -> List[Dic
     Tolerant of malformed entries (missing keys, unparseable dates): they're
     dropped silently. Idempotent.
     """
-    if not entries:
+    if not isinstance(entries, list):
         return []
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = []
