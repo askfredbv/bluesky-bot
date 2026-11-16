@@ -73,7 +73,16 @@ A change is done when the public feed shows it working, not when CI is green.
 
 Post images carried rendered captions for six months while ruff, mypy, pytest and CodeQL
 were green; opening three images found it (v4.31.0). Flag a PR that calls itself done on
-CI alone. `ruff`, `mypy` and `pytest` green, with coverage at 80%, are still the floor
+CI alone.
+
+**What "live" means here** (verbatim from `AGENTS.md`): This bot has no staging. A change is live when **the next scheduled run on `main` has
+used it, and the post it produced reads correctly on the public Bluesky and Mastodon
+APIs** (not in the Actions log, which shows what was sent, not what readers see).
+A green CI run or a merged PR is not live. A change that only affects a path not taken
+on every run (a fallback, a thread, a Curator pick) is live-verified only once a run has
+actually taken that path; until then say "merged, not yet exercised".
+
+`ruff`, `mypy` and `pytest` green, with coverage at 80%, are still the floor
 CI enforces.
 
 ## How to review
