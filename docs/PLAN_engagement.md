@@ -1,6 +1,6 @@
 # Plan: Engagement — measure, observe, act, participate
 
-> **Status — 2026-10-06. This whole plan is parked.** Its premise — the GOAL CHANGE section below, "the project's explicit goal is now Option 1: build a following" — was superseded on 2026-10-06: growth is deprioritised and Phase 4b's approval queue is not being staffed. See `AGENTS.md` and `BACKLOG.md` §1. Read what follows as history unless that decision is reversed.
+> **Status — 2026-11-16. This whole plan stays parked.** Its premise — the GOAL CHANGE section below, "the project's explicit goal is now Option 1: build a following" — was superseded on 2026-10-06 (growth deprioritised). On 2026-11-16 growth came back as a goal, but a different one: purposeful growth and professionalism, not growth for the sake of growth (`BACKLOG.md` §1). That goal does not reopen this plan: replies to people are Frederik's own (#273), and Phase 4b's approval queue is still not staffed. A piece of this plan comes back only as its own decision against §1. Read what follows as history.
 >
 > Phase 1 (capture) and Phase 4a (recon) are **shipped**; Phase 4b (proactive replies) is **code-complete but dormant**; Phases 2 (digest), 3 (scoring) and 4c (expansion) were already **parked**. Current primary model is **`gemini-3.7-flash`** — the `gemini-2.5-pro` below is historical.
 
