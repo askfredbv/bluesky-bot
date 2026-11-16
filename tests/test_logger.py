@@ -155,7 +155,7 @@ def test_reserved_logrecord_keys_are_renamed_not_crashed():
 
 
 def test_warn_accepts_exception_and_keeps_the_message():
-    """AGENTS.md principle 3: a logging except must carry the message, not just
+    """retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md): a logging except must carry the message, not just
     the type. `exception=` is the supported way to do that, and it is declared on
     warn() so callers can see it rather than hand-rolling error_type=."""
     _reset_logger_state()

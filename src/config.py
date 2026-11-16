@@ -68,7 +68,7 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 # Appended to the Mastodon copy at broadcast time; the Bluesky copy gets
 # none. Mastodon has no algorithmic feed, so a followed hashtag is how
 # people find posts there; Bluesky's Discover feed does that job instead.
-# The post is generated once, platform-neutral. See AGENTS.md #7.
+# The post is generated once, platform-neutral. See AGENTS.md guardrail 5.
 #
 # The tags are named per-post by a small model call that reads the finished
 # text (agents.generate_mastodon_tags), NOT drawn from a fixed per-category
@@ -95,7 +95,7 @@ MENTION_SANITIZE_MAX_CHARS: int = 500
 #      rather than per source.
 #
 # The evidence is REJECTION, not agreement (probe run 34356091470). Every
-# category AGENTS.md #7 bans has a control and every control passed:
+# category AGENTS.md guardrail 5 bans has a control and every control passed:
 #
 #   affiliation  #NVIDIA, #Datadog, #GoogleCloud   all dropped
 #   endorsement  #Recommended                      dropped

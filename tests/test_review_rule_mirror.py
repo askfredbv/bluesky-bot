@@ -32,7 +32,7 @@ AGENTS_MD = REPO_ROOT / "AGENTS.md"
 STYLEGUIDE_MD = REPO_ROOT / ".gemini" / "styleguide.md"
 
 #: The heading both files put the priorities under. A prefix, because AGENTS.md
-#: continues it with "— the things a generic reviewer misses".
+#: continues it with "— the six guardrails".
 SECTION_START = "## Review priorities"
 
 #: The heading that ends the section, named rather than "the next ``## ``".

@@ -1424,7 +1424,7 @@ async def generate_mastodon_tags(
     if decisions is None and candidates:
         # A parser regression and a genuine all-DROP verdict both end with no
         # tags. Logging them identically is how a broken reviewer hides for
-        # weeks (AGENTS.md #3); WARN because a model that stopped returning
+        # weeks (retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md)); WARN because a model that stopped returning
         # usable verdicts is a fault, not a quiet day.
         SafeLogger.warn(
             "mastodon_tags_invalid_verdict",
@@ -1541,7 +1541,7 @@ async def _craft_visual_prompt(api_key: str, topic: str, summary: str) -> Option
             "visual_prompt_craft_failed",
             "Falling back to static image prompt",
             error_type=type(exc).__name__,
-            # AGENTS.md §3: the type alone cannot tell quota from auth from
+            # retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md): the type alone cannot tell quota from auth from
             # content filter from a deprecated model, and this path degrades
             # silently — the post still ships, with the weaker static prompt.
             error_msg=str(exc)[:200],

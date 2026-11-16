@@ -48,7 +48,7 @@ def apply_mastodon_tags(
       this only ever spends the remainder — a root that already carries two
       gets none from here. Without that the two limits stacked and a post could
       ship four hashtags, breaking the STYLE_GUIDELINES ceiling on one platform
-      only, which is exactly the divergence AGENTS.md #7 forbids (Codex review,
+      only, which is exactly the divergence AGENTS.md guardrail 5 forbids (Codex review,
       2026-09-09).
     - **Duplicates.** A tag already in the root is dropped; repeating one reads
       as a bot tell.
@@ -104,10 +104,10 @@ def number_mastodon_thread(
     is one, and the tags must stay a paragraph of their own so Mastodon's web
     client still lifts them into its hashtag bar.
 
-    Not a teaser (AGENTS.md #1 bans 🧵 and "thread incoming"): those announce
+    Not a teaser (retired AGENTS.md rule 1 (docs/BACKLOG_ARCHIVE.md) bans 🧵 and "thread incoming"): those announce
     parts that do not exist yet, while this labels a thread that is complete
     when its first part goes out. It carries no content of its own, which is
-    what lets it clear the appended-after-validation bar in AGENTS.md #7.
+    what lets it clear the appended-after-validation bar in AGENTS.md guardrail 5.
 
     Single posts come back unchanged. All-or-nothing: if numbering any part
     would breach ``max_length`` the thread ships unnumbered, because one part
@@ -171,7 +171,7 @@ def ensure_mastodon_source_link(
     the end", but nothing enforced it, and the live feed showed the result:
     4 of the last 5 Curator posts (2026-09-06 to 09-09) reached Mastodon with no
     link to the source at all, while Bluesky readers got a card each time.
-    AGENTS.md #7 forbids exactly that divergence (no different link); the card
+    AGENTS.md guardrail 5 forbids exactly that divergence (no different link); the card
     versus a URL in the text is its permitted "embed shape" difference.
 
     Appends ``source_url`` to the root as its own paragraph when no part of the
@@ -187,7 +187,7 @@ def ensure_mastodon_source_link(
         return list(content_list)
     url = source_url.strip()
     # This text is appended AFTER validate_summary, so it bypasses the voice
-    # validators by construction -- AGENTS.md principle 7 says the bar it must
+    # validators by construction -- AGENTS.md guardrail 5 says the bar it must
     # clear is stated at the point of the append instead. The bar: a link and
     # nothing else. A feed-controlled value carrying an embedded newline
     # otherwise ships a mention and a hashtag the prose never made (external
@@ -471,7 +471,7 @@ async def post_to_mastodon(
     v4.26: ``tags`` are Mastodon-only discovery tags appended to the root
     post before the length invariant runs, so the check sees the text that
     actually ships. The generated content itself is untouched and identical
-    to Bluesky's — see ``apply_mastodon_tags`` and AGENTS.md principle 7.
+    to Bluesky's — see ``apply_mastodon_tags`` and AGENTS.md guardrail 5.
 
     2026-09-10: ``source_url`` is the link the Bluesky card carries. Mastodon
     has no card for it, so ``ensure_mastodon_source_link`` puts it in the root

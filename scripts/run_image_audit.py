@@ -159,7 +159,7 @@ def classify_feed(
         # One malformed entry must cost one picture, not the month. An
         # AttributeError escaping here would fail the workflow step under
         # `set -e`, so there would be no artifact and no issue — the audit
-        # silently skipped for a null record. AGENTS.md §4: best-effort work
+        # silently skipped for a null record. retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md): best-effort work
         # catches, logs and continues.
         try:
             entry = _as_dict(item)
@@ -358,7 +358,7 @@ def fetch_feed(actor: str, limit: int) -> List[Dict[str, Any]]:
         # month with no images — when what actually happened is that the
         # endpoint changed shape and nobody noticed. ``main`` turns this into
         # the explicit "could not read the feed" result instead, which says
-        # that nothing is known either way. AGENTS.md §4: the best-effort half
+        # that nothing is known either way. retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md): the best-effort half
         # is each entry; the response itself is the part to fail loud on.
         raise ValueError(
             f"response carries no list-shaped 'feed' (got "

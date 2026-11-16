@@ -6,6 +6,8 @@ An automated bot that posts to **Bluesky** (@askfred.be) and **Mastodon** — tw
 
 The afternoon run also runs a **pioneer dimension** — curated tech-history facts that fire on anniversaries or probabilistically (~2–3 posts/week). The bar: things a working dev would say "huh, didn't know that" to.
 
+Where it is going: [`docs/PLAN_2027.md`](docs/PLAN_2027.md), the one-page plan for 2027 (approved 2026-11-16). The open queue is [`docs/BACKLOG.md`](docs/BACKLOG.md).
+
 ---
 
 ## What it does
@@ -142,7 +144,7 @@ Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_J
 │   └── ...                 # file_lock, logger, settings
 ├── scripts/                # One-shot tools: watchlist audit, model discovery, voice audit
 ├── tests/                  # pytest suite
-├── docs/                   # PLAN, BACKLOG, RELEASING (release checklist), retros, VOICE_AUDIT
+├── docs/                   # PLAN_2027, BACKLOG, RELEASING (release checklist), retros, VOICE_AUDIT
 ├── .github/workflows/      # daily_post, schedule-health, tests, lockfile-check, dependabot-lockfile,
 │                           #   codeql, dependency-audit, workflow-lint, image-audit, refresh_momentum,
 │                           #   voice-audit, the manual probes (model-discovery, image-probe,

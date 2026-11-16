@@ -842,7 +842,7 @@ def _raise_craft_failure(k, s, t):
 
 @pytest.mark.asyncio
 async def test_craft_failure_logs_the_message_not_just_the_type(monkeypatch):
-    """AGENTS.md §3 — this path degrades silently (the post still ships, with the
+    """retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md) — this path degrades silently (the post still ships, with the
     weaker static prompt), so the message is the only way to tell quota from auth
     from content filter."""
     logged = {}

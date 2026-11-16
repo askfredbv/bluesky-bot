@@ -1,34 +1,26 @@
 # AGENTS.md — working in (and reviewing) this repo
 
 Guidance for any AI agent authoring or reviewing changes here (Codex, Claude, etc.).
-Read this before reviewing a PR: flag violations of the project-specific principles
-below, not just generic bugs. Ground every flag in the actual code — verify the claim
-holds before asserting it (a reviewer can be wrong too).
+Read this before reviewing a PR: flag violations of the guardrails below, not just
+generic bugs. Ground every flag in the actual code — verify the claim holds before
+asserting it (a reviewer can be wrong too).
 
 ## What this project is
 
-A bot that posts AI/tech-mentorship content to **Bluesky** (@askfred.be) and **Mastodon**,
+A bot that posts AI/tech content to **Bluesky** (@askfred.be) and **Mastodon**,
 twice daily via GitHub Actions (triggered by cron-job.org). Python 3.11, a two-provider
 model chain for generation (`claude-sonnet-5-5` primary since 2026-10-12, the Gemini
 chain as fallback — see `ANTHROPIC_CHAIN_POSITION` in `src/config.py`; images stay
 Gemini-only), a private GitHub Gist for state. **The voice is the product.** Read
-`docs/RETRO_2026-05-08.md` and `docs/BACKLOG.md` for the hard-won context before proposing
-structural changes.
+`docs/PLAN_2027.md` before proposing anything: it is the direction, and it wins over
+older docs. `docs/BACKLOG.md` is the open queue; `docs/BACKLOG_ARCHIVE.md` and
+`docs/RETRO_2026-05-08.md` are history to mine, not limits.
 
 **Operating goal (2026-11-16): purposeful growth and professionalism.** Reach the people
 this perspective is for, without giving in on reliability, trust or professionalism. Not
 growth for the sake of growth. Canonical text and history: `docs/BACKLOG.md` §1.
 
-- **Growth work is in scope only on those terms.** It may never loosen voice, source
-  fidelity or the validators, and engagement never feeds back into generation.
-- **No automatic replies to people.** The account's replies are Frederik's own (#273);
-  any reply drafting stays behind a human approval.
-- **A growth change is a declared experiment**, with its decision rule fixed before it
-  starts, as #230 did. Engagement data is still too thin to decide on by itself.
-- **Prefer changes with no recurring human cost.** An experiment nobody reads is worse than
-  no experiment. Voice and correctness still matter in full.
-
-## Review priorities — the things a generic reviewer misses
+## Review priorities — the six guardrails
 
 This section is mirrored, for the one reviewer that cannot read this file, in
 `.gemini/styleguide.md` (Gemini Code Assist reads only its own `.gemini/` directory).
@@ -38,77 +30,44 @@ review rule is worse than no copy, because each one then looks authoritative.
 the same order. It compares titles only: it cannot see a rule sharpened here while the
 mirror keeps the old wording, so the discipline above is still yours to keep.
 
-1. **Voice is a brand decision, not a metric decision.** Content/prompt changes must
-   preserve the voice rules: no hype words, no reader-bait questions, no broken-promise
-   teasers ("more soon", "stay tuned", 🧵), no source-summary openers ("A new paper…",
-   "Researchers found…", "Sobering read."), first-person presence by default, and the two
-   registers (strategic-advisory vs casual-narrative) defined in `STYLE_GUIDELINES`
-   (`src/config.py`). Flag any change that loosens these, even if it "reads fine".
+The six guardrails are `docs/PLAN_2027.md`'s, word for word. Every other rule has to earn
+its place against them. A check listed under a guardrail is there because an incident
+put it there; the default answer to a new direction is "yes, with a check date".
 
-2. **No hardcoded fallback content that bypasses voice/validation.** The catastrophic
-   v4.18 bug shipped a hardcoded `"Notes on {topic} — more soon."` placeholder to
-   production for weeks. Rule: **missing a run beats shipping garbage.** On generation
-   failure the right behaviour is to return empty and skip the broadcast — never emit
-   content that bypasses `_apply_voice_trim` / `validate_summary`. Flag any new fallback
-   that produces postable text without passing the validators.
+1. **True to the source.** A post claims only what its source says, with no invented numbers, versions or quotes.
 
-3. **Diagnostic discipline: capture the message, not just the type.** Every `except` that
-   logs must include `error_msg=str(e)[:200]` (or equivalent), not `error_type` alone.
-   Several multi-day debugging delays (Step 2 KeyError, Imagen 3 deprecation, the
-   bluesky_session revocation loop, the gemini-2.5-pro AttributeError) were caused by
-   logging the type without the message. Flag any new catch that logs the type alone.
+   - The 2026-11-05 morning post turned Krebs's hedged lede into flat facts; every voice
+     validator passed it and Frederik removed it by hand (#248). Flag a change that
+     weakens or bypasses the Curator grounding check.
 
-4. **Fail loud on critical state, fail safe on the rest.** State-persistence failures
-   (Gist writes) must log at ERROR, not WARN — silent degradation is worse than noise.
-   But best-effort work (proactive scan, metrics refresh, a single feed fetch) should
-   catch, log, and continue rather than crash the run. Flag the wrong choice in either
-   direction.
+2. **Positive and useful.** No negativity, no clickbait, no politics. A strong, specific point is welcome: surprise comes from the fact, not from the tone.
 
-5. **Phase 4b kill-switch separation is load-bearing.** The proactive-reply pipeline
-   (`src/proactive.py`, `proactive_scan.yml`, `approve_pending_reply.yml`,
-   `pending_replies.json`) must stay isolated from the daily Curator/Mentor path: **no
-   imports from `main.py` into `src/proactive.py`**, no shared state file, no code path
-   where disabling Phase 4b breaks the daily post. Flag any wiring that tangles them — the
-   fix is to move the shared piece into a shared module under `src/` (state I/O lives in
-   `src/state_store.py`), not to cross the boundary.
+3. **Skip rather than embarrass.** When a post fails the source check or the voice check, skip the run. Taste is judged at the monthly read, not by blocking runs.
 
-6. **Outward actions stay human-gated.** Proactive replies never post unattended — the
-   scan only *stages* drafts; a human approves via manual `workflow_dispatch`. The reply
-   generator must be able to return `None`/SKIP and must validate voice + ground claims
-   (no fabricated CVE numbers, versions, stats). Flag any change that would auto-post a
-   reply or accept an unverifiable specific.
+   - v4.18 shipped a hardcoded `"Notes on {topic} — more soon."` placeholder for weeks
+     (`docs/RETRO_2026-05-08.md`). On generation failure, return empty and skip the
+     broadcast. Flag any path that produces postable text without passing
+     `_apply_voice_trim` and `validate_summary` (`src/agents.py`).
 
-7. **Two-platform symmetry, no per-platform divergence of intent.** Same content to
-   Bluesky and Mastodon. A platform's *mechanics* may differ — a length trim, embed
-   shape (the Curator's source rides as a link card on Bluesky and as a URL in the
-   Mastodon text, `ensure_mastodon_source_link`), Mastodon-only discovery hashtags
-   (`apply_mastodon_tags`, added because
-   Mastodon has no algorithmic feed and a followed tag is its discovery mechanism),
-   or Mastodon-only thread-position markers (`number_mastodon_thread`, "1/2", "2/2",
-   because Mastodon lists a self-thread newest-first; placement and reasoning in its
-   docstring).
-   Its *intent* may not: no different take, link, framing, or one-platform voice rule,
-   and generation stays platform-neutral — divergence lives in the broadcaster, never
-   in the prompt. Partial delivery must be handled cleanly (`*_partial_delivery`),
-   never re-send already-posted thread parts.
+4. **The replies are Frederik's.** The bot never answers people on its own.
 
-   **"Mechanics" is not an exemption from editorial scrutiny.** Anything appended
-   after `validate_summary` bypasses the voice validators by construction, so the
-   bar it must clear is stated here instead: a discovery tag describes the subject
-   the post already has. It may not introduce a claim, an endorsement, a product
-   affiliation, or a framing the prose does not carry, and it spends the shared
-   `MAX_HASHTAGS_PER_POST` ceiling rather than adding a second allowance on top of
-   it — a Mastodon post must never carry more hashtags than the same post on
-   Bluesky is allowed to. A thread-position marker carries no content at all: it
-   states a part's place in a thread that is already complete when it is posted,
-   which is why it is not the teaser §1 bans (🧵 and "thread incoming" promise
-   parts that do not exist yet). Flag any appended-after-validation content that cannot
-   meet that bar, and any new per-platform mechanic that widens what the reader
-   sees rather than adapting how they find it.
-8. **Tests and lint are the floor.** `ruff` clean and `pytest` green are required. New
-   behaviour — especially defensive and failure paths — needs tests. The strongest
-   reviews here have caught missing-edge-case handling (e.g. a required field that wasn't
-   validated, letting a bad path silently fall through). That's the bar.
+   - Until 2026-11-16 the bot answered mentions automatically; that was switched off
+     (#273). Flag any path that posts a reply without a human approving it.
+
+5. **One account, one voice.** Bluesky and Mastodon get the same post. Only the mechanics differ.
+
+   - Mechanics: the source as a link card on Bluesky and a URL on Mastodon
+     (`ensure_mastodon_source_link`), Mastodon-only discovery tags (`apply_mastodon_tags`)
+     and thread-position markers (`number_mastodon_thread`, since Mastodon showed 2/2
+     above 1/2, #160). Divergence lives in the broadcaster, never in the prompt.
+     Anything appended after `validate_summary` bypasses the validators, so it may not
+     add a claim or framing the post does not carry. Flag one that does.
+
+6. **Live is the proof.** A change is done when the public feed shows it working, not when CI is green.
+
+   - Post images carried rendered captions for six months while ruff, mypy, pytest and
+     CodeQL were green; opening three images found it (v4.31.0). Flag a PR that calls
+     itself done on CI alone. What "live" means is the next section.
 
 ## What "live" means here
 

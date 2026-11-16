@@ -561,7 +561,7 @@ async def get_with_safe_redirects(
             SafeLogger.warn("dns_validated_request_blocked",
                             "Blocked URL request after DNS validation",
                             url=current_url, error_type=type(e).__name__,
-                            # AGENTS.md #3: the type alone has cost this repo
+                            # retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md): the type alone has cost this repo
                             # multi-day diagnoses more than once.
                             error_msg=str(e)[:200])
             return None
