@@ -25,7 +25,7 @@ from src.news import fetch_news
 from src.net_safety import canonical_url
 from src.llm import compose_model_chain
 from src.agents import (
-    generate_content, handle_interactions, generate_post_image,
+    generate_content, generate_post_image,
     filter_available_models, select_pioneer_topic, generate_mastodon_tags,
 )
 from src.broadcasters import post_to_bluesky, post_to_mastodon
@@ -853,9 +853,9 @@ async def capture_follower_snapshot_stage(broadcast: BroadcastPayload, creds: An
 def build_automation_payload(broadcast: BroadcastPayload) -> AutomationPayload:
     """Derive what persistence needs from the broadcast result. Pure, no I/O.
 
-    Split out from post_run_automation_stage so main() can persist immediately
-    after the post lands, rather than behind mention handling and two metrics
-    stages that each make network calls once the post is already public.
+    Kept separate so main() can persist immediately after the post lands,
+    rather than behind the two metrics stages, which make network calls once
+    the post is already public.
     """
     # Either platform landing counts as delivered: the post is publicly live, so
     # its topic should suppress repeats and its Pioneer entry should consume its
@@ -872,26 +872,6 @@ def build_automation_payload(broadcast: BroadcastPayload) -> AutomationPayload:
         posted_topic_category=broadcast.posted_topic_category,
         posted_link=broadcast.posted_link,
     )
-
-
-async def post_run_automation_stage(broadcast: BroadcastPayload, creds: Any, active_models: Optional[List[str]] = None) -> AutomationPayload:
-    """Best-effort work that follows a delivered post: mention handling.
-
-    Runs AFTER persistence. Nothing here feeds the state write, and everything
-    here can hang on a network call, so it must not sit between a published post
-    and the record of having published it.
-    """
-    automation_tasks = []
-    if broadcast.bsky_broadcast_client is not None:
-        automation_tasks.append(
-            handle_interactions(
-                broadcast.bsky_broadcast_client, creds.gemini_api_key,
-                model_priority=active_models, anthropic_api_key=creds.anthropic_api_key,
-            )
-        )
-    await asyncio.gather(*automation_tasks, return_exceptions=True)
-
-    return build_automation_payload(broadcast)
 
 
 async def persistence_stage(automation: AutomationPayload) -> None:
@@ -1050,9 +1030,10 @@ async def main():
 
     await capture_post_metrics_stage(broadcast, creds)
     await capture_follower_snapshot_stage(broadcast, creds)
-    automation = await post_run_automation_stage(broadcast, creds, active_models=active_models)
+    # No automatic mention replies since 2026-11-16: people who react hear from
+    # Frederik, not from a model. handle_interactions is parked, not deleted.
 
-    SafeLogger.info("run_completed", "Intelligence cycle complete", mode=automation.mode, platform="system")
+    SafeLogger.info("run_completed", "Intelligence cycle complete", mode=broadcast.mode, platform="system")
 
 if __name__ == "__main__":
     asyncio.run(main())

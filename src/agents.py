@@ -2010,7 +2010,12 @@ async def handle_interactions(
     model_priority: Optional[List[str]] = None,
     anthropic_api_key: Optional[str] = None,
 ) -> None:
-    """Checks and handles interactions asynchronously (Fortress v4.4)."""
+    """Answer recent Bluesky mentions with a model-written reply.
+
+    Parked since 2026-11-16: main.py no longer calls it, so nobody gets an
+    unseen model reply in Frederik's name. Kept, like Phase 4b, in case replies
+    come back behind a human approval.
+    """
     SafeLogger.info("interactions_check_started", "Checking for interactions", platform="bluesky")
     try:
         # Who has already been answered. If that read cannot be trusted, the guard
