@@ -101,8 +101,8 @@ def _save_state_to_store(key: str, data: Any) -> bool:
                 state_key=key,
             )
     except Exception as e:
-        # ERROR, not WARN: state-persistence failures are the case AGENTS.md
-        # principle 4 names explicitly. Matches the v4.19 WARN->ERROR promotion
+        # ERROR, not WARN: state-persistence failures are the case the retired AGENTS.md
+        # rule 4 names explicitly (docs/BACKLOG_ARCHIVE.md). Matches the v4.19 WARN->ERROR promotion
         # already applied to _save_gist_state.
         SafeLogger.error(
             "state_store_put_failed",
@@ -228,7 +228,7 @@ def _load_gist_state_strict(filename: str) -> Tuple[Optional[Any], bool]:
     ambiguity is destructive — a save after a failed read overwrites real
     pending/posted/rejected history. This strict variant lets those callers
     skip work instead. (Flagged by the Codex review on 2026-06-12; see
-    AGENTS.md "fail loud on critical state".)
+    the retired AGENTS.md "fail loud on critical state".)
 
     Thin wrapper over ``_load_gist_state_checked``. It folds UNREACHABLE and
     CORRUPT into one ``False``, which is correct for every caller asking "may I
@@ -601,7 +601,7 @@ def update_seen_articles_checked(
     read yields the empty default, and saving that would replace the real state
     with nothing — one transient Gist failure costing every seen link, recent
     topic and Pioneer cooldown. Missing one run's bookkeeping is the cheaper
-    failure, the same trade AGENTS.md principle 2 makes for content.
+    failure, the same trade AGENTS.md guardrail 3 makes for content.
 
     The mutator is handed the state just read under the lock. Callers must apply
     their changes to THAT value rather than returning a snapshot captured earlier
@@ -670,7 +670,7 @@ def update_seen_articles_checked(
                 # possibly-live story into every story still inside the feed
                 # window, so the refusal stands. What holds the line instead is
                 # that `reserve_broadcast` needs this same read, so nothing
-                # posts until the tier is readable (AGENTS.md principle 2: a
+                # posts until the tier is readable (AGENTS.md guardrail 3: a
                 # missed run beats a duplicate). Said out loud, because the
                 # generic line below reads like routine bookkeeping and this is
                 # a story that may be live and is recorded nowhere
@@ -693,7 +693,7 @@ def update_seen_articles_checked(
                 # and this write replaces it with state derived from a lower
                 # tier, so whatever it held is gone for good. A WARN here would
                 # hide both facts behind a line about a write that worked
-                # (AGENTS.md principle 4).
+                # (retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md)).
                 SafeLogger.error(
                     "seen_articles_update_over_corrupt_gist",
                     "Gist content is unparseable, so it suppresses nothing; writing the suppressing update over it",
@@ -894,7 +894,7 @@ def reserve_broadcast(link: str) -> bool:
 
     False means the caller must NOT broadcast: an unstored claim is the hole this
     exists to close, so posting anyway would publish a story with no record that
-    it was published. Logged at ERROR per AGENTS.md principle 4 — this is
+    it was published. Logged at ERROR per retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md) — this is
     critical state, not best-effort bookkeeping.
 
     False is reserved for a claim this run was REFUSED or could not store. An

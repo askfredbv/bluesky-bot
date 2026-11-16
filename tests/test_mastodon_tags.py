@@ -452,7 +452,7 @@ async def test_review_failure_ships_the_post_untagged(monkeypatch, tags_on):
 async def test_an_unusable_verdict_logs_its_own_event(monkeypatch, tags_on):
     """A parser regression and a genuine all-DROP verdict both end with no
     tags. Logging them identically is how a broken reviewer hides for weeks,
-    which is the failure mode AGENTS.md #3 exists to prevent (Codex review,
+    which is the failure mode retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md) exists to prevent (Codex review,
     2026-09-09 - the same conflation was found in three places)."""
     events = []
     monkeypatch.setattr(

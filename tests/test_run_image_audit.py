@@ -312,7 +312,7 @@ def test_one_malformed_entry_does_not_cost_the_whole_audit(bad):
 
     An AttributeError escaping classify_feed fails the workflow step under
     `set -e`, so there is no artifact and no issue at all — the audit silently
-    skipped. AGENTS.md section 4: best-effort work catches, logs, continues.
+    skipped. retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md): best-effort work catches, logs, continues.
     """
     illustrations, cards = audit.classify_feed([bad, _image_post()], "askfred.be")
     assert len(illustrations) == 1
@@ -320,7 +320,7 @@ def test_one_malformed_entry_does_not_cost_the_whole_audit(bad):
 
 
 def test_a_raising_entry_is_diagnosed_on_stderr(capsys):
-    """Captured with the message, not just the type (AGENTS.md section 3)."""
+    """Captured with the message, not just the type (retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md))."""
     audit.classify_feed([_Hostile()], "askfred.be")
     err = capsys.readouterr().err
     assert "malformed feed entry" in err

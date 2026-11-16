@@ -177,7 +177,7 @@ class SafeLogger:
     # `exception=` is declared on all three rather than only on error(). It has
     # always worked on info/warn — it lands in **fields and binds to _emit's
     # keyword-only parameter — but working by accident is not the same as being
-    # discoverable. AGENTS.md principle 3 requires every logging except to carry
+    # discoverable. retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md) requires every logging except to carry
     # the message, not just the type, and the usual way that got violated was a
     # caller reading `warn(event, message, **fields)`, seeing no way to pass an
     # exception, and hand-rolling `error_type=type(e).__name__` instead. Passing
@@ -186,7 +186,7 @@ class SafeLogger:
     # `exception=` is declared on warn() as well as error(). It has always worked
     # there — it lands in **fields and binds to _emit's keyword-only parameter —
     # but working by accident is not the same as being discoverable, and an
-    # invisible idiom is why AGENTS.md principle 3 kept getting violated: a
+    # invisible idiom is why retired AGENTS.md rule 3 (docs/BACKLOG_ARCHIVE.md) kept getting violated: a
     # caller reading `warn(event, message, **fields)` sees no way to pass an
     # exception and hand-rolls `error_type=type(e).__name__`, losing str(e).
     #

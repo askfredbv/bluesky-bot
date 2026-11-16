@@ -23,17 +23,16 @@ Branch from a freshly fetched `origin/main`, never from a local `main`:
 git fetch origin && git checkout -b docs/release-vX.Y.Z origin/main
 ```
 
-- [ ] **Bump the version in the four places it lives:**
+- [ ] **Bump the version in the three places it lives:**
 
   | File | Where |
   | --- | --- |
   | `README.md` | the title: `# Bluesky & Mastodon Daily Poster (vX.Y.Z)` |
   | `main.py` | the startup banner: `AskFred Engine vX.Y.Z` in the `run_started` log line |
   | `pyproject.toml` | `[project] version` |
-  | `docs/BACKLOG.md` | the header paragraph: put the new release in front, in one paragraph |
 
-- [ ] **Add a changelog line** at the end of `docs/BACKLOG.md`: the date, **vX.Y.Z — theme**, what changed and why.
-- [ ] **Check nothing current still says the old version.** Only history may remain, in the BACKLOG header and changelog:
+- [ ] **Add a changelog line** at the end of `docs/BACKLOG_ARCHIVE.md`: the date, **vX.Y.Z — theme**, what changed and why.
+- [ ] **Check nothing current still says the old version.** Only history may remain, in `docs/BACKLOG_ARCHIVE.md`:
   `git grep -n "OLD.VERSION"`
 - [ ] **Title the PR `docs(release): vX.Y.Z — <theme>`.** It merges like any other PR, squashed, once the required checks (`tests`, `lockfile`) pass.
 
@@ -106,7 +105,7 @@ close the laptop**, or this step depends on remembering.
   that silently did not take:
   `gh run list --workflow="Daily Bluesky Post" --limit 5 --json databaseId,createdAt,conclusion`
   then `gh run view <id> --log | grep run_started`
-- [ ] **Record the result in the release's BACKLOG changelog entry**, naming the run
+- [ ] **Record the result in the release's changelog entry** in `docs/BACKLOG_ARCHIVE.md`, naming the run
   id. Do not tick the boxes above: this section is a reusable template, and a ticked
   template is wrong for the next release. The changelog entry is the per-release
   record, and a bare "verified" with no run id cannot be re-checked later.

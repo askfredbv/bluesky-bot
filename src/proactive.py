@@ -75,7 +75,7 @@ def load_pending_replies() -> Tuple[Dict[str, List[Dict[str, Any]]], bool]:
     Callers MUST honour ``trusted``: persisting an empty state after an
     untrusted read overwrites real pending/posted/rejected history. The
     scan should skip the run; the approval workflow should exit without
-    saving. (Codex review 2026-06-12; AGENTS.md "fail loud on critical
+    saving. (Codex review 2026-06-12; retired AGENTS.md "fail loud on critical
     state".)
     """
     try:

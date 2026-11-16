@@ -694,7 +694,7 @@ async def test_a_single_mastodon_post_ships_without_a_label(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_bluesky_copy_of_a_thread_is_not_numbered(monkeypatch):
     """Bluesky's client already labels self-threads. Adding our own would read
-    '1/2 1/2' there; the mechanic is Mastodon-only by design (AGENTS.md #7)."""
+    '1/2 1/2' there; the mechanic is Mastodon-only by design (AGENTS.md guardrail 5)."""
     sent = []
 
     class FakePost:
@@ -804,7 +804,7 @@ def test_a_bare_mention_of_the_source_still_counts(text):
 # The source link is appended AFTER validate_summary, so it bypasses the voice
 # validators by construction. External scan, 2026-10-13: a feed-controlled link
 # carrying an embedded newline shipped a mention and a hashtag the prose never
-# made. AGENTS.md principle 7: the bar for an append like this is stated here.
+# made. AGENTS.md guardrail 5: the bar for an append like this is stated here.
 # ---------------------------------------------------------------------------
 
 _INJECTED = ("https://attacker.example/article" + P

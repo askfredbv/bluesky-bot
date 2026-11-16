@@ -29,7 +29,7 @@ Deliberately narrow:
 * **No bypass of the validators.** The string returned here goes through the
   same JSON parse, ``_validate_thread_shape``, ``validate_summary`` and
   ``_apply_voice_trim`` as any Gemini response. On failure the caller skips
-  the broadcast. Missing a run still beats shipping garbage (AGENTS.md §2).
+  the broadcast. Missing a run still beats shipping garbage (AGENTS.md guardrail 3).
 """
 
 from __future__ import annotations

@@ -199,7 +199,7 @@ async def _probe_adversarial(key: str, reviewer: str,
         # would have left the set with no framing control at all: a reviewer
         # that reliably refuses entity leaps while accepting praise or
         # endorsement would then score a clean sweep and suppress this probe's
-        # do-not-enable warning, even though AGENTS.md #7 forbids a tag that
+        # do-not-enable warning, even though AGENTS.md guardrail 5 forbids a tag that
         # introduces framing the prose does not carry (Codex review, 2026-09-09).
         #
         # Unambiguous where "#BestPractices" was contestable: the prose reports
@@ -219,7 +219,7 @@ async def _probe_adversarial(key: str, reviewer: str,
          "top vector for finance-department fraud. The tooling did not change; "
          "the target did.",
          "#AIForGood", False, "subject-shaped tag, framing the prose contradicts"),
-        # AGENTS.md #7 bans a tag introducing "a claim, an endorsement, a
+        # AGENTS.md guardrail 5 bans a tag introducing "a claim, an endorsement, a
         # product affiliation, or a framing". Affiliation, endorsement and
         # framing are covered above; this is the fourth, and it completes the
         # enumeration. A subject-shaped tag asserting something the prose
@@ -284,7 +284,7 @@ async def _run(posts: List[str]) -> int:
     # its head and #194 made the tag pass select from it: a Gemini-only chain
     # here would probe gemini/gemini while production ran haiku/gemini, and this
     # probe is the only measurement standing behind content that is appended
-    # AFTER validate_summary (AGENTS.md #7). Codex raised it against #194.
+    # AFTER validate_summary (AGENTS.md guardrail 5). Codex raised it against #194.
     anthropic_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
     active = await filter_available_models(key, GEMINI_MODEL_PRIORITY)
     active = compose_model_chain(

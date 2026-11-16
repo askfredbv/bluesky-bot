@@ -304,7 +304,7 @@ def test_save_state_to_store_falls_back_to_post_when_put_is_rejected(monkeypatch
 
 
 def test_save_state_to_store_logs_write_failures_at_error(monkeypatch):
-    """AGENTS.md principle 4: state-persistence failures log at ERROR, not WARN.
+    """retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md): state-persistence failures log at ERROR, not WARN.
     Matches the v4.19 promotion already applied to _save_gist_state."""
     _patch_state_store_env(monkeypatch)
     _record_calls(monkeypatch, put_status=500, post_status=500)
