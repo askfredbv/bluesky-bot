@@ -113,7 +113,7 @@ The main levers are in `src/config.py`:
 - **`GEMINI_MODEL_PRIORITY`** — the Gemini rungs of the failover chain (pruned to available models at startup; Gemma models get inlined prompts automatically)
 - **`ANTHROPIC_MODELS`** — the Anthropic rungs, in preference order (default `claude-sonnet-5-5` → `claude-haiku-5-5`)
 - **`ANTHROPIC_CHAIN_POSITION`** — whether those rungs sit `"primary"` (above the Gemini chain) or `"fallback"` (below it). Currently `"primary"`; this one word is the revert switch, kept as `"primary"` after the 2026-10-26 trial decision in `docs/BACKLOG_ARCHIVE.md`
-- **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; refreshed monthly by `refresh_momentum.yml`, which opens a PR rather than pushing
+- **`MOMENTUM_PRODUCTS` / `MOMENTUM_PRODUCT_BONUS`** — flagship model names worth a scoring bonus; refreshed on demand by `refresh_momentum.yml` (a manual run since 2026-11-16, #254), which opens a PR rather than pushing
 - **`CONSENSUS_SYNERGY_BONUS`** — score bonus per additional feed covering the same story
 
 Override without touching code via env vars: `POST_JITTER_MIN_SECONDS` / `POST_JITTER_MAX_SECONDS` (pre-post delay; `30`/`300` in Actions).
