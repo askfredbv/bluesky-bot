@@ -63,6 +63,60 @@ jobs:
           inputs: requirements.txt
           no-deps: true
 
+  # Produce the machine-readable report in a read-only job. pip-audit itself is
+  # pinned, but pip still resolves and executes its transitive dependencies;
+  # none of that package code may run in the job that can write issues. This is
+  # the same trust split as dependabot-lockfile.yml's regenerate/push jobs.
+  prepare-dependency-audit-report:
+    needs: pip-audit
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      revision: ${{ steps.revision.outputs.sha }}
+    steps:
+      # Audit main as it exists when this job starts, rather than a possibly
+      # stale triggering SHA. The writer checks this revision again after it
+      # acquires the shared issue lock below.
+      - name: Checkout main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: main
+
+      - name: Record audited revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+
+      # parse_audit documents and tests the 2.10.1 JSON shape. A version bump
+      # must be deliberate and update tests/test_report_dependency_audit.py.
+      - name: Install pip-audit
+        run: python -m pip install --disable-pip-version-check --quiet pip-audit==2.10.1
+
+      # Findings make pip-audit exit non-zero but still write the JSON we need.
+      # A genuine crash leaves the file missing; the reporter treats that as no
+      # signal and leaves the existing issue untouched.
+      - name: Audit the runtime lockfile as JSON
+        run: |
+          python -m pip_audit -r requirements.txt --no-deps \
+            --format json --output audit.json || true
+
+      - name: Upload dependency audit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependency-audit-report
+          path: audit.json
+          if-no-files-found: ignore
+          retention-days: 1
+
   # Turns a red audit into one GitHub issue (opened, updated, closed) so an
   # advisory published between PRs reaches a person instead of only colouring a
   # check nobody is looking at. A job of its own so the audit job above keeps a
@@ -72,7 +126,7 @@ jobs:
   # check is already the signal there. `always()` so it runs when the audit job
   # fails, which is precisely when there is something to report.
   dependency-audit-issue:
-    needs: pip-audit
+    needs: [pip-audit, prepare-dependency-audit-report]
     # main only. The condition used to be "not a pull_request", which admitted
     # every workflow_dispatch -- and the branch selector means that run would
     # audit a feature branch while mutating the repository-wide issue, so a
@@ -99,12 +153,10 @@ jobs:
 
     steps:
       # Explicitly main, not the triggering SHA. A concurrency group orders jobs
-      # by when they START WAITING, which here is after `needs: pip-audit`
-      # finishes -- so reporters can reach this group in a different order from
-      # their workflow runs, and a late reporter checking out ITS older SHA
-      # would write a conclusion about a lockfile main has already moved past
-      # (Codex, #215). Auditing main makes every reporter answer the same
-      # question, so whichever writes last is still right about main.
+      # by when they START WAITING, so reporters can reach it in a different
+      # order from their workflow runs. The revision check below prevents a late
+      # artifact from writing a conclusion about a lockfile main has moved past
+      # (Codex, #215).
       #
       # The trade: a dispatch cannot be used to test a change to this reporter
       # from a branch, because main's copy is what runs. That is the correct
@@ -120,23 +172,28 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Pinned, like zizmor in workflow-lint.yml. parse_audit documents and tests
-      # one JSON shape (2.10.1, verified); an unattended alert must not adopt a
-      # new shape on its own, because shape drift that still parses reads as an
-      # empty audit and would CLOSE the issue. Bump deliberately, with the
-      # fixture in tests/test_report_dependency_audit.py.
-      - name: Install pip-audit
-        run: python -m pip install --disable-pip-version-check --quiet pip-audit==2.10.1
+      # This pinned action only transfers data from the read-only job. No PyPI
+      # package is installed or executed in this issue-write job.
+      - name: Download dependency audit report
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: dependency-audit-report
 
-      # `|| true`: pip-audit exits non-zero when it finds something, and the
-      # findings are the point. The JSON is still written. A genuine crash
-      # leaves the file missing or malformed, which the reporter treats as "no
-      # signal" and leaves the issue untouched rather than closing it.
-      - name: Audit the runtime lockfile as JSON
+      - name: Confirm audit still matches main
+        id: freshness
+        env:
+          AUDITED_REVISION: ${{ needs.prepare-dependency-audit-report.outputs.revision }}
         run: |
-          python -m pip_audit -r requirements.txt --no-deps --format json --output audit.json || true
+          if [ -n "$AUDITED_REVISION" ] && [ "$AUDITED_REVISION" = "$(git rev-parse HEAD)" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "Audit artifact is stale or unavailable; leaving the issue unchanged."
+          fi
 
       - name: Open, update or close the dependency-audit issue
+        if: steps.freshness.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
