@@ -64,6 +64,7 @@ def test_an_idn_is_resolved_in_the_same_ascii_form_httpx_transports(monkeypatch)
 
 @pytest.mark.parametrize("host, expected", [
     ("EXAMPLE.COM.", "example.com"),
+    ("My_Site.example.com", "my_site.example.com"),
     ("faß.example", "xn--fa-hia.example"),
     (b"xn--fa-hia.example", "xn--fa-hia.example"),
     ("93.184.216.34", "93.184.216.34"),

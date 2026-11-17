@@ -279,6 +279,11 @@ def _canonical_hostname(host: object) -> Optional[str]:
     except ValueError:
         pass
 
+    # httpx sends ASCII hosts as-is and IDNA-encodes only non-ASCII ones, so
+    # encoding an ASCII host here would reject names httpx accepts (my_site.x).
+    if normalized.isascii():
+        return normalized
+
     try:
         # This is deliberately the same package and call shape used by the
         # locked httpx transport, rather than Python's different IDNA codec.
