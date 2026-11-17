@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+import idna
 
 from src.config import METADATA_FETCH_ALLOWED_DOMAINS, METADATA_FETCH_BLOCKED_DOMAINS
 from src.logger import SafeLogger
@@ -165,11 +166,11 @@ def is_safe_public_url(url: str) -> bool:
     if parsed.scheme not in ("http", "https"):
         return False
 
-    hostname = parsed.hostname
-    if not hostname:
+    hostname = _canonical_hostname(parsed.hostname)
+    if hostname is None:
         return False
 
-    if hostname.lower() in {"localhost"}:
+    if hostname == "localhost":
         return False
 
     return _resolve_public_ip_candidates(hostname) is not None
@@ -201,8 +202,11 @@ def _is_public_ip(ip_str: str) -> bool:
         or getattr(ip_obj, "is_site_local", False)
     )
 def _resolve_public_ip_candidates(hostname: str) -> Optional[List[str]]:
+    canonical_hostname = _canonical_hostname(hostname)
+    if canonical_hostname is None:
+        return None
     try:
-        resolved = socket.getaddrinfo(hostname, None)
+        resolved = socket.getaddrinfo(canonical_hostname, None)
     except socket.gaierror:
         return None
     except Exception:
@@ -224,15 +228,15 @@ def _resolve_public_ip_candidates(hostname: str) -> Optional[List[str]]:
 
     return candidate_ips or None
 def _hostname_matches_policy(hostname: str, domain_rule: str) -> bool:
-    normalized_hostname = hostname.lower().strip(".")
-    normalized_rule = domain_rule.lower().strip().strip(".")
-    if not normalized_rule:
+    normalized_hostname = _canonical_hostname(hostname)
+    normalized_rule = _canonical_hostname(domain_rule.strip().strip("."))
+    if normalized_hostname is None or normalized_rule is None:
         return False
     return normalized_hostname == normalized_rule or normalized_hostname.endswith(f".{normalized_rule}")
 def is_allowed_metadata_fetch_url(url: str) -> bool:
     parsed = urlparse(url)
-    hostname = parsed.hostname
-    if not hostname:
+    hostname = _canonical_hostname(parsed.hostname)
+    if hostname is None:
         return False
 
     if any(_hostname_matches_policy(hostname, domain) for domain in METADATA_FETCH_BLOCKED_DOMAINS):
@@ -246,36 +250,46 @@ def is_allowed_metadata_fetch_url(url: str) -> bool:
         return False
 
     return True
-def _resolver_host_key(host: object) -> str:
-    """Normalise a getaddrinfo host argument so it can be compared to the pin."""
-    if isinstance(host, (bytes, bytearray)):
-        host = bytes(host).decode("ascii", "ignore")
-    return str(host).lower().rstrip(".")
+def _canonical_hostname(host: object) -> Optional[str]:
+    """Return the ASCII hostname form httpx passes to the transport resolver.
 
-
-def _resolver_host_keys(hostname: str) -> frozenset:
-    """Every spelling of ``hostname`` a resolver call might arrive as.
-
-    httpcore hands socket.getaddrinfo a BYTES host, already IDNA-encoded, not
-    the str that urlparse produced. The pin used to compare
-    ``str(host).lower()`` against the parsed hostname, so a bytes host rendered
-    as "b'example.com'" and never matched: guarded_getaddrinfo took its
-    passthrough branch on every request and the DNS-rebinding guard never fired
-    at all -- for ASCII hostnames too, not only internationalised ones.
-    Verified against the locked httpx 0.28.1 / httpcore 1.0.9.
-
-    An external scan (2026-10-13) reported only the IDNA half of this. The
-    bytes half is what makes it total, which is why both forms are matched
-    here and why test_net_safety_gaps pins the exact call shape httpcore uses.
+    ``urlparse`` preserves a Unicode hostname, while httpx normalises it with
+    the third-party ``idna`` codec before httpcore calls ``getaddrinfo``.  The
+    stdlib ``idna`` codec is not interchangeable: for example, it maps
+    ``faß.example`` to ``fass.example`` (IDNA2003), while httpx and ``idna``
+    map it to ``xn--fa-hia.example``.  Every DNS and policy boundary uses this
+    helper so validation and connection cannot refer to different names.
     """
-    base = hostname.lower().rstrip(".")
-    keys = {base}
+    if isinstance(host, (bytes, bytearray)):
+        try:
+            host = bytes(host).decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(host, str):
+        return None
+
+    normalized = host.lower().rstrip(".")
+    if not normalized:
+        return None
+
+    # IDNA is for names, not IP literals. Preserve valid IPv4 and IPv6 while
+    # giving equivalent literal spellings one comparison key.
     try:
-        keys.add(base.encode("idna").decode("ascii").lower())
-    except (UnicodeError, ValueError):
-        # Unencodable label: the raw form is still a valid key to match on.
+        return str(ipaddress.ip_address(normalized))
+    except ValueError:
         pass
-    return frozenset(keys)
+
+    # httpx sends ASCII hosts as-is and IDNA-encodes only non-ASCII ones, so
+    # encoding an ASCII host here would reject names httpx accepts (my_site.x).
+    if normalized.isascii():
+        return normalized
+
+    try:
+        # This is deliberately the same package and call shape used by the
+        # locked httpx transport, rather than Python's different IDNA codec.
+        return idna.encode(normalized).decode("ascii").lower()
+    except (idna.IDNAError, UnicodeError):
+        return None
 
 
 @contextmanager
@@ -304,11 +318,14 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
     send to a prevalidated address.
     """
     original_getaddrinfo = socket.getaddrinfo
-    pinned_keys = _resolver_host_keys(hostname)
+    canonical_hostname = _canonical_hostname(hostname)
+    if canonical_hostname is None:
+        raise ValueError("Cannot pin an invalid hostname")
     allowed_set = set(allowed_ips)
 
     def guarded_getaddrinfo(host, *args, **kwargs):
-        if _resolver_host_key(host) not in pinned_keys:
+        resolver_hostname = _canonical_hostname(host)
+        if resolver_hostname != canonical_hostname:
             return original_getaddrinfo(host, *args, **kwargs)
 
         current = original_getaddrinfo(host, *args, **kwargs)
@@ -332,12 +349,12 @@ def _resolver_pinned_to_ips(hostname: str, allowed_ips: List[str]):
             SafeLogger.warn(
                 "resolver_answer_narrowed",
                 "Resolver returned addresses outside the pinned set; connecting to the pinned ones",
-                # _resolver_host_key, not str(host): httpcore passes BYTES, and
+                # resolver_hostname, not str(host): httpcore passes BYTES, and
                 # str() on those renders "b'example.com'" -- the exact shape
                 # whose use in a COMPARISON meant the pin never fired at all
                 # before #192. Harmless in a log field, misleading in a log
                 # someone reads to diagnose this.
-                host=_resolver_host_key(host), dropped=len(dropped), kept=len(filtered))
+                host=resolver_hostname, dropped=len(dropped), kept=len(filtered))
         return filtered
 
     # Monkeypatching the module attribute: guarded_getaddrinfo intentionally
@@ -512,8 +529,8 @@ async def get_with_safe_redirects(
             return None
 
         parsed_current = urlparse(current_url)
-        hostname = parsed_current.hostname
-        if not hostname:
+        hostname = _canonical_hostname(parsed_current.hostname)
+        if hostname is None:
             SafeLogger.warn("unsafe_url_blocked", "Blocked unsafe URL request", url=current_url)
             return None
 
