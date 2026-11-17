@@ -179,6 +179,10 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dependency-audit-report
+          # Outside the workspace: the producer ran PyPI code, so the artifact
+          # may hold any path (e.g. scripts/report_dependency_audit.py). In the
+          # workspace it would overwrite the reporter that runs with GH_TOKEN.
+          path: ${{ runner.temp }}/dependency-audit
 
       - name: Confirm audit still matches main
         id: freshness
@@ -197,4 +201,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: python -m scripts.report_dependency_audit audit.json
+        run: python -m scripts.report_dependency_audit "$RUNNER_TEMP/dependency-audit/audit.json"
