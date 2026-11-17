@@ -48,6 +48,44 @@ def test_fetch_single_feed_keeps_entries_when_bozo(monkeypatch):
     assert result.entries[0]["description"] == "Still valid."
 
 
+def test_fetch_single_feed_caps_entries_and_keeps_newest(monkeypatch):
+    now = time.time()
+    feed = feedparser.FeedParserDict(
+        {
+            "bozo": 0,
+            "entries": [
+                feedparser.FeedParserDict(
+                    {
+                        "title": title,
+                        "summary": "",
+                        "link": f"https://example.com/news/{title}",
+                        "published_parsed": time.gmtime(now - age_seconds),
+                    }
+                )
+                for title, age_seconds in (
+                    ("oldest", 300),
+                    ("newest", 100),
+                    ("middle", 200),
+                )
+            ],
+        }
+    )
+
+    async def _fake_safe_get(client, url, **kwargs):
+        return _safe_response()
+
+    monkeypatch.setattr(news, "FEED_MAX_ACCEPTED_ENTRIES_PER_FEED", 2)
+    monkeypatch.setattr(news, "get_with_safe_redirects", _fake_safe_get)
+    monkeypatch.setattr(news.feedparser, "parse", lambda _: feed)
+
+    result = asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss"))
+
+    assert result.ok is True
+    assert result.entries_total == 3
+    assert result.entries_accepted == 2
+    assert [entry["title"] for entry in result.entries] == ["newest", "middle"]
+
+
 def test_fetch_single_feed_uses_safe_fetch_without_metadata_policy(monkeypatch):
     """Feeds must go through the SSRF-guarded path, with the metadata domain
     allowlist disabled (feeds are their own trusted source list)."""
