@@ -9,8 +9,8 @@ Triggered manually via ``.github/workflows/approve_pending_reply.yml``
   - ``REJECT_REASON``: optional free-text reason when ``ACTION=reject``
 
 Approve path: re-fetch the parent post via Bluesky (defensive against
-deletion between scan and approval) → post the staged draft as a reply
-→ move the entry from ``pending`` to ``posted``.
+deletion between scan and approval) → durably reserve the approval → post
+the staged draft as a reply → move the entry from ``pending`` to ``posted``.
 
 Reject path: move from ``pending`` to ``rejected`` with the supplied
 reason. No network calls.
@@ -117,14 +117,13 @@ async def _run() -> int:
 
     saved = proactive.save_pending_replies(state)
     if not saved:
-        # An approve that already POSTED but failed to persist is the
-        # dangerous case (Codex review 2026-06-12, finding #2): the reply is
-        # live on Bluesky, but the remote Gist still shows the draft in
-        # `pending`, so a human re-running approval would post it a SECOND
-        # time. Surface that as a distinct, loud incident with the recovery
-        # data and an explicit do-not-rerun instruction. A reject (or a
-        # failed approve that never posted) carries no double-post risk, so
-        # it gets the generic save-failure log.
+        # The durable pre-send reservation makes the posted-but-not-settled
+        # case retry-safe: the remote Gist still shows the draft in `pending`,
+        # but approve_draft refuses any entry carrying approval_started_at.
+        # Keep the distinct incident and recovery identifiers because a human
+        # must still reconcile that reservation with the live Bluesky record.
+        # A reject (or a failed approve that never posted) gets the generic
+        # save-failure log.
         # Narrowed once, visibly: result is None when no draft matched.
         posted_entry = result if isinstance(result, dict) else {}
         posted_uri = posted_entry.get("posted_uri")
@@ -136,9 +135,9 @@ async def _run() -> int:
             # the right entry. (Codex review 2026-06-12, finding on this PR.)
             SafeLogger.error(
                 "proactive_posted_but_not_persisted",
-                "Reply WAS POSTED but state did not persist — DO NOT re-run "
-                "approval until pending_replies.json is repaired, or the reply "
-                "will double-post",
+                "Reply was posted but the final state transition did not persist; "
+                "the durable approval reservation prevents a duplicate, but "
+                "pending_replies.json still needs manual reconciliation",
                 draft_id=posted_entry.get("id", draft_id),
                 posted_uri=posted_uri,
                 parent_author=posted_entry.get("parent_author", ""),

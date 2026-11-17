@@ -166,13 +166,11 @@ async def test_state_save_failure_returns_1(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatch):
-    """Approve POSTS, then save fails → exit 1 with a distinct posted-but-not-
-    persisted incident carrying posted_uri + do-not-rerun (Codex finding #2).
+async def test_approve_posted_but_save_fails_logs_reconciliation_incident(monkeypatch):
+    """Approve POSTS, then final save fails → exit 1 with recovery identifiers.
 
-    The reply is live but the remote Gist still shows it pending, so a rerun
-    would double-post. The log must make that recoverable, not look like a
-    generic save failure."""
+    The real helper's durable reservation makes a retry safe, while the log
+    still distinguishes the state inconsistency for manual reconciliation."""
     _stub_creds(monkeypatch)
     monkeypatch.setenv("ACTION", "approve")
     # Use the workflow default selector "first" — the common path. The

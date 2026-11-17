@@ -642,6 +642,26 @@ def test_expire_treats_malformed_timestamp_as_expired():
     assert state["rejected"][0]["rejected_reason"] == "expired"
 
 
+def test_expire_preserves_reserved_approval():
+    """An old approval reservation may already be live and must never age away."""
+    state = {
+        "pending": [{
+            "id": "reserved",
+            "parent_author": "x",
+            "generated_at": (_NOW - timedelta(hours=30)).isoformat(),
+            "approval_started_at": (_NOW - timedelta(hours=29)).isoformat(),
+        }],
+        "posted": [],
+        "rejected": [],
+    }
+
+    moved = proactive.expire_old_drafts(state, _NOW)
+
+    assert moved == 0
+    assert state["pending"][0]["id"] == "reserved"
+    assert state["rejected"] == []
+
+
 # ---------------------------------------------------------------------------
 # is_handle_in_cooldown
 # ---------------------------------------------------------------------------
@@ -1075,15 +1095,29 @@ def test_reject_unknown_id_returns_none_and_no_mutation():
     assert state["rejected"] == []
 
 
+def test_reject_reserved_approval_requires_reconciliation():
+    """Reject cannot erase the only durable evidence of a possibly-live reply."""
+    draft = _draft(draft_id="abc")
+    draft["approval_started_at"] = _NOW.isoformat()
+    state = {"pending": [draft], "posted": [], "rejected": []}
+
+    result = proactive.reject_draft("abc", state, _NOW)
+
+    assert result is None
+    assert state["pending"] == [draft]
+    assert state["rejected"] == []
+
+
 # ---------------------------------------------------------------------------
 # approve_draft — happy path
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_approve_happy_path_posts_and_moves_to_posted():
+async def test_approve_happy_path_posts_and_moves_to_posted(monkeypatch):
     """Re-fetch succeeds, send_post succeeds → move to posted with posted_uri."""
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: True)
 
     result = await proactive.approve_draft("abc", client, state, _NOW)
 
@@ -1101,7 +1135,7 @@ async def test_approve_happy_path_posts_and_moves_to_posted():
 
 
 @pytest.mark.asyncio
-async def test_approve_uses_fresh_cid_not_staged_one():
+async def test_approve_uses_fresh_cid_not_staged_one(monkeypatch):
     """Defensive: the cid we send must come from the refetch, not the staged candidate.
 
     The staged candidate doesn't carry a cid (only uri); confirms we
@@ -1109,6 +1143,7 @@ async def test_approve_uses_fresh_cid_not_staged_one():
     """
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view(cid="brand-new")])
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: True)
 
     await proactive.approve_draft("abc", client, state, _NOW)
 
@@ -1164,17 +1199,82 @@ async def test_approve_refetch_raises_rejects_with_descriptive_reason():
 
 
 @pytest.mark.asyncio
-async def test_approve_send_post_raises_rejects_with_descriptive_reason():
-    """send_post raises → reject with reason starting 'post_failed:'."""
+async def test_approve_send_post_raises_keeps_reservation(monkeypatch):
+    """A send exception is ambiguous, so its durable reservation remains pending."""
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()], post_raises=True)
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: True)
 
     result = await proactive.approve_draft("abc", client, state, _NOW)
 
     assert result is None
-    assert state["pending"] == []
-    assert state["rejected"][0]["rejected_reason"].startswith("post_failed:")
-    assert "RuntimeError" in state["rejected"][0]["rejected_reason"]
+    assert state["pending"][0]["approval_started_at"] == _NOW.isoformat()
+    assert state["rejected"] == []
+
+
+@pytest.mark.asyncio
+async def test_approve_reservation_failure_never_posts(monkeypatch):
+    """A failed pre-send state write leaves the draft retryable but sends nothing."""
+    draft = _draft(draft_id="abc")
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: False)
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is None
+    assert client.send_calls == []
+    assert "approval_started_at" not in draft
+
+
+@pytest.mark.asyncio
+async def test_approve_retry_after_final_save_failure_does_not_post_twice(monkeypatch):
+    """The pre-send snapshot blocks a retry when the posted transition never persisted."""
+    from copy import deepcopy
+
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    first_client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    remote_state = {}
+
+    def _save_reservation(current_state):
+        remote_state["value"] = deepcopy(current_state)
+        return True
+
+    monkeypatch.setattr(proactive, "save_pending_replies", _save_reservation)
+    first_result = await proactive.approve_draft("abc", first_client, state, _NOW)
+
+    assert first_result is not None
+    assert remote_state["value"]["pending"][0]["approval_started_at"] == _NOW.isoformat()
+
+    # Model the caller's final pending-to-posted save failing: the durable
+    # state remains the reservation snapshot captured before send_post.
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: False)
+    assert proactive.save_pending_replies(state) is False
+    retry_state = remote_state["value"]
+    retry_client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    retry_result = await proactive.approve_draft("first", retry_client, retry_state, _NOW)
+
+    assert retry_result is None
+    assert len(first_client.send_calls) == 1
+    assert retry_client.fetch_calls == []
+    assert retry_client.send_calls == []
+
+
+@pytest.mark.parametrize("marker", [None, ""])
+@pytest.mark.asyncio
+async def test_approve_treats_any_reservation_marker_as_claimed(marker):
+    """Malformed reservation values fail closed instead of bypassing duplicate suppression."""
+    draft = _draft(draft_id="abc")
+    draft["approval_started_at"] = marker
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft("abc", client, state, _NOW)
+
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
 
 
 @pytest.mark.asyncio

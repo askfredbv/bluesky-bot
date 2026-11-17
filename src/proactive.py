@@ -28,6 +28,11 @@ Each ``draft`` has the shape:
 ``posted`` entries gain ``posted_at`` and ``posted_uri``; ``rejected``
 entries gain ``rejected_at`` and ``rejected_reason``.
 
+Immediately before an approved draft is sent, its pending entry gains
+``approval_started_at`` and that reservation is persisted.  The marker is
+deliberately retained across ambiguous failures so a retry cannot send the
+same approved reply twice.
+
 Storage strategy mirrors ``src/bluesky_session.py``: Gist-only, no local
 fallback. If Gist I/O fails, the worst case is one missed reply
 opportunity — not days of duplicate posts (the seen-articles case that
@@ -51,6 +56,7 @@ from src.logger import SafeLogger
 from src.state_store import _load_gist_state_strict, _save_gist_state
 
 _PENDING_REPLIES_FILENAME = "pending_replies.json"
+_APPROVAL_STARTED_AT_FIELD = "approval_started_at"
 
 
 def _empty_state() -> Dict[str, List[Dict[str, Any]]]:
@@ -194,6 +200,12 @@ def expire_old_drafts(
     survivors: List[Dict[str, Any]] = []
     moved = 0
     for draft in state.get("pending", []):
+        # A reserved approval may already be live even though its final
+        # pending-to-posted save failed.  Never age away the only durable
+        # evidence that prevents a retry from posting it again.
+        if _APPROVAL_STARTED_AT_FIELD in draft:
+            survivors.append(draft)
+            continue
         generated = _parse_iso(draft.get("generated_at", ""))
         if generated is None or generated < cutoff:
             draft_copy = dict(draft)
@@ -534,7 +546,66 @@ def reject_draft(
             draft_id=draft_id,
         )
         return None
+    if _APPROVAL_STARTED_AT_FIELD in draft:
+        SafeLogger.error(
+            "proactive_reject_approval_reserved",
+            "Draft has a durable approval reservation; reconcile it before changing state",
+            draft_id=draft.get("id", draft_id),
+            approval_started_at=draft.get(_APPROVAL_STARTED_AT_FIELD),
+        )
+        return None
     return _move_to_rejected(draft, state, now, reason)
+
+
+def _reserve_draft_approval(
+    draft: Dict[str, Any],
+    state: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> bool:
+    """Durably mark ``draft`` before the Bluesky send can begin.
+
+    A successful save leaves the draft in ``pending`` with a reservation.  If
+    the process then dies, the send outcome is ambiguous, or the final
+    pending-to-posted save fails, every later approval sees the marker and
+    refuses to send again.  A failed reservation is removed from the in-memory
+    copy because no send was attempted, leaving a later clean retry legitimate.
+    """
+    draft_id = draft.get("id")
+    # approve_draft checks this before its parent fetch, and the helper checks
+    # again after that await so two in-process attempts cannot both reserve the
+    # same mutable draft object.
+    if _APPROVAL_STARTED_AT_FIELD in draft:
+        SafeLogger.error(
+            "proactive_approval_reservation_conflict",
+            "Draft approval is already reserved; refusing to replace its claim",
+            draft_id=draft_id,
+        )
+        return False
+    if not isinstance(draft_id, str) or not draft_id:
+        SafeLogger.error(
+            "proactive_approval_reservation_invalid_id",
+            "Cannot reserve an approval without a stable draft id",
+        )
+        return False
+
+    reserved_at = now.isoformat()
+    draft[_APPROVAL_STARTED_AT_FIELD] = reserved_at
+    if not save_pending_replies(state):
+        draft.pop(_APPROVAL_STARTED_AT_FIELD, None)
+        SafeLogger.error(
+            "proactive_approval_reservation_failed",
+            "Approval reservation did not persist; refusing to post",
+            draft_id=draft_id,
+        )
+        return False
+
+    SafeLogger.info(
+        "proactive_approval_reserved",
+        "Draft approval reserved before posting",
+        draft_id=draft_id,
+        approval_started_at=reserved_at,
+    )
+    return True
 
 
 async def approve_draft(
@@ -546,9 +617,10 @@ async def approve_draft(
     """Approve a pending draft: re-fetch parent, post reply, move to posted.
 
     Returns the posted entry on success, ``None`` on any failure.
-    Failures auto-move the draft to ``rejected`` with a descriptive
-    reason — the user sees what happened in the next state snapshot
-    rather than having to dig through logs.
+    Parent-validation failures auto-move the draft to ``rejected`` with a
+    descriptive reason.  Once posting is reserved, ambiguous failures retain
+    the pending reservation for manual reconciliation rather than risk a
+    duplicate reply.
 
     Defensive design (per PLAN_engagement.md §4b):
       - Re-fetches the parent post via ``get_posts`` before sending.
@@ -566,6 +638,14 @@ async def approve_draft(
             "proactive_approve_draft_not_found",
             "No matching pending draft to approve",
             draft_id=draft_id,
+        )
+        return None
+    if _APPROVAL_STARTED_AT_FIELD in draft:
+        SafeLogger.error(
+            "proactive_approve_already_reserved",
+            "Draft approval was already reserved; refusing to post it again",
+            draft_id=draft.get("id", draft_id),
+            approval_started_at=draft.get(_APPROVAL_STARTED_AT_FIELD),
         )
         return None
 
@@ -614,21 +694,25 @@ async def approve_draft(
         "root":   {"cid": parent_cid, "uri": fresh_parent_uri},
     }
 
+    # This is the commit point for the outward action.  The reservation must
+    # be durable before send_post can reach Bluesky; an unsettled reservation
+    # then suppresses every retry of this draft.
+    if not _reserve_draft_approval(draft, state, now):
+        return None
+
     try:
         posted = await bsky_client.send_post(
             text=draft["draft_reply"],
             reply_to=reply_ref,
         )
     except Exception as e:
-        reason = f"post_failed: {type(e).__name__}: {str(e)[:100]}"
         SafeLogger.error(
             "proactive_approve_post_failed",
-            "Bluesky send_post failed; rejecting draft",
-            draft_id=draft_id,
+            "Bluesky send_post failed with an ambiguous outcome; keeping approval reservation",
+            draft_id=draft.get("id", draft_id),
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
         )
-        _move_to_rejected(draft, state, now, reason)
         return None
 
     posted_uri = getattr(posted, "uri", "")
