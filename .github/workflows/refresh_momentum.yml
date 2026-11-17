@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   refresh:
+    environment: production
     runs-on: ubuntu-latest
     steps:
       # The one checkout in this repo that deliberately KEEPS its credential, so
