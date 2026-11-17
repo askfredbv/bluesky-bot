@@ -30,6 +30,7 @@ concurrency:
 
 jobs:
   scan:
+    environment: production
     runs-on: ubuntu-latest
     permissions:
       contents: read

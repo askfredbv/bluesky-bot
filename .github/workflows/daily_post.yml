@@ -38,6 +38,7 @@ concurrency:
 
 jobs:
   post:
+    environment: production
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -188,6 +189,7 @@ jobs:
   # write issues. It runs after every post, a failed one included, and the post
   # has already shipped by then. See scripts/report_feed_health.py.
   feed-health-issue:
+    environment: production
     needs: post
     if: ${{ always() }}
     runs-on: ubuntu-latest
