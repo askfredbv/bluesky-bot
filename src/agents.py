@@ -99,16 +99,11 @@ _BOUNDARY_NONCE_BYTES = 4
 # reused by other entry points, so the prompt boundary enforces both limits.
 _NEWS_TITLE_MAX_CHARS = 300
 
-# Bluesky turns HTTP(S) forms into facets; Mastodon also auto-links other
-# explicit schemes and bare hostnames.  Cover both platform representations.
+# Bluesky turns HTTP(S) forms into facets; Mastodon also links other explicit
+# schemes. Bare names (llama.cpp, robots.txt, git.kernel.org) are deliberately
+# allowed: a bare-domain rule would have blocked 4 of 146 real posts.
 _NEWS_POST_URL = re.compile(r"\b[a-z][a-z0-9+.-]{1,31}://[^\s)\]]+", re.IGNORECASE)
 _NEWS_POST_URL_TRAILING = ".,;:!?"
-_NEWS_POST_BARE_URL = re.compile(
-    r"(?<![\w@])(?:\w(?:[\w-]{0,61}\w)?\.)+"
-    r"(?:[^\W\d_][\w-]{1,62})"
-    r"(?::\d{1,5})?(?:/[^\s)\]}>,'\"]*)?",
-    re.IGNORECASE,
-)
 _NEWS_POST_HANDLE = re.compile(
     r"(?<![\w@])@[A-Za-z0-9][A-Za-z0-9._-]*(?:@[A-Za-z0-9.-]+)?"
 )
@@ -200,9 +195,6 @@ def _validate_news_output_references(
         # Remove the allowed URL before checking handles so a rare source URL
         # containing '@' cannot be mistaken for a social mention.
         without_source = post.replace(source_url, "")
-        bare_url = _NEWS_POST_BARE_URL.search(without_source)
-        if bare_url:
-            return False, f"post contains an unapproved bare URL: {bare_url.group(0)[:120]}"
         handle = _NEWS_POST_HANDLE.search(without_source)
         if handle:
             return False, f"post contains an unapproved social handle: {handle.group(0)[:120]}"
