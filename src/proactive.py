@@ -18,11 +18,13 @@ Each ``draft`` has the shape:
       "id":               "<uuid4>",
       "platform":         "bluesky",
       "parent_post_uri":  "at://did:plc:.../app.bsky.feed.post/...",
+      "parent_post_cid":  "bafy...",
       "parent_author":    "example-dev.bsky.social",
       "parent_text":      "...",
       "draft_reply":      "...",
       "generated_at":     "<ISO-8601 UTC>",
-      "expires_at":       "<ISO-8601 UTC>"   # generated_at + DRAFT_EXPIRY_HOURS
+      "expires_at":        "<ISO-8601 UTC>",  # generated_at + DRAFT_EXPIRY_HOURS
+      "approval_digest":   "<sha256>"          # exact reviewed pending tuple
     }
 
 ``posted`` entries gain ``posted_at`` and ``posted_uri``; ``rejected``
@@ -36,10 +38,15 @@ needs the three-tier fallback).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.agents import _validate_proactive_reply
 from src.config import (
     BANNED_QUESTION_PATTERNS,
     PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS,
@@ -51,6 +58,20 @@ from src.logger import SafeLogger
 from src.state_store import _load_gist_state_strict, _save_gist_state
 
 _PENDING_REPLIES_FILENAME = "pending_replies.json"
+_APPROVAL_DIGEST_SCHEMA = "proactive-approval-v1"
+_APPROVAL_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_DIGESTED_DRAFT_FIELDS = (
+    "id",
+    "platform",
+    "parent_post_uri",
+    "parent_post_cid",
+    "parent_author",
+    "parent_text",
+    "draft_reply",
+    "generated_at",
+    "expires_at",
+)
+_PENDING_DRAFT_FIELDS = frozenset((*_DIGESTED_DRAFT_FIELDS, "approval_digest"))
 
 
 def _empty_state() -> Dict[str, List[Dict[str, Any]]]:
@@ -173,6 +194,73 @@ def _parse_iso(ts: str) -> Optional[datetime]:
         return datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+
+
+# ── Approval integrity ──────────────────────────────────────────────────────
+
+def compute_approval_digest(draft: Dict[str, Any]) -> str:
+    """Return the canonical digest an operator must approve for ``draft``.
+
+    The bucket status is included explicitly so the approval means "post this
+    exact pending entry", not merely "post whatever currently has this id".
+    ``approval_digest`` itself is deliberately excluded from the payload.
+    """
+    payload = {
+        "schema": _APPROVAL_DIGEST_SCHEMA,
+        "status": "pending",
+        **{field: draft[field] for field in _DIGESTED_DRAFT_FIELDS},
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def is_valid_approval_digest(value: Any) -> bool:
+    """Whether ``value`` is a canonical lowercase SHA-256 digest."""
+    return isinstance(value, str) and bool(_APPROVAL_DIGEST_RE.fullmatch(value))
+
+
+def _pending_draft_schema_error(draft: Any) -> Optional[str]:
+    """Return a safe error label when a Gist-loaded pending draft is invalid."""
+    if not isinstance(draft, dict):
+        return "draft_not_object"
+
+    keys = set(draft)
+    if keys != _PENDING_DRAFT_FIELDS:
+        if _PENDING_DRAFT_FIELDS - keys:
+            return "missing_fields"
+        return "unexpected_fields"
+
+    for field in _DIGESTED_DRAFT_FIELDS:
+        if not isinstance(draft[field], str):
+            return f"{field}_not_string"
+        if not draft[field].strip():
+            return f"{field}_empty"
+
+    if draft["platform"] != "bluesky":
+        return "unsupported_platform"
+    if not draft["parent_post_uri"].startswith("at://"):
+        return "parent_post_uri_invalid"
+    if draft["draft_reply"] != draft["draft_reply"].strip():
+        return "draft_reply_not_canonical"
+
+    generated = _parse_iso(draft["generated_at"])
+    expires = _parse_iso(draft["expires_at"])
+    if generated is None or generated.utcoffset() is None:
+        return "generated_at_invalid"
+    if expires is None or expires.utcoffset() is None or expires <= generated:
+        return "expires_at_invalid"
+
+    stored_digest = draft["approval_digest"]
+    if not isinstance(stored_digest, str) or not is_valid_approval_digest(stored_digest):
+        return "approval_digest_invalid"
+    if not hmac.compare_digest(stored_digest, compute_approval_digest(draft)):
+        return "approval_digest_stale"
+    return None
 
 
 # ── Expiry + cooldown ───────────────────────────────────────────────────────
@@ -320,12 +408,14 @@ def _item_to_candidate(item: Any, handle: str) -> Dict[str, Any]:
     """
     post = item.post
     record = post.record
+    author = getattr(getattr(post, "author", None), "handle", None) or handle
     reposts = int(getattr(post, "repost_count", 0) or 0)
     replies = int(getattr(post, "reply_count", 0) or 0)
     return {
         "platform": "bluesky",
-        "parent_author": handle,
+        "parent_author": author,
         "parent_post_uri": getattr(post, "uri", ""),
+        "parent_post_cid": getattr(post, "cid", ""),
         "parent_text": getattr(record, "text", "") or "",
         "engagement": reposts + replies,
         "indexed_at": getattr(post, "indexed_at", "") or "",
@@ -452,11 +542,13 @@ def stage_draft_reply(
         "platform": candidate.get("platform", "bluesky"),
         "parent_author": candidate.get("parent_author", ""),
         "parent_post_uri": candidate.get("parent_post_uri", ""),
+        "parent_post_cid": candidate.get("parent_post_cid", ""),
         "parent_text": candidate.get("parent_text", ""),
         "draft_reply": draft_reply,
         "generated_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=PROACTIVE_REPLY_DRAFT_EXPIRY_HOURS)).isoformat(),
     }
+    draft["approval_digest"] = compute_approval_digest(draft)
     state.setdefault("pending", []).append(draft)
     SafeLogger.info(
         "proactive_draft_staged",
@@ -464,6 +556,7 @@ def stage_draft_reply(
         draft_id=draft["id"],
         parent_author=draft["parent_author"],
         draft_length=len(draft_reply),
+        approval_digest=draft["approval_digest"],
     )
     return draft
 
@@ -476,8 +569,8 @@ def find_draft_in_pending(
 ) -> Optional[Dict[str, Any]]:
     """Find a pending draft by ID, or oldest if ``draft_id == 'first'``.
 
-    The ``first`` sentinel is the workflow input default — the
-    common case is "approve whatever's at the top of the queue."
+    The ``first`` sentinel remains available for manual rejection. Approval
+    deliberately refuses it because posting must bind to an exact reviewed id.
     Returns ``None`` when no match.
     """
     pending = state.get("pending", [])
@@ -486,7 +579,7 @@ def find_draft_in_pending(
     if draft_id == "first":
         return min(pending, key=lambda d: d.get("generated_at", ""))
     for draft in pending:
-        if draft.get("id") == draft_id:
+        if isinstance(draft, dict) and draft.get("id") == draft_id:
             return draft
     return None
 
@@ -539,11 +632,12 @@ def reject_draft(
 
 async def approve_draft(
     draft_id: str,
+    expected_approval_digest: str,
     bsky_client: Any,
     state: Dict[str, List[Dict[str, Any]]],
     now: datetime,
 ) -> Optional[Dict[str, Any]]:
-    """Approve a pending draft: re-fetch parent, post reply, move to posted.
+    """Approve an exact reviewed draft: verify, re-fetch, post, and record it.
 
     Returns the posted entry on success, ``None`` on any failure.
     Failures auto-move the draft to ``rejected`` with a descriptive
@@ -551,22 +645,81 @@ async def approve_draft(
     rather than having to dig through logs.
 
     Defensive design (per PLAN_engagement.md §4b):
+      - Requires the exact draft UUID and canonical digest copied during human
+        review; the mutable ``first`` selector is never accepted for posting.
+      - Strictly validates the Gist-loaded draft and reruns the proactive reply
+        validator before making any postable content reachable.
       - Re-fetches the parent post via ``get_posts`` before sending.
         Aborts on 404 (parent deleted between scan and approval) or
         any fetch failure.
-      - Uses the fresh ``cid`` from the re-fetch, not the staged
-        candidate's. Parent edits invalidate the original cid; using
-        stale cid → API error or wrong-thread reply.
+      - Requires the re-fetched parent URI, CID, author, and text to equal the
+        reviewed snapshot. An edit invalidates approval instead of silently
+        substituting fresh parent state.
       - Top-level parents only (filter rule), so ``root == parent`` in
         the reply ref.
     """
-    draft = find_draft_in_pending(draft_id, state)
-    if draft is None:
+    if draft_id == "first":
         SafeLogger.error(
-            "proactive_approve_draft_not_found",
-            "No matching pending draft to approve",
+            "proactive_approve_mutable_selector",
+            "Approval requires an exact draft id; refusing mutable selector",
+        )
+        return None
+    if not is_valid_approval_digest(expected_approval_digest):
+        SafeLogger.error(
+            "proactive_approve_digest_invalid",
+            "Approval digest must be a lowercase SHA-256 value",
             draft_id=draft_id,
         )
+        return None
+
+    matches = [
+        entry for entry in state.get("pending", [])
+        if isinstance(entry, dict) and entry.get("id") == draft_id
+    ]
+    status_conflict = any(
+        isinstance(entry, dict) and entry.get("id") == draft_id
+        for bucket in ("posted", "rejected")
+        for entry in state.get(bucket, [])
+    )
+    if len(matches) != 1 or status_conflict:
+        SafeLogger.error(
+            "proactive_approve_draft_not_found",
+            "Approval requires one unique id in pending and no prior terminal entry",
+            draft_id=draft_id,
+            pending_matches=len(matches),
+            status_conflict=status_conflict,
+        )
+        return None
+    draft = matches[0]
+
+    schema_error = _pending_draft_schema_error(draft)
+    if schema_error is not None:
+        SafeLogger.error(
+            "proactive_approve_draft_invalid",
+            "Pending draft failed strict approval schema validation",
+            draft_id=draft_id,
+            reason=schema_error,
+        )
+        return None
+
+    current_digest = compute_approval_digest(draft)
+    if not hmac.compare_digest(expected_approval_digest, current_digest):
+        SafeLogger.error(
+            "proactive_approve_digest_mismatch",
+            "Pending draft no longer matches the reviewed approval digest",
+            draft_id=draft_id,
+        )
+        return None
+
+    reply_ok, reply_reason = _validate_proactive_reply(draft["draft_reply"])
+    if not reply_ok:
+        SafeLogger.error(
+            "proactive_approve_reply_invalid",
+            "Pending reply failed approval-time voice validation",
+            draft_id=draft_id,
+            reason=reply_reason,
+        )
+        _move_to_rejected(draft, state, now, "draft_validation_failed")
         return None
 
     parent_uri = draft.get("parent_post_uri", "")
@@ -599,7 +752,9 @@ async def approve_draft(
 
     parent_view = posts[0]
     parent_cid = getattr(parent_view, "cid", None)
-    fresh_parent_uri = getattr(parent_view, "uri", parent_uri)
+    fresh_parent_uri = getattr(parent_view, "uri", None)
+    parent_author = getattr(getattr(parent_view, "author", None), "handle", None)
+    parent_text = getattr(getattr(parent_view, "record", None), "text", None)
     if not parent_cid:
         SafeLogger.error(
             "proactive_approve_no_cid",
@@ -607,6 +762,41 @@ async def approve_draft(
             draft_id=draft_id,
         )
         _move_to_rejected(draft, state, now, "parent_no_cid")
+        return None
+
+    changed_fields = [
+        field
+        for field, staged, fresh in (
+            ("uri", draft["parent_post_uri"], fresh_parent_uri),
+            ("cid", draft["parent_post_cid"], parent_cid),
+            ("author", draft["parent_author"], parent_author),
+            ("text", draft["parent_text"], parent_text),
+        )
+        if staged != fresh
+    ]
+    if changed_fields:
+        SafeLogger.error(
+            "proactive_approve_parent_changed",
+            "Re-fetched parent differs from the reviewed snapshot; rejecting draft",
+            draft_id=draft_id,
+            changed_fields=changed_fields,
+        )
+        _move_to_rejected(draft, state, now, "parent_changed")
+        return None
+
+    # Recompute after the network await and immediately before the sink. This
+    # also protects direct callers whose in-memory state is shared with another
+    # task, even though workflow concurrency already serialises Gist writers.
+    schema_error = _pending_draft_schema_error(draft)
+    if schema_error is not None or not hmac.compare_digest(
+        expected_approval_digest, compute_approval_digest(draft)
+    ):
+        SafeLogger.error(
+            "proactive_approve_digest_changed",
+            "Pending draft changed while approval was in progress",
+            draft_id=draft_id,
+            reason=schema_error or "digest_mismatch",
+        )
         return None
 
     reply_ref = {

@@ -34,6 +34,7 @@ def _make_feed_item(
     reposts=1,
     replies=1,
     uri="at://did:plc:fakebsky/app.bsky.feed.post/xyz",
+    cid="feed-cid-123",
     is_repost=False,
     is_reply=False,
     embed=None,
@@ -54,6 +55,7 @@ def _make_feed_item(
     )
     post = SimpleNamespace(
         uri=uri,
+        cid=cid,
         indexed_at=ts,
         like_count=likes,
         repost_count=reposts,
@@ -823,6 +825,7 @@ async def test_scan_handle_returns_passing_candidates():
     assert len(candidates) == 1
     c = candidates[0]
     assert c["parent_author"] == "a-tooling-dev.invalid"
+    assert c["parent_post_cid"] == "feed-cid-123"
     assert c["platform"] == "bluesky"
     assert c["engagement"] == 5  # reposts + replies
     assert c["parent_text"] == "A post worth replying to."
@@ -916,6 +919,7 @@ def test_stage_appends_draft_with_uuid_and_expiry():
         "platform": "bluesky",
         "parent_author": "a-systems-dev.invalid",
         "parent_post_uri": "at://did:plc:abc/app.bsky.feed.post/xyz",
+        "parent_post_cid": "staged-cid-123",
         "parent_text": "OOMKilling at 1.5GB.",
         "engagement": 5,
         "indexed_at": _NOW.isoformat(),
@@ -931,6 +935,8 @@ def test_stage_appends_draft_with_uuid_and_expiry():
     assert len(draft["id"]) == 36  # UUID4 canonical length
     assert draft["draft_reply"].startswith("cgroup v1")
     assert draft["parent_author"] == "a-systems-dev.invalid"
+    assert draft["parent_post_cid"] == "staged-cid-123"
+    assert draft["approval_digest"] == proactive.compute_approval_digest(draft)
     # Expiry = generated_at + DRAFT_EXPIRY_HOURS
     generated = datetime.fromisoformat(draft["generated_at"])
     expires = datetime.fromisoformat(draft["expires_at"])
@@ -943,6 +949,7 @@ def test_stage_preserves_existing_pending_drafts():
         "platform": "bluesky",
         "parent_author": "a-tooling-dev.invalid",
         "parent_post_uri": "at://1",
+        "parent_post_cid": "staged-cid-456",
         "parent_text": "post text",
         "engagement": 3,
         "indexed_at": _NOW.isoformat(),
@@ -961,18 +968,23 @@ def test_stage_preserves_existing_pending_drafts():
 # ===========================================================================
 
 def _draft(*, draft_id="abc", author="a-tooling-dev.invalid", uri="at://parent/x",
-           text="A parent post.", reply="A draft reply.", generated_hours_ago=2):
+           cid="fresh-cid-123", text="A parent post.",
+           reply="cgroup v1 counts page cache against the memory limit; v2 separates them.",
+           generated_hours_ago=2):
     """Build a pending-draft dict for approval-flow tests."""
-    return {
+    draft = {
         "id": draft_id,
         "platform": "bluesky",
         "parent_author": author,
         "parent_post_uri": uri,
+        "parent_post_cid": cid,
         "parent_text": text,
         "draft_reply": reply,
         "generated_at": (_NOW - timedelta(hours=generated_hours_ago)).isoformat(),
         "expires_at": (_NOW + timedelta(hours=20)).isoformat(),
     }
+    draft["approval_digest"] = proactive.compute_approval_digest(draft)
+    return draft
 
 
 class _FakeReplyClient:
@@ -1010,8 +1022,18 @@ class _FakeReplyClient:
         return SimpleNamespace(uri=self._posted_uri, cid="newcid")
 
 
-def _fake_parent_view(uri="at://parent/x", cid="fresh-cid-123"):
-    return SimpleNamespace(uri=uri, cid=cid)
+def _fake_parent_view(
+    uri="at://parent/x",
+    cid="fresh-cid-123",
+    author="a-tooling-dev.invalid",
+    text="A parent post.",
+):
+    return SimpleNamespace(
+        uri=uri,
+        cid=cid,
+        author=SimpleNamespace(handle=author),
+        record=SimpleNamespace(text=text),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1085,7 +1107,9 @@ async def test_approve_happy_path_posts_and_moves_to_posted():
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
 
-    result = await proactive.approve_draft("abc", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
     assert result is not None
     assert state["pending"] == []
@@ -1094,25 +1118,192 @@ async def test_approve_happy_path_posts_and_moves_to_posted():
     assert state["posted"][0]["posted_uri"] == "at://did:plc:askfred/app.bsky.feed.post/newreply"
     # send_post called with the draft text + correct reply_ref shape
     assert len(client.send_calls) == 1
-    assert client.send_calls[0]["text"] == "A draft reply."
+    assert client.send_calls[0]["text"] == (
+        "cgroup v1 counts page cache against the memory limit; v2 separates them."
+    )
     assert client.send_calls[0]["reply_to"]["parent"]["cid"] == "fresh-cid-123"
     # Top-level parent → root == parent
     assert client.send_calls[0]["reply_to"]["root"] == client.send_calls[0]["reply_to"]["parent"]
 
 
 @pytest.mark.asyncio
-async def test_approve_uses_fresh_cid_not_staged_one():
-    """Defensive: the cid we send must come from the refetch, not the staged candidate.
+async def test_approve_uses_matching_reviewed_parent_cid():
+    """The parent ref uses the same CID that was staged, reviewed, and re-fetched."""
+    state = {
+        "pending": [_draft(draft_id="abc", cid="reviewed-cid")],
+        "posted": [],
+        "rejected": [],
+    }
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view(cid="reviewed-cid")])
 
-    The staged candidate doesn't carry a cid (only uri); confirms we
-    don't accidentally trust stale data even if the schema grew one.
-    """
+    await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
+
+    assert client.send_calls[0]["reply_to"]["parent"]["cid"] == "reviewed-cid"
+
+
+@pytest.mark.asyncio
+async def test_approve_rejects_mutable_first_selector_before_network():
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
-    client = _FakeReplyClient(fetched_posts=[_fake_parent_view(cid="brand-new")])
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
 
-    await proactive.approve_draft("abc", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "first", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
-    assert client.send_calls[0]["reply_to"]["parent"]["cid"] == "brand-new"
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("draft_reply", "A different reply that remains long enough to pass validation."),
+        ("parent_post_uri", "at://parent/changed"),
+        ("parent_post_cid", "changed-cid"),
+        ("parent_author", "other.invalid"),
+        ("parent_text", "A changed parent post."),
+    ],
+)
+@pytest.mark.asyncio
+async def test_approve_rejects_gist_mutation_after_review(field, replacement):
+    draft = _draft(draft_id="abc")
+    reviewed_digest = draft["approval_digest"]
+    draft[field] = replacement
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft(
+        "abc", reviewed_digest, client, state, _NOW,
+    )
+
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_rejects_incomplete_loaded_draft_schema():
+    draft = _draft(draft_id="abc")
+    reviewed_digest = draft["approval_digest"]
+    del draft["parent_post_cid"]
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft(
+        "abc", reviewed_digest, client, state, _NOW,
+    )
+
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_rejects_reply_bytes_validator_would_trim():
+    draft = _draft(draft_id="abc")
+    draft["draft_reply"] = f" {draft['draft_reply']}"
+    draft["approval_digest"] = proactive.compute_approval_digest(draft)
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft(
+        "abc", draft["approval_digest"], client, state, _NOW,
+    )
+
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("uri", "at://parent/changed"),
+        ("cid", "changed-cid"),
+        ("author", "other.invalid"),
+        ("text", "A changed parent post."),
+    ],
+)
+@pytest.mark.asyncio
+async def test_approve_rejects_parent_change_after_staging(field, replacement):
+    draft = _draft(draft_id="abc")
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    parent = _fake_parent_view()
+    if field == "author":
+        parent.author.handle = replacement
+    elif field == "text":
+        parent.record.text = replacement
+    else:
+        setattr(parent, field, replacement)
+    client = _FakeReplyClient(fetched_posts=[parent])
+
+    result = await proactive.approve_draft(
+        "abc", draft["approval_digest"], client, state, _NOW,
+    )
+
+    assert result is None
+    assert state["rejected"][0]["rejected_reason"] == "parent_changed"
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_reruns_reply_validator_before_network():
+    draft = _draft(draft_id="abc", reply="Cool point.")
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft(
+        "abc", draft["approval_digest"], client, state, _NOW,
+    )
+
+    assert result is None
+    assert state["rejected"][0]["rejected_reason"] == "draft_validation_failed"
+    assert client.fetch_calls == []
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_rechecks_digest_after_parent_fetch():
+    draft = _draft(draft_id="abc")
+    reviewed_digest = draft["approval_digest"]
+
+    class _MutatingClient(_FakeReplyClient):
+        async def get_posts(self, params):
+            response = await super().get_posts(params)
+            draft["draft_reply"] = (
+                "cgroup v2 also keeps kernel memory accounting within the same hierarchy."
+            )
+            draft["approval_digest"] = proactive.compute_approval_digest(draft)
+            return response
+
+    state = {"pending": [draft], "posted": [], "rejected": []}
+    client = _MutatingClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft(
+        "abc", reviewed_digest, client, state, _NOW,
+    )
+
+    assert result is None
+    assert len(client.fetch_calls) == 1
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_rejects_draft_id_already_in_terminal_bucket():
+    draft = _draft(draft_id="abc")
+    state = {"pending": [draft], "posted": [dict(draft)], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+
+    result = await proactive.approve_draft(
+        "abc", draft["approval_digest"], client, state, _NOW,
+    )
+
+    assert result is None
+    assert client.fetch_calls == []
+    assert client.send_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1316,9 @@ async def test_approve_unknown_id_returns_none_no_network():
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
 
-    result = await proactive.approve_draft("not-there", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "not-there", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
     assert result is None
     assert client.fetch_calls == []
@@ -1139,7 +1332,9 @@ async def test_approve_parent_gone_rejects_with_reason():
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[])  # parent gone
 
-    result = await proactive.approve_draft("abc", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
     assert result is None
     assert state["pending"] == []
@@ -1154,7 +1349,9 @@ async def test_approve_refetch_raises_rejects_with_descriptive_reason():
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetch_raises=True)
 
-    result = await proactive.approve_draft("abc", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
     assert result is None
     assert state["pending"] == []
@@ -1169,7 +1366,9 @@ async def test_approve_send_post_raises_rejects_with_descriptive_reason():
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()], post_raises=True)
 
-    result = await proactive.approve_draft("abc", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
     assert result is None
     assert state["pending"] == []
@@ -1184,7 +1383,9 @@ async def test_approve_parent_no_cid_rejects():
     parent = SimpleNamespace(uri="at://parent/x", cid=None)
     client = _FakeReplyClient(fetched_posts=[parent])
 
-    result = await proactive.approve_draft("abc", client, state, _NOW)
+    result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
 
     assert result is None
     assert state["rejected"][0]["rejected_reason"] == "parent_no_cid"
