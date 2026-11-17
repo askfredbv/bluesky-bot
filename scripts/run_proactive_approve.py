@@ -3,8 +3,8 @@
 Triggered manually via ``.github/workflows/approve_pending_reply.yml``
 (``workflow_dispatch`` only). Inputs:
 
-  - ``DRAFT_ID``: UUID of the pending draft, or the literal ``first`` for
-    the oldest pending entry (the common case)
+  - ``DRAFT_ID``: exact UUID of the reviewed pending draft
+  - ``APPROVAL_DIGEST``: exact SHA-256 digest shown with that pending draft
   - ``ACTION``: ``approve`` or ``reject``
   - ``REJECT_REASON``: optional free-text reason when ``ACTION=reject``
 
@@ -45,7 +45,8 @@ async def _run() -> int:
     )
     SafeLogger.configure(run_id=run_id, platform="proactive")
 
-    draft_id = (os.environ.get("DRAFT_ID", "").strip() or "first")
+    draft_id = os.environ.get("DRAFT_ID", "").strip()
+    approval_digest = os.environ.get("APPROVAL_DIGEST", "").strip()
     action = os.environ.get("ACTION", "").strip().lower()
     reject_reason = os.environ.get("REJECT_REASON", "").strip() or "manual"
 
@@ -54,6 +55,21 @@ async def _run() -> int:
             "proactive_approve_bad_action",
             "ACTION env var must be 'approve' or 'reject'",
             action=action,
+        )
+        return 1
+    if not draft_id:
+        SafeLogger.error(
+            "proactive_approve_draft_id_missing",
+            "DRAFT_ID must identify the exact reviewed draft",
+        )
+        return 1
+    if action == "approve" and (
+        draft_id == "first" or not proactive.is_valid_approval_digest(approval_digest)
+    ):
+        SafeLogger.error(
+            "proactive_approve_binding_invalid",
+            "Approve requires an exact draft id and lowercase SHA-256 approval digest",
+            mutable_selector=draft_id == "first",
         )
         return 1
 
@@ -113,7 +129,9 @@ async def _run() -> int:
                 error_msg=str(e)[:200],
             )
             return 1
-        result = await proactive.approve_draft(draft_id, bsky, state, now)
+        result = await proactive.approve_draft(
+            draft_id, approval_digest, bsky, state, now,
+        )
 
     saved = proactive.save_pending_replies(state)
     if not saved:
@@ -129,11 +147,9 @@ async def _run() -> int:
         posted_entry = result if isinstance(result, dict) else {}
         posted_uri = posted_entry.get("posted_uri")
         if action == "approve" and posted_uri:
-            # Log the RESOLVED draft UUID from the posted entry, not the input
-            # selector — which is "first" by default (the workflow default) and
-            # useless for recovery. The remote pending entry is keyed by UUID;
-            # an operator repairing pending_replies.json needs that id to edit
-            # the right entry. (Codex review 2026-06-12, finding on this PR.)
+            # Prefer the UUID recorded with the posted entry. The remote pending
+            # entry is keyed by UUID; an operator repairing pending_replies.json
+            # needs that id to edit the right entry.
             SafeLogger.error(
                 "proactive_posted_but_not_persisted",
                 "Reply WAS POSTED but state did not persist — DO NOT re-run "

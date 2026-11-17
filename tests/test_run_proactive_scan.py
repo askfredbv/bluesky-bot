@@ -23,11 +23,13 @@ def _candidate(
     text="A clean post worth replying to.",
     engagement=5,
     uri="at://did:plc:abc/app.bsky.feed.post/xyz",
+    cid="candidate-cid-123",
 ):
     return {
         "platform": "bluesky",
         "parent_author": handle,
         "parent_post_uri": uri,
+        "parent_post_cid": cid,
         "parent_text": text,
         "engagement": engagement,
         "indexed_at": _NOW.isoformat(),

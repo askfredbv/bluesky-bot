@@ -34,6 +34,7 @@ def _draft(draft_id="abc"):
 def _stub_creds(monkeypatch):
     monkeypatch.setenv("BLUESKY_USERNAME", "bot")
     monkeypatch.setenv("BLUESKY_APP_PASSWORD", "pass")
+    monkeypatch.setenv("APPROVAL_DIGEST", "a" * 64)
 
 
 @pytest.mark.asyncio
@@ -45,6 +46,34 @@ async def test_bad_action_returns_1(monkeypatch):
     rc = await run_proactive_approve._run()
 
     assert rc == 1
+
+
+@pytest.mark.parametrize(
+    ("draft_id", "approval_digest"),
+    [
+        ("first", "a" * 64),
+        ("abc", ""),
+        ("abc", "A" * 64),
+    ],
+)
+@pytest.mark.asyncio
+async def test_approve_requires_exact_id_and_digest_before_state_load(
+    monkeypatch, draft_id, approval_digest,
+):
+    monkeypatch.setenv("ACTION", "approve")
+    monkeypatch.setenv("DRAFT_ID", draft_id)
+    monkeypatch.setenv("APPROVAL_DIGEST", approval_digest)
+    load_calls = []
+    monkeypatch.setattr(
+        proactive,
+        "load_pending_replies",
+        lambda: load_calls.append(True) or (proactive._empty_state(), True),
+    )
+
+    rc = await run_proactive_approve._run()
+
+    assert rc == 1
+    assert load_calls == []
 
 
 @pytest.mark.asyncio
@@ -90,7 +119,8 @@ async def test_reject_unknown_id_returns_1(monkeypatch):
 async def test_approve_missing_creds_returns_1(monkeypatch):
     """Approve path needs Bluesky creds — missing → exit 1 before any state I/O."""
     monkeypatch.setenv("ACTION", "approve")
-    monkeypatch.setenv("DRAFT_ID", "first")
+    monkeypatch.setenv("DRAFT_ID", "abc")
+    monkeypatch.setenv("APPROVAL_DIGEST", "a" * 64)
     monkeypatch.delenv("BLUESKY_USERNAME", raising=False)
     monkeypatch.delenv("BLUESKY_APP_PASSWORD", raising=False)
 
@@ -130,7 +160,8 @@ async def test_approve_happy_path_returns_0(monkeypatch):
     monkeypatch.setattr(run_proactive_approve, "load_or_login", _noop_login)
 
     # Stub approve_draft to return a successful posted entry
-    async def _fake_approve(draft_id, client, state, now):
+    async def _fake_approve(draft_id, approval_digest, client, state, now):
+        assert approval_digest == "a" * 64
         draft = next(d for d in state["pending"] if d["id"] == draft_id)
         state["pending"].remove(draft)
         posted = {**draft, "posted_at": now.isoformat(), "posted_uri": "at://posted"}
@@ -175,11 +206,9 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
     generic save failure."""
     _stub_creds(monkeypatch)
     monkeypatch.setenv("ACTION", "approve")
-    # Use the workflow default selector "first" — the common path. The
-    # recovery log must carry the RESOLVED draft UUID, not the literal "first".
-    monkeypatch.setenv("DRAFT_ID", "first")
 
     real_uuid = "94eb5ae1-8f06-481d-8743-14e80eead7ce"
+    monkeypatch.setenv("DRAFT_ID", real_uuid)
     state = {"pending": [_draft(draft_id=real_uuid)], "posted": [], "rejected": []}
     monkeypatch.setattr(proactive, "load_pending_replies", lambda: (state, True))
 
@@ -199,9 +228,9 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
         return None
     monkeypatch.setattr(run_proactive_approve, "load_or_login", _noop_login)
 
-    async def _fake_approve(draft_id, client, state, now):
-        # Mimic real resolution: "first" → the oldest pending draft.
-        draft = state["pending"][0]
+    async def _fake_approve(draft_id, approval_digest, client, state, now):
+        assert approval_digest == "a" * 64
+        draft = next(d for d in state["pending"] if d["id"] == draft_id)
         state["pending"].remove(draft)
         posted = {**draft, "posted_at": now.isoformat(),
                   "posted_uri": "at://did:plc:askfred/app.bsky.feed.post/live"}
@@ -226,7 +255,6 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
     assert "proactive_approve_state_save_failed" not in names  # not the generic one
     fields = next(f for e, f in events if e == "proactive_posted_but_not_persisted")
     assert fields["posted_uri"] == "at://did:plc:askfred/app.bsky.feed.post/live"
-    # The resolved UUID, NOT the input selector "first" (Codex #54 finding).
     assert fields["draft_id"] == real_uuid
 
 

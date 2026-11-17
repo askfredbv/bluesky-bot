@@ -63,3 +63,12 @@ def test_only_these_two_workflows_write_the_file():
     texts = {name: (_WORKFLOWS / name).read_text(encoding="utf-8") for name in _WRITERS}
     assert "scripts.run_proactive_scan" in texts["proactive_scan.yml"]
     assert "scripts.run_proactive_approve" in texts["approve_pending_reply.yml"]
+
+
+def test_approval_workflow_requires_reviewed_identity_and_digest():
+    """Posting inputs identify reviewed bytes; no mutable queue selector is defaulted."""
+    text = (_WORKFLOWS / "approve_pending_reply.yml").read_text(encoding="utf-8")
+    assert 'default: \'first\'' not in text
+    assert 'default: "first"' not in text
+    assert "APPROVAL_DIGEST: ${{ inputs.approval_digest }}" in text
+    assert "DRAFT_ID: ${{ inputs.draft_id }}" in text
