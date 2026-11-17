@@ -154,7 +154,7 @@ Top 2–3 handles from 4a, hard-coded as `PROACTIVE_REPLY_WATCHLIST` in config. 
 - `src/agents.py` — `generate_proactive_reply(parent_text, parent_author, context)` using same Gemini fallback chain
 - `src/proactive.py` — **new**: `scan_watchlist()`, `pick_reply_candidate()`, `stage_draft_reply()`. Filters posts <12h with any replies/reposts (skip dead posts), skips quote-posts, skips parents matching `BANNED_QUESTION_PATTERNS` (don't chase reader-bait)
 - `.github/workflows/proactive_scan.yml` — daily ~10:00 UTC, scans + stages, never posts
-- `.github/workflows/approve_pending_reply.yml` — `workflow_dispatch`, posts the first staged entry or marks it rejected based on input
+- `.github/workflows/approve_pending_reply.yml` — `workflow_dispatch`, posts or rejects one staged draft named by its exact UUID; posting also requires the draft's approval digest from the scan log (#282)
 
 **Reply prompt — hard rules:**
 - First-person, askfred voice anchors

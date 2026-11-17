@@ -424,12 +424,16 @@ def _ensure_pioneer_field(data: Dict[str, Any]) -> Dict[str, Any]:
         data["pioneer_recent"] = []
     return data
 def load_seen_articles_strict() -> Tuple[Dict[str, Any], bool]:
-    """``load_seen_articles``, plus whether the result is safe to write back.
+    """``load_seen_articles``, plus whether some tier supplied real state.
 
     ``trusted=False`` means the Gist read itself failed AND no other tier supplied
     real state. The empty default that comes back then means "could not read", not
     "no state exists" — writing it back erases every seen link, recent topic and
     Pioneer cooldown the bot has accumulated.
+
+    ``trusted=True`` is necessary but not sufficient for a write: a lower tier
+    can be stale when the higher-priority Gist is corrupt or unreachable. Writers
+    must use ``update_seen_articles_checked``, which also enforces ``gist_status``.
 
     That is not hypothetical. ``seen_articles.json`` is gitignored, so a fresh
     GitHub Actions runner has no local copy, and ``STATE_STORE_URL`` is usually
@@ -448,11 +452,12 @@ def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, str]:
     Returns ``(state, trusted, gist_status)``, the status being one of
     ``GIST_READ_OK`` / ``GIST_READ_UNREACHABLE`` / ``GIST_READ_CORRUPT``.
 
-    ``trusted`` is an aggregate: it says some tier supplied real state, so the
-    value is safe to write back. That is the right question for a writer and the
-    WRONG one for anything asking "will the next run see what I just wrote",
-    because this chain reads Gist -> store -> local and ``trusted`` is True the
-    moment the STORE answers, even when the Gist GET failed on the way past.
+    ``trusted`` is an aggregate: it says some tier supplied real state instead
+    of the synthesized empty default. It is necessary but not sufficient for a
+    writer, because this chain reads Gist -> store -> local and ``trusted`` is
+    True the moment the STORE answers, even when the Gist GET failed on the way
+    past. ``gist_status`` prevents a writer from promoting that potentially
+    stale fallback over corrupt authoritative content.
 
     ``gist_status`` is the missing piece. ``GIST_READ_OK`` means the Gist tier
     gave a definite answer — its content, "no such file", or "no Gist
@@ -473,6 +478,17 @@ def load_seen_articles_sourced() -> Tuple[Dict[str, Any], bool, str]:
     gist_data, gist_status = _load_gist_state_checked("seen_articles.json")
     if isinstance(gist_data, dict) and "links" in gist_data and "recent_topics" in gist_data:
         return _ensure_pioneer_field(gist_data), True, GIST_READ_OK
+    if gist_status == GIST_READ_OK and gist_data is not None:
+        # Parseable but unusable content is still corruption for this state
+        # schema. Leaving the status as OK would let a writer promote a lower
+        # tier over the Gist, bypassing the corrupt-state guard with `{}`, a
+        # list, or any other valid JSON shape. None is different: it means the
+        # Gist file is genuinely absent, so falling through is legitimate.
+        SafeLogger.error(
+            "seen_articles_gist_format_invalid",
+            "Gist seen-state has an invalid shape; treating it as corrupt",
+        )
+        gist_status = GIST_READ_CORRUPT
     gist_trusted = gist_status == GIST_READ_OK
     # 2. Existing STATE_STORE_URL fallback
     remote_data = _load_state_from_store("seen_articles")
@@ -515,7 +531,8 @@ def load_seen_articles() -> Dict[str, Any]:
 
     Thin wrapper over ``load_seen_articles_strict`` that drops the trust flag,
     preserving the original contract for read-only callers. Anything that will
-    WRITE the result back must use the strict variant and honour ``trusted``.
+    write must use ``update_seen_articles_checked`` so both aggregate trust and
+    the higher-priority Gist status gate persistence.
     """
     return load_seen_articles_strict()[0]
 
@@ -610,7 +627,6 @@ def update_seen_articles_checked(
     mutator: Callable[[Dict[str, Any]], Dict[str, Any]],
     *,
     require_gist_read: bool = False,
-    corrupt_gist_is_inert: bool = False,
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     """Lock-protected read-modify-write for seen_articles.json.
 
@@ -646,83 +662,38 @@ def update_seen_articles_checked(
     entry points pass it; bookkeeping callers do not. With no Gist configured
     the status is OK, so local development is unaffected.
 
-    ``corrupt_gist_is_inert`` narrows that refusal back for the one status whose
-    premise is false. The guard refuses because the write would PATCH over
-    entries the Gist alone holds and the mutator could not see — but for CORRUPT
-    content nothing READS those entries either: ``load_seen_articles_sourced``
-    falls straight past unparseable Gist content to the store, so the state the
-    mutator decided against is exactly the state every reader is already getting,
-    and the bytes about to be overwritten are suppressing nothing. UNREACHABLE
-    keeps the refusal, and that asymmetry is the point: there the content is
-    unknown rather than known to be unusable, and it answers reads again the
-    moment it is back.
-
-    Pass it only from a caller whose write SUPPRESSES something. It trades away
-    any chance of repairing that Gist by hand, which is worth it exactly where
-    withholding the write would leave a story selectable after a platform may
-    have taken it — see ``settle_broadcast`` (#201).
-
-    It narrows the GIST guard and nothing else. An untrusted read still refuses,
-    and that is not a corner case: ``daily_post.yml`` configures ``GIST_ID`` and
-    no ``STATE_STORE_URL``, and ``seen_articles.json`` is gitignored, so on a
-    runner the Gist is the ONLY tier that can supply state. A corrupt Gist there
-    leaves nothing to derive a write from, and the empty default would replace
-    the history rather than extend it — so the suppressing write is refused in
-    production's own configuration, loudly, and the thing that prevents the
-    repost is that ``reserve_broadcast`` needs this same read and so nothing
-    posts at all (Codex review on #218).
+    A known-corrupt Gist is different: every writer is refused, even when a
+    lower tier supplied valid-looking state. Lower tiers are fallbacks, not
+    replicas — a successful normal write stops at the Gist — so their snapshot
+    may omit newer links, reservations and cooldowns. Promoting that snapshot
+    would irreversibly replace the authoritative bytes with stale or tampered
+    state. Recovery must repair the Gist instead. Until then reservations fail
+    closed, so a missed run cannot turn the corruption into duplicate posts.
     """
     lock_path = SEEN_FILE.with_suffix(SEEN_FILE.suffix + ".lock")
     with _file_lock(lock_path):
         current, trusted, gist_status = load_seen_articles_sourced()
         if not trusted:
-            if corrupt_gist_is_inert:
-                # The caller is a SUPPRESSING write, and it is being refused
-                # for a reason the flag below cannot narrow: no tier supplied
-                # state at all, so there is nothing to derive a write FROM.
-                # Writing anyway would put the empty default in the Gist —
-                # every seen link, recent topic and Pioneer cooldown replaced
-                # with nothing, and a parseable Gist that lets the next run
-                # resume posting at once with no memory. That turns one
-                # possibly-live story into every story still inside the feed
-                # window, so the refusal stands. What holds the line instead is
-                # that `reserve_broadcast` needs this same read, so nothing
-                # posts until the tier is readable (AGENTS.md guardrail 3: a
-                # missed run beats a duplicate). Said out loud, because the
-                # generic line below reads like routine bookkeeping and this is
-                # a story that may be live and is recorded nowhere
-                # (Codex review on #218).
-                SafeLogger.error(
-                    "seen_articles_suppressing_write_unstorable",
-                    "No tier supplied state, so a story that may already be live cannot be recorded; runs stay blocked until the state tier reads",
-                    gist_status=gist_status,
-                )
             SafeLogger.error(
                 "seen_articles_update_skipped",
                 "Seen-state read was untrusted; skipping the write rather than erasing history",
                 gist_status=gist_status,
             )
             return current, None
+        if gist_status == GIST_READ_CORRUPT:
+            SafeLogger.error(
+                "seen_articles_update_skipped_gist_corrupt",
+                "Gist content is corrupt; refusing to replace it with lower-tier state",
+                gist_status=gist_status,
+            )
+            return current, None
         if require_gist_read and gist_status != GIST_READ_OK:
-            if gist_status == GIST_READ_CORRUPT and corrupt_gist_is_inert:
-                # Loud, although the run then proceeds correctly: the Gist
-                # holding content no read can parse is a critical-state failure,
-                # and this write replaces it with state derived from a lower
-                # tier, so whatever it held is gone for good. A WARN here would
-                # hide both facts behind a line about a write that worked
-                # (retired AGENTS.md rule 4 (docs/BACKLOG_ARCHIVE.md)).
-                SafeLogger.error(
-                    "seen_articles_update_over_corrupt_gist",
-                    "Gist content is unparseable, so it suppresses nothing; writing the suppressing update over it",
-                    gist_status=gist_status,
-                )
-            else:
-                SafeLogger.error(
-                    "seen_articles_update_skipped_gist_unread",
-                    "Gist did not answer the read, so this write would decide blind and overwrite it; skipping",
-                    gist_status=gist_status,
-                )
-                return current, None
+            SafeLogger.error(
+                "seen_articles_update_skipped_gist_unread",
+                "Gist did not answer the read, so this write would decide blind and overwrite it; skipping",
+                gist_status=gist_status,
+            )
+            return current, None
         updated = mutator(current)
         tier = save_seen_articles(updated)
     return updated, tier
@@ -1116,42 +1087,13 @@ def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> N
     ``attempted`` defaults to True because that is the suppressing reading, and a
     caller that cannot tell should get the safe one.
 
-    The first two outcomes need no readable-tier check: if this write fails or
-    lands in a tier reads will not select, a later read still sees the
-    ``pending`` claim, which suppresses the story just as firmly as the entry
-    this would have written. Both fail safe. Still logged at ERROR, because the
-    state is then carrying a claim nobody will ever settle.
-
-    That reasoning holds only while a later read can SEE the pending claim, and
-    one status breaks it. A Gist that has gone corrupt since the reservation
-    verified — ``reserve_broadcast`` refuses outright on corruption, so it was
-    parseable then — is one every read falls straight PAST, to a lower tier
-    whose snapshot never held the claim (``save_seen_articles`` stops at the
-    first tier that accepts, so a Gist-tier claim exists nowhere else). The
-    guard below would then withhold the suppressing write as well, and the story
-    is selectable again although a platform may already have taken it: the
-    duplicate publication this mechanism exists to prevent, reached through the
-    guard that protects it (Codex review on #200, filed as #201).
-
-    So the two suppressing outcomes pass ``corrupt_gist_is_inert`` and the
-    release does not. For the release, corruption is already doing what the
-    write would do — the claim it wants gone is unreadable either way — so
-    there is nothing to buy with an overwrite that destroys the corrupt content
-    a human might otherwise recover.
-
-    That reaches the configuration #201 describes, where a lower tier still
-    holds a snapshot. It does NOT reach production, which runs on the Gist alone
-    (``daily_post.yml`` sets ``GIST_ID`` and no ``STATE_STORE_URL``): there a
-    corrupt Gist leaves no tier holding state, the read is untrusted, and the
-    suppressing write is refused before this flag is consulted. Deliberately,
-    because with nothing to derive state from the write would store the empty
-    default and resume posting from no memory. What stands in for it is the
-    halt: every later run needs a reservation, the reservation needs the same
-    read, and ``main.py`` skips the broadcast when it is refused — so the story
-    is unrecorded but nothing can repost it while the Gist stays unreadable. The
-    residual window is a Gist that returns VALID BUT STALE, and no write here
-    defends against that: a stale restore would overwrite a stored claim just as
-    readily (Codex review on #218).
+    All outcomes require a usable authoritative Gist read. A corrupt Gist may
+    make its pending claim temporarily unreadable, but replacing it with a lower
+    tier is worse: successful writes stop at the Gist, so the fallback can omit
+    newer seen links, reservations and cooldowns. The shared updater therefore
+    refuses the settlement, and later reservations refuse the same corrupt read.
+    Runs remain halted until the Gist is repaired instead of promoting stale or
+    attacker-controlled fallback state into the authoritative tier.
 
     The release does NOT fail safe, and is verified. Its whole purpose is for the
     claim to be GONE, so a shadowed write leaves the story suppressed while this
@@ -1189,14 +1131,9 @@ def settle_broadcast(link: str, *, delivered: bool, attempted: bool = True) -> N
             current["links"] = (current["links"] + [canonical])[-SEEN_LINKS_WINDOW:]
         return current
 
-    # Suppressing outcomes may be written over a corrupt Gist; the release may
-    # not. Both halves of that are argued in the docstring, and `attempted`
-    # defaults True, so the release is the narrow case it looks like.
-    suppressing = delivered or attempted
     _, tier = update_seen_articles_checked(
         _apply,
         require_gist_read=True,
-        corrupt_gist_is_inert=suppressing,
     )
     if tier is None:
         SafeLogger.error(

@@ -49,6 +49,31 @@ def test_repeated_public_records_are_listed_once(monkeypatch):
     assert net_safety._resolve_public_ip_candidates("example.com") == ["93.184.216.34", "1.1.1.1"]
 
 
+def test_an_idn_is_resolved_in_the_same_ascii_form_httpx_transports(monkeypatch):
+    """The IDNA2008-only sharp-s spelling distinguishes idna from stdlib IDNA."""
+    seen = []
+
+    def resolver(host, *_args, **_kwargs):
+        seen.append(host)
+        return _addrinfo("93.184.216.34")
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    assert net_safety._resolve_public_ip_candidates("faß.example") == ["93.184.216.34"]
+    assert seen == ["xn--fa-hia.example"]
+
+
+@pytest.mark.parametrize("host, expected", [
+    ("EXAMPLE.COM.", "example.com"),
+    ("My_Site.example.com", "my_site.example.com"),
+    ("faß.example", "xn--fa-hia.example"),
+    (b"xn--fa-hia.example", "xn--fa-hia.example"),
+    ("93.184.216.34", "93.184.216.34"),
+    ("2001:4860:4860::8888", "2001:4860:4860::8888"),
+])
+def test_hostname_canonicalization_preserves_ordinary_hosts(host, expected):
+    assert net_safety._canonical_hostname(host) == expected
+
+
 # ---------------------------------------------------------------------------
 # URL-shape guards (L108, L115, L125, L162, L168)
 # ---------------------------------------------------------------------------
@@ -92,6 +117,22 @@ def test_the_denylist_blocks_a_domain_and_its_subdomains_only(monkeypatch, url, 
     monkeypatch.setattr(net_safety, "METADATA_FETCH_BLOCKED_DOMAINS", ["evil.example"])
     monkeypatch.setattr(net_safety, "METADATA_FETCH_ALLOWED_DOMAINS", [])
     assert net_safety.is_allowed_metadata_fetch_url(url) is allowed
+
+
+@pytest.mark.parametrize("rule, url", [
+    ("faß.example", "https://xn--fa-hia.example/x"),
+    ("xn--fa-hia.example", "https://faß.example/x"),
+])
+def test_domain_policy_treats_unicode_and_punycode_as_the_same_host(monkeypatch, rule, url):
+    monkeypatch.setattr(net_safety, "METADATA_FETCH_BLOCKED_DOMAINS", [rule])
+    monkeypatch.setattr(net_safety, "METADATA_FETCH_ALLOWED_DOMAINS", [])
+    assert net_safety.is_allowed_metadata_fetch_url(url) is False
+
+
+def test_punycode_allowlist_preserves_a_legitimate_unicode_host(monkeypatch):
+    monkeypatch.setattr(net_safety, "METADATA_FETCH_BLOCKED_DOMAINS", [])
+    monkeypatch.setattr(net_safety, "METADATA_FETCH_ALLOWED_DOMAINS", ["xn--fa-hia.example"])
+    assert net_safety.is_allowed_metadata_fetch_url("https://faß.example/article") is True
 
 
 # ---------------------------------------------------------------------------
@@ -472,9 +513,16 @@ def test_the_pin_blocks_a_rebind_however_the_host_is_spelled(host, rebinding_res
             socket.getaddrinfo(host, 443)
 
 
-@pytest.mark.parametrize("host", ["münchen.example", b"xn--mnchen-3ya.example"])
-def test_the_pin_blocks_a_rebind_on_an_internationalised_host(host, rebinding_resolver):
-    with net_safety._resolver_pinned_to_ips("münchen.example", ["93.184.216.34"]):
+@pytest.mark.parametrize("hostname, host", [
+    ("münchen.example", "münchen.example"),
+    ("münchen.example", b"xn--mnchen-3ya.example"),
+    # This pair differs under stdlib IDNA2003, so it guards the exact bypass.
+    ("faß.example", b"xn--fa-hia.example"),
+    ("xn--fa-hia.example", "faß.example"),
+])
+def test_the_pin_blocks_a_rebind_on_an_internationalised_host(
+        hostname, host, rebinding_resolver):
+    with net_safety._resolver_pinned_to_ips(hostname, ["93.184.216.34"]):
         with pytest.raises(socket.gaierror):
             socket.getaddrinfo(host, 443)
 
@@ -582,8 +630,8 @@ def test_the_pin_matches_the_host_shape_httpcore_really_passes(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", original)
 
     assert seen, "httpx did not reach socket.getaddrinfo; the pin's patch point moved"
-    keys = net_safety._resolver_host_keys("example.com")
-    assert net_safety._resolver_host_key(seen[0]) in keys
+    expected = net_safety._canonical_hostname("example.com")
+    assert net_safety._canonical_hostname(seen[0]) == expected
 
 
 # -- The total fetch deadline ------------------------------------------------

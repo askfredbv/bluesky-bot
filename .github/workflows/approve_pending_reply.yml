@@ -4,9 +4,9 @@ name: Approve Pending Proactive Reply
 # proactive-reply pipeline that ever posts to Bluesky. Fired manually
 # via the Actions UI (workflow_dispatch only — no schedule).
 #
-# Defaults are deliberately the safest choice: action=reject, reason=manual.
-# A user clicking "Run workflow" without changing anything just rejects
-# the oldest pending draft.
+# The safe action remains the default: action=reject, reason=manual. Every run
+# requires an exact draft UUID; posting additionally requires the digest shown
+# with the reviewed pending entry.
 #
 # Kill-switch: disable this workflow in the Actions UI to make Phase 4b
 # strictly read-only (drafts continue to stage; nothing posts).
@@ -15,9 +15,12 @@ on:
   workflow_dispatch:
     inputs:
       draft_id:
-        description: 'Draft UUID, or "first" for the oldest pending draft'
+        description: 'Exact UUID of the reviewed pending draft'
         required: true
-        default: 'first'
+        type: string
+      approval_digest:
+        description: 'Required for approve: SHA-256 shown with the reviewed draft'
+        required: false
         type: string
       action:
         description: 'approve = posts to Bluesky; reject = moves to rejected'
@@ -74,6 +77,7 @@ jobs:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
           DRAFT_ID: ${{ inputs.draft_id }}
+          APPROVAL_DIGEST: ${{ inputs.approval_digest }}
           ACTION: ${{ inputs.action }}
           REJECT_REASON: ${{ inputs.reject_reason }}
         run: python -m scripts.run_proactive_approve
