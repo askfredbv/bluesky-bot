@@ -9,6 +9,7 @@ imports nothing from src.utils.
 """
 import asyncio
 import calendar
+import heapq
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ import httpx
 from src.config import (
     CONSENSUS_SYNERGY_BONUS,
     FEED_FETCH_CONCURRENCY,
+    FEED_MAX_ACCEPTED_ENTRIES_PER_FEED,
     FEED_MAX_CONNECTIONS,
     FEED_MAX_KEEPALIVE_CONNECTIONS,
     FEED_REQUEST_CONNECT_TIMEOUT_SECONDS,
@@ -451,9 +453,11 @@ async def fetch_single_feed(
     """Fetch and normalise one RSS feed; return a structured outcome.
 
     The `ok` flag reflects whether the HTTP request succeeded (i.e. no
-    transport error). Parse failures flip `ok=False` via the bozo path;
-    a feed that responds but has zero entries is `ok=True` with both
-    `entries_total` and `entries_accepted` at zero.
+    transport error). Bozo parse warnings retain `ok=True` and set
+    `error_type`; a feed that responds but has zero entries is `ok=True` with both
+    `entries_total` and `entries_accepted` at zero. Oversized feeds retain
+    their raw `entries_total`, but return only the newest
+    `FEED_MAX_ACCEPTED_ENTRIES_PER_FEED` eligible entries.
     """
     try:
         # SSRF guard: feeds go through the same public-IP validation, DNS
@@ -528,6 +532,20 @@ async def fetch_single_feed(
                 "pub_date": pub_date,
                 "source_feeds": [url],
             })
+        if len(items) > FEED_MAX_ACCEPTED_ENTRIES_PER_FEED:
+            eligible_entries = len(items)
+            items = heapq.nlargest(
+                FEED_MAX_ACCEPTED_ENTRIES_PER_FEED,
+                items,
+                key=lambda item: item["pub_date"],
+            )
+            SafeLogger.warn(
+                "feed_entries_capped",
+                "Feed returned more eligible entries than the processing limit",
+                url=url,
+                eligible_entries=eligible_entries,
+                accepted_limit=FEED_MAX_ACCEPTED_ENTRIES_PER_FEED,
+            )
         # Request succeeded; bozo-parse still counts as ok=True for feed
         # health because the fetch itself worked — bozo is a soft signal
         # and often transient (malformed <br> tags etc.).

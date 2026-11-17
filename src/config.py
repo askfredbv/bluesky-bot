@@ -251,6 +251,11 @@ FEED_REQUEST_WRITE_TIMEOUT_SECONDS: float = 10.0
 FEED_REQUEST_POOL_TIMEOUT_SECONDS: float = 10.0
 FEED_MAX_CONNECTIONS: int = 20
 FEED_MAX_KEEPALIVE_CONNECTIONS: int = 10
+# Consensus clustering compares every accepted item with the combined feed pool.
+# Bound each untrusted response before it reaches that quadratic step. Fifty is
+# well above the normal per-feed contribution while still preserving a feed's
+# newest two-day candidates when an origin returns an oversized backlog.
+FEED_MAX_ACCEPTED_ENTRIES_PER_FEED: int = 50
 
 # Metadata Fetch Domain Policy
 # If allowlist is empty, all public domains are allowed unless explicitly denied.
