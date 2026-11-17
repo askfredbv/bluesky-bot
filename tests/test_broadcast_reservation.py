@@ -966,20 +966,17 @@ def _live_write(monkeypatch, *, state, gist_status):
     return saved
 
 
-def test_an_uncertain_settlement_is_written_over_a_gist_that_went_corrupt(monkeypatch):
-    """The repost window #201 describes, end to end.
+def test_an_uncertain_settlement_does_not_replace_a_corrupt_gist(monkeypatch):
+    """A lower tier is not a replica of the Gist that accepted the reservation.
 
-    `reserve_broadcast` refuses outright on corruption, so the Gist was
-    parseable when the claim was verified — and `save_seen_articles` stops at
-    the first tier that accepts, so a Gist-tier claim exists nowhere else. The
-    Gist then goes corrupt, and every read falls straight past it to a store
-    snapshot that never held the claim. If `require_gist_read` withholds the
-    settlement as well, NOTHING suppresses the story: the next run can select
-    and post it although a platform may already have taken it.
+    Promoting its older snapshot would erase unrelated seen links and cooldowns.
+    The failed settlement is safe because later reservations also reject the
+    corrupt Gist, keeping publication halted until the authoritative state is
+    repaired.
     """
+    events = _events(monkeypatch)
     saved = _live_write(
         monkeypatch,
-        # What a reader now gets: the older store snapshot, no claim in it.
         state={"links": [], "recent_topics": [], "pending_broadcast": []},
         gist_status=state_store.GIST_READ_CORRUPT,
     )
@@ -988,13 +985,13 @@ def test_an_uncertain_settlement_is_written_over_a_gist_that_went_corrupt(monkey
         "https://a.example.com/x", delivered=False, attempted=True
     )
 
-    assert len(saved) == 1
-    assert state_store.reserved_links(saved[-1]) == ["https://a.example.com/x"]
+    assert saved == []
+    assert "broadcast_settlement_failed" in events
 
 
-def test_a_delivered_settlement_is_also_written_over_a_corrupt_gist(monkeypatch):
-    """The other suppressing outcome, same reasoning: the `links` entry is what
-    keeps the next run off a story that is already live."""
+def test_a_delivered_settlement_does_not_replace_a_corrupt_gist(monkeypatch):
+    """A confirmed delivery cannot promote a stale lower-tier snapshot either."""
+    events = _events(monkeypatch)
     saved = _live_write(
         monkeypatch,
         state={"links": [], "recent_topics": [], "pending_broadcast": []},
@@ -1003,18 +1000,12 @@ def test_a_delivered_settlement_is_also_written_over_a_corrupt_gist(monkeypatch)
 
     state_store.settle_broadcast("https://a.example.com/x", delivered=True)
 
-    assert saved[-1]["links"] == ["https://a.example.com/x"]
+    assert saved == []
+    assert "broadcast_settlement_failed" in events
 
 
-def test_an_uncertain_settlement_still_refuses_an_unreachable_gist(monkeypatch):
-    """The asymmetry, at the settlement end.
-
-    An unreachable Gist probably still holds the pending claim, which suppresses
-    the story the moment it answers again — so the fail-safe reading holds, and
-    writing a store-derived snapshot over it would erase the claim doing the
-    work. Missing the write is the cheaper failure here; under corruption it is
-    not.
-    """
+def test_an_uncertain_settlement_refuses_an_unreachable_gist(monkeypatch):
+    """An unreachable Gist may hold newer state, so settlement remains fail-closed."""
     saved = _live_write(
         monkeypatch,
         state={"links": [], "recent_topics": [], "pending_broadcast": []},
@@ -1068,31 +1059,17 @@ def _sole_gist(monkeypatch, tmp_path, gist_status):
 
 
 def test_a_sole_gist_corrupt_read_cannot_settle_and_says_so(monkeypatch, tmp_path):
-    """Where `corrupt_gist_is_inert` does NOT reach, pinned (Codex on #218).
-
-    With the Gist as the only tier, a corrupt one leaves no state anywhere: the
-    read returns the empty default with `trusted=False`, and the untrusted guard
-    returns before the corrupt branch. So the suppressing write is refused in
-    production's own configuration, and the generic "it stays pending" reading
-    of that is wrong — the claim is sitting in unparseable content.
-
-    Writing anyway is the alternative, and it is the worse trade: with no lower
-    tier there is nothing to derive state FROM, so the write would store the
-    empty default and hand the next run a parseable Gist with no memory,
-    resuming posting at once. One possibly-live story would become every story
-    still inside the feed window. Hence the dedicated ERROR rather than a
-    bypass.
-    """
+    """With no fallback, corruption yields an untrusted default and no write."""
     saved = _sole_gist(monkeypatch, tmp_path, state_store.GIST_READ_CORRUPT)
-    levelled = _levelled_events(monkeypatch)
+    events = _events(monkeypatch)
 
     state_store.settle_broadcast(
         "https://a.example.com/x", delivered=False, attempted=True
     )
 
     assert saved == []
-    assert ("error", "seen_articles_suppressing_write_unstorable") in levelled
-    assert ("error", "broadcast_settlement_failed") in levelled
+    assert "seen_articles_update_skipped" in events
+    assert "broadcast_settlement_failed" in events
 
 
 def test_nothing_can_be_reserved_while_the_only_state_tier_is_unreadable(monkeypatch, tmp_path):
@@ -1818,30 +1795,8 @@ def test_a_corrupt_gist_also_blocks_a_reservation_write(monkeypatch):
     assert saved == []
 
 
-def _levelled_events(monkeypatch):
-    """Event names WITH their level, which `_events` folds away.
-
-    Needed because the corrupt-Gist overwrite has one event name rather than a
-    pair, so the level is the only thing that says whether it is loud.
-    """
-    seen = []
-    for level in ("info", "warn", "error"):
-        monkeypatch.setattr(
-            state_store.SafeLogger,
-            level,
-            lambda event, *a, _lvl=level, **k: seen.append((_lvl, event)),
-        )
-    return seen
-
-
-def test_a_corrupt_gist_is_written_over_when_the_caller_vouches_for_it(monkeypatch):
-    """The one status whose premise the guard gets wrong (#201).
-
-    Reads fall straight past unparseable content, so the entries the guard is
-    protecting are entries nothing can return — and withholding a SUPPRESSING
-    write on their behalf leaves nothing suppressing the story at all.
-    """
-    levelled = _levelled_events(monkeypatch)
+def test_a_corrupt_gist_blocks_a_bookkeeping_write(monkeypatch):
+    """Even a trusted fallback cannot replace the corrupt authoritative tier."""
     monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
     saved = []
     monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
@@ -1851,20 +1806,14 @@ def test_a_corrupt_gist_is_written_over_when_the_caller_vouches_for_it(monkeypat
         lambda: ({"links": ["a"], "recent_topics": []}, True, state_store.GIST_READ_CORRUPT),
     )
 
-    _state_out, tier = state_store.update_seen_articles_checked(
-        lambda c: c, require_gist_read=True, corrupt_gist_is_inert=True
-    )
+    _state_out, tier = state_store.update_seen_articles_checked(lambda c: c)
 
-    assert tier == "gist"
-    assert len(saved) == 1
-    # Loud, although the write worked: the Gist was corrupt, and this write has
-    # just replaced whatever it held.
-    assert ("error", "seen_articles_update_over_corrupt_gist") in levelled
+    assert tier is None
+    assert saved == []
 
 
-def test_an_unreachable_gist_blocks_the_write_even_for_an_inert_caller(monkeypatch):
-    """What keeps the two statuses apart: UNREACHABLE content is unknown, not
-    known to be unusable, and it answers reads again the moment it is back."""
+def test_an_unreachable_gist_blocks_a_required_write(monkeypatch):
+    """UNREACHABLE content is unknown and answers first again when it recovers."""
     monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
     saved = []
     monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
@@ -1875,21 +1824,15 @@ def test_an_unreachable_gist_blocks_the_write_even_for_an_inert_caller(monkeypat
     )
 
     _state_out, tier = state_store.update_seen_articles_checked(
-        lambda c: c, require_gist_read=True, corrupt_gist_is_inert=True
+        lambda c: c, require_gist_read=True
     )
 
     assert tier is None
     assert saved == []
 
 
-def test_an_untrusted_read_blocks_the_write_whatever_the_caller_vouches_for(monkeypatch):
-    """The inert flag narrows the GIST guard only. An untrusted read means no
-    tier supplied real state, so the mutator is handed the empty default and the
-    write would replace every seen link, recent topic and Pioneer cooldown with
-    nothing — the older and larger hole, and still closed.
-
-    Not a corner case: it is production's own configuration, pinned end to end
-    in `test_a_sole_gist_corrupt_read_cannot_settle_and_says_so` below."""
+def test_an_untrusted_read_blocks_a_required_write(monkeypatch):
+    """No tier supplied state, so the empty default must never be persisted."""
     monkeypatch.setattr(state_store, "_file_lock", lambda path: _NullLock())
     saved = []
     monkeypatch.setattr(state_store, "save_seen_articles", lambda d: saved.append(d) or "gist")
@@ -1900,7 +1843,7 @@ def test_an_untrusted_read_blocks_the_write_whatever_the_caller_vouches_for(monk
     )
 
     _state_out, tier = state_store.update_seen_articles_checked(
-        lambda c: c, require_gist_read=True, corrupt_gist_is_inert=True
+        lambda c: c, require_gist_read=True
     )
 
     assert tier is None
@@ -1975,48 +1918,6 @@ def test_the_three_reservation_entry_points_require_the_gist_read(monkeypatch):
     state_store.settle_broadcast("https://a.example.com/x", delivered=True)
 
     assert seen == [True, True, True]
-
-def test_only_the_suppressing_settlement_may_write_over_a_corrupt_gist(monkeypatch):
-    """Which callers set `corrupt_gist_is_inert`, pinned as a set (#201).
-
-    This is the whole of the fix at the call-site level: the two suppressing
-    settlement outcomes may overwrite corrupt content, the reservation and both
-    releases may not.
-    """
-    seen = []
-
-    def _fake(mutator, **kw):
-        seen.append(kw.get("corrupt_gist_is_inert", False))
-        return mutator({"links": [], "recent_topics": [], "pending_broadcast": []}), "gist"
-
-    monkeypatch.setenv("GIST_ID", "abc123")
-    monkeypatch.setattr(state_store, "update_seen_articles_checked", _fake)
-    monkeypatch.setattr(
-        state_store,
-        "load_seen_articles_sourced",
-        lambda: (
-            {
-                "links": [],
-                "recent_topics": [],
-                "pending_broadcast": [
-                    {"link": "https://a.example.com/x", "stage": "pending"}
-                ],
-            },
-            True,
-            state_store.GIST_READ_OK,
-        ),
-    )
-    link = "https://a.example.com/x"
-
-    state_store.reserve_broadcast(link)
-    state_store._release_claim(link, reason="test")
-    state_store.settle_broadcast(link, delivered=True)
-    state_store.settle_broadcast(link, delivered=False, attempted=True)
-    state_store.settle_broadcast(link, delivered=False, attempted=False)
-
-    assert seen == [False, False, True, True, False]
-
-
 
 class _Resp:
     def __init__(self, payload):
@@ -2116,6 +2017,23 @@ def test_corrupt_gist_content_is_reported_as_corrupt_not_unreachable(monkeypatch
         state_store,
         "_load_gist_state_checked",
         lambda _f: (None, state_store.GIST_READ_CORRUPT),
+    )
+    monkeypatch.setattr(
+        state_store, "_load_state_from_store", lambda _k: {"links": [], "recent_topics": []}
+    )
+
+    _state_out, trusted, gist_status = state_store.load_seen_articles_sourced()
+
+    assert trusted is True
+    assert gist_status == state_store.GIST_READ_CORRUPT
+
+
+def test_parseable_invalid_gist_state_is_also_reported_as_corrupt(monkeypatch):
+    """Valid JSON cannot bypass the corrupt-state guard with an invalid shape."""
+    monkeypatch.setattr(
+        state_store,
+        "_load_gist_state_checked",
+        lambda _f: ({"links": []}, state_store.GIST_READ_OK),
     )
     monkeypatch.setattr(
         state_store, "_load_state_from_store", lambda _k: {"links": [], "recent_topics": []}
