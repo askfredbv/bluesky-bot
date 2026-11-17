@@ -39,4 +39,16 @@ def test_writer_preserves_freshness_and_reporting_path():
     assert "AUDITED_REVISION" in writer
     assert "steps.freshness.outputs.current == 'true'" in writer
     assert "GH_TOKEN: ${{ github.token }}" in writer
-    assert "python -m scripts.report_dependency_audit audit.json" in writer
+    assert ('python -m scripts.report_dependency_audit '
+            '"$RUNNER_TEMP/dependency-audit/audit.json"') in writer
+
+
+def test_audit_artifact_cannot_land_in_the_workspace():
+    """The artifact comes from a job that ran PyPI code; extracted into the
+    workspace it could overwrite the reporter that then runs with GH_TOKEN."""
+    writer = _job("dependency-audit-issue")
+    download = writer[writer.index("Download dependency audit report"):
+                      writer.index("Confirm audit still matches main")]
+
+    assert "path: ${{ runner.temp }}/dependency-audit" in download
+    assert "github.workspace" not in download
