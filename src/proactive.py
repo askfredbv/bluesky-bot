@@ -27,8 +27,10 @@ Each ``draft`` has the shape:
       "approval_digest":   "<sha256>"          # exact reviewed pending tuple
     }
 
-``posted`` entries gain ``posted_at`` and ``posted_uri``; ``rejected``
-entries gain ``rejected_at`` and ``rejected_reason``.
+Before a reply can be sent, its pending entry temporarily gains
+``posting_intent_at``. ``posted`` entries gain ``posted_at`` and
+``posted_uri``; ``rejected`` entries gain ``rejected_at`` and
+``rejected_reason``.
 
 Storage strategy mirrors ``src/bluesky_session.py``: Gist-only, no local
 fallback. If Gist I/O fails, the worst case is one missed reply
@@ -60,6 +62,7 @@ from src.state_store import _load_gist_state_strict, _save_gist_state
 _PENDING_REPLIES_FILENAME = "pending_replies.json"
 _APPROVAL_DIGEST_SCHEMA = "proactive-approval-v1"
 _APPROVAL_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_POSTING_INTENT_FIELD = "posting_intent_at"
 _DIGESTED_DRAFT_FIELDS = (
     "id",
     "platform",
@@ -655,6 +658,9 @@ async def approve_draft(
       - Requires the re-fetched parent URI, CID, author, and text to equal the
         reviewed snapshot. An edit invalidates approval instead of silently
         substituting fresh parent state.
+      - Persists a posting intent immediately before sending. A retry that
+        reloads that intent refuses another send, even when the final
+        pending-to-posted save failed after Bluesky accepted the first reply.
       - Top-level parents only (filter rule), so ``root == parent`` in
         the reply ref.
     """
@@ -691,6 +697,15 @@ async def approve_draft(
         )
         return None
     draft = matches[0]
+
+    if _POSTING_INTENT_FIELD in draft:
+        SafeLogger.error(
+            "proactive_approve_posting_already_started",
+            "Draft has a durable posting intent; refusing another send",
+            draft_id=draft_id,
+            posting_intent_at=str(draft.get(_POSTING_INTENT_FIELD, ""))[:100],
+        )
+        return None
 
     schema_error = _pending_draft_schema_error(draft)
     if schema_error is not None:
@@ -804,6 +819,20 @@ async def approve_draft(
         "root":   {"cid": parent_cid, "uri": fresh_parent_uri},
     }
 
+    # Close the post/save commit gap before making the outward action. If the
+    # final pending-to-posted save fails, this durable marker remains in the
+    # authoritative Gist and the guard above makes an operator retry fail
+    # closed instead of sending the same approved reply twice.
+    draft[_POSTING_INTENT_FIELD] = now.isoformat()
+    if not save_pending_replies(state):
+        draft.pop(_POSTING_INTENT_FIELD, None)
+        SafeLogger.error(
+            "proactive_approve_posting_intent_save_failed",
+            "Posting intent did not persist; refusing to send the reply",
+            draft_id=draft_id,
+        )
+        return None
+
     try:
         posted = await bsky_client.send_post(
             text=draft["draft_reply"],
@@ -818,6 +847,7 @@ async def approve_draft(
             error_type=type(e).__name__,
             error_msg=str(e)[:200],
         )
+        draft.pop(_POSTING_INTENT_FIELD, None)
         _move_to_rejected(draft, state, now, reason)
         return None
 
@@ -827,6 +857,7 @@ async def approve_draft(
     except ValueError:
         pass
     posted_entry = dict(draft)
+    posted_entry.pop(_POSTING_INTENT_FIELD, None)
     posted_entry["posted_at"] = now.isoformat()
     posted_entry["posted_uri"] = posted_uri
     state.setdefault("posted", []).append(posted_entry)

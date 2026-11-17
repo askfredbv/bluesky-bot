@@ -197,13 +197,8 @@ async def test_state_save_failure_returns_1(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatch):
-    """Approve POSTS, then save fails → exit 1 with a distinct posted-but-not-
-    persisted incident carrying posted_uri + do-not-rerun (Codex finding #2).
-
-    The reply is live but the remote Gist still shows it pending, so a rerun
-    would double-post. The log must make that recoverable, not look like a
-    generic save failure."""
+async def test_approve_posted_but_final_save_fails_logs_reconciliation_warning(monkeypatch):
+    """A post-success save failure reports the URI needed to reconcile state."""
     _stub_creds(monkeypatch)
     monkeypatch.setenv("ACTION", "approve")
 
@@ -238,8 +233,21 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
         return posted
     monkeypatch.setattr(proactive, "approve_draft", _fake_approve)
 
-    # Save fails AFTER the post.
-    monkeypatch.setattr(proactive, "save_pending_replies", lambda _s: False)
+    save_observations = []
+
+    def save_pending_replies(current_state):
+        save_observations.append({
+            "has_intent": bool(
+                current_state["pending"]
+                and "posting_intent_at" in current_state["pending"][0]
+            ),
+            "posted": len(current_state["posted"]),
+        })
+        return False
+
+    # approve_draft owns the posting-intent save; this runner test isolates the
+    # post-success save and its recovery log by stubbing that helper.
+    monkeypatch.setattr(proactive, "save_pending_replies", save_pending_replies)
 
     events = []
     monkeypatch.setattr(
@@ -256,6 +264,7 @@ async def test_approve_posted_but_save_fails_logs_double_post_warning(monkeypatc
     fields = next(f for e, f in events if e == "proactive_posted_but_not_persisted")
     assert fields["posted_uri"] == "at://did:plc:askfred/app.bsky.feed.post/live"
     assert fields["draft_id"] == real_uuid
+    assert save_observations == [{"has_intent": False, "posted": 1}]
 
 
 @pytest.mark.asyncio

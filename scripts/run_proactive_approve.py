@@ -9,8 +9,8 @@ Triggered manually via ``.github/workflows/approve_pending_reply.yml``
   - ``REJECT_REASON``: optional free-text reason when ``ACTION=reject``
 
 Approve path: re-fetch the parent post via Bluesky (defensive against
-deletion between scan and approval) → post the staged draft as a reply
-→ move the entry from ``pending`` to ``posted``.
+deletion between scan and approval) → persist a posting intent → post the
+staged draft as a reply → move the entry from ``pending`` to ``posted``.
 
 Reject path: move from ``pending`` to ``rejected`` with the supplied
 reason. No network calls.
@@ -137,12 +137,13 @@ async def _run() -> int:
     if not saved:
         # An approve that already POSTED but failed to persist is the
         # dangerous case (Codex review 2026-06-12, finding #2): the reply is
-        # live on Bluesky, but the remote Gist still shows the draft in
-        # `pending`, so a human re-running approval would post it a SECOND
-        # time. Surface that as a distinct, loud incident with the recovery
-        # data and an explicit do-not-rerun instruction. A reject (or a
-        # failed approve that never posted) carries no double-post risk, so
-        # it gets the generic save-failure log.
+        # live on Bluesky, while the last confirmed remote state is its
+        # pre-send posting intent. That intent (or a final write that committed
+        # despite a lost response) makes a re-run fail closed, but the operator
+        # still needs the URI to reconcile the entry into `posted`.
+        # Surface that as a distinct, loud incident with the recovery data.
+        # A reject (or a failed approve that never posted) gets the generic
+        # save-failure log.
         # Narrowed once, visibly: result is None when no draft matched.
         posted_entry = result if isinstance(result, dict) else {}
         posted_uri = posted_entry.get("posted_uri")
@@ -152,9 +153,9 @@ async def _run() -> int:
             # needs that id to edit the right entry.
             SafeLogger.error(
                 "proactive_posted_but_not_persisted",
-                "Reply WAS POSTED but state did not persist — DO NOT re-run "
-                "approval until pending_replies.json is repaired, or the reply "
-                "will double-post",
+                "Reply WAS POSTED but final state did not persist — the durable "
+                "pre-send state blocks a re-send; reconcile pending_replies.json "
+                "before retrying",
                 draft_id=posted_entry.get("id", draft_id),
                 posted_uri=posted_uri,
                 parent_author=posted_entry.get("parent_author", ""),

@@ -6,6 +6,7 @@
   - Commit 5: approve / reject / find_draft_in_pending in ``src/proactive.py``
 """
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -1102,18 +1103,28 @@ def test_reject_unknown_id_returns_none_and_no_mutation():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_approve_happy_path_posts_and_moves_to_posted():
+async def test_approve_happy_path_posts_and_moves_to_posted(monkeypatch):
     """Re-fetch succeeds, send_post succeeds → move to posted with posted_uri."""
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    persisted_states = []
+
+    def persist_state(current_state):
+        persisted_states.append(deepcopy(current_state))
+        return True
+
+    monkeypatch.setattr(proactive, "save_pending_replies", persist_state)
 
     result = await proactive.approve_draft(
         "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
     )
 
     assert result is not None
+    assert len(persisted_states) == 1
+    assert persisted_states[0]["pending"][0]["posting_intent_at"] == _NOW.isoformat()
     assert state["pending"] == []
     assert len(state["posted"]) == 1
+    assert "posting_intent_at" not in state["posted"][0]
     assert state["posted"][0]["posted_at"] == _NOW.isoformat()
     assert state["posted"][0]["posted_uri"] == "at://did:plc:askfred/app.bsky.feed.post/newreply"
     # send_post called with the draft text + correct reply_ref shape
@@ -1127,7 +1138,69 @@ async def test_approve_happy_path_posts_and_moves_to_posted():
 
 
 @pytest.mark.asyncio
-async def test_approve_uses_matching_reviewed_parent_cid():
+async def test_approve_refuses_to_send_when_posting_intent_save_fails(monkeypatch):
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    persisted_states = []
+
+    def fail_save(current_state):
+        persisted_states.append(deepcopy(current_state))
+        return False
+
+    monkeypatch.setattr(proactive, "save_pending_replies", fail_save)
+
+    result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
+
+    assert result is None
+    assert persisted_states[0]["pending"][0]["posting_intent_at"] == _NOW.isoformat()
+    assert "posting_intent_at" not in state["pending"][0]
+    assert client.send_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_retry_after_final_save_failure_does_not_send_twice(monkeypatch):
+    state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
+    client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    durable_snapshots = []
+
+    def persist_intent(current_state):
+        durable_snapshots.append(deepcopy(current_state))
+        return True
+
+    monkeypatch.setattr(proactive, "save_pending_replies", persist_intent)
+
+    first_result = await proactive.approve_draft(
+        "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
+    )
+
+    assert first_result is not None
+    assert len(client.send_calls) == 1
+
+    # Simulate the runner's final pending-to-posted save failing: a new run
+    # reloads the last durable snapshot, which contains the posting intent.
+    reloaded_state = durable_snapshots[0]
+    retry_client = _FakeReplyClient(fetched_posts=[_fake_parent_view()])
+    retry_persist_calls = []
+    monkeypatch.setattr(
+        proactive,
+        "save_pending_replies",
+        lambda current_state: retry_persist_calls.append(current_state) or True,
+    )
+    retry_result = await proactive.approve_draft(
+        "abc", reloaded_state["pending"][0]["approval_digest"],
+        retry_client, reloaded_state, _NOW,
+    )
+
+    assert retry_result is None
+    assert retry_client.fetch_calls == []
+    assert retry_client.send_calls == []
+    assert retry_persist_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approve_uses_matching_reviewed_parent_cid(monkeypatch):
     """The parent ref uses the same CID that was staged, reviewed, and re-fetched."""
     state = {
         "pending": [_draft(draft_id="abc", cid="reviewed-cid")],
@@ -1135,6 +1208,7 @@ async def test_approve_uses_matching_reviewed_parent_cid():
         "rejected": [],
     }
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view(cid="reviewed-cid")])
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: True)
 
     await proactive.approve_draft(
         "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
@@ -1361,10 +1435,11 @@ async def test_approve_refetch_raises_rejects_with_descriptive_reason():
 
 
 @pytest.mark.asyncio
-async def test_approve_send_post_raises_rejects_with_descriptive_reason():
+async def test_approve_send_post_raises_rejects_with_descriptive_reason(monkeypatch):
     """send_post raises → reject with reason starting 'post_failed:'."""
     state = {"pending": [_draft(draft_id="abc")], "posted": [], "rejected": []}
     client = _FakeReplyClient(fetched_posts=[_fake_parent_view()], post_raises=True)
+    monkeypatch.setattr(proactive, "save_pending_replies", lambda _state: True)
 
     result = await proactive.approve_draft(
         "abc", state["pending"][0]["approval_digest"], client, state, _NOW,
