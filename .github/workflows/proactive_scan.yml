@@ -9,6 +9,9 @@ name: Proactive Reply Scan
 # generation entirely. Zero impact on daily_post.yml (the Curator/
 # Mentor pipeline) — they share no code path.
 #
+# Parked (2026-11-18): no PROACTIVE_REPLY_WATCHLIST secret is set, at repo or
+# environment level, so a scan stages nothing. Replies are Frederik's (#273).
+#
 # Recommended trigger time: ~10:00 UTC, between the morning Curator
 # and afternoon Mentor runs (times: daily_post.yml). Reads the
 # watchlist's fresh morning posts; runner stays cheap (~30s).
