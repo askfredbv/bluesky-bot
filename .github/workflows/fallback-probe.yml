@@ -1,11 +1,12 @@
 name: Fallback Probe (diagnostic)
 
-# Manual, read-only diagnostic. Simulates a total Gemini outage so the model
-# chain falls through to the Anthropic fallback, runs the real Curator prompt
-# against it, and applies the production validators to the result.
-# Posts nothing, changes nothing.
+# Manual, read-only diagnostic. Simulates a total outage of one provider so the
+# model chain falls through to the other, runs the real Curator prompt against
+# it, and applies the production validators to the result. Since Anthropic
+# became primary (#187) the default outage is Anthropic, so the Gemini rung is
+# the one exercised, and both keys are needed. Posts nothing, changes nothing.
 #
-# Why it exists: the fallback sits BELOW all four Gemini models, so in normal
+# Why it exists: the fallback rung sits below the primary, so in normal
 # operation it never runs. Nothing in a daily run tells you whether it still
 # works, and unit tests mock the SDK — they prove the dispatch is wired, not
 # that the key is live, the model id still exists, the request shape is still
@@ -48,5 +49,6 @@ jobs:
       - name: Probe the cross-provider fallback
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PROBE_RUNS: ${{ inputs.runs }}
         run: python -m scripts.probe_fallback
