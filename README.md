@@ -53,7 +53,7 @@ Two runs a day, 09:00 and 19:00 Belgian local time (UTC shifts with DST: winter 
 
 ### Environment Variables
 
-Add these as GitHub repo secrets (`Settings > Secrets and variables > Actions`):
+Add these as secrets of the `production` environment (`Settings > Environments > production`), not as repository secrets. That environment allows deployments from `main` only, so a workflow dispatched from any other branch never sees them. Every job that reads a secret declares `environment: production`, and `tests/test_workflow_environments.py` fails if a new one does not. A repository secret is readable from any branch, so keep none: it would undo the restriction (#287).
 
 | Secret | Required | Description |
 | :--- | :--- | :--- |
