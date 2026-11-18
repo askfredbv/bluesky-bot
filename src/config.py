@@ -578,7 +578,10 @@ RSS_FEEDS = [
     # Anthropic/Claude news now arrives via secondary feeds + cross-publisher
     # consensus until Anthropic republishes a feed. The feed-health alert
     # (check_feed_health_alerts) exists so the next silent feed death surfaces.
-    "https://the-decoder.com/feed/",
+    # 2026-11-18: the-decoder.com REMOVED on Frederik's call (#263). The feed answers
+    # 200 from outside but every fetch from the Actions runners times out since
+    # 2026-11-11: most likely a block on datacenter IPs, not a dead URL. Its SOURCE_TIERS entry
+    # stays, so its links arriving via other feeds still score 7.
     # 2026-09-10: deeplearning.ai The Batch REMOVED. /the-batch/rss/ returns 403
     # to the bot and 404 elsewhere, and no feed URL exists (/the-batch/feed/,
     # /the-batch/feed.xml, /the-batch/rss.xml, /feed/, /rss.xml all 404).
