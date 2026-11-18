@@ -1,5 +1,7 @@
 # Plan: Engagement — measure, observe, act, participate
 
+> **History, not direction (2026-11-18).** [`PLAN_2027.md`](PLAN_2027.md) wins. Since 2026-10-12 the primary model is `claude-sonnet-5-5`, and the replies are Frederik's (#273). Phase 4b is parked: no `PROACTIVE_REPLY_WATCHLIST` secret is set, so a scan stages nothing.
+
 > Phase 1 (capture) and Phase 4a (recon) are **shipped**; Phase 4b (proactive replies) is **code-complete but dormant**; Phases 2 (digest), 3 (scoring) and 4c (expansion) were already **parked**. Current primary model is **`gemini-3.7-flash`** — the `gemini-2.5-pro` below is historical.
 
 > **Read [`RETRO_2026-05-08.md`](RETRO_2026-05-08.md) before executing further on this plan.** The phase ordering below (capture → digest → act → participate) was followed through 2026-04 / 2026-05 and shipped a coherent Phase 1, but the retro documents why the implicit assumption ("an audience exists to engage with the content") was wrong from the start. Phase 4 (proactive replies) is the only path in this plan that creates an audience; running 1→2→3 before 4 measured a feed that had no readers. Question whether the plan's phase order still matches the project's goal before adding work on top.

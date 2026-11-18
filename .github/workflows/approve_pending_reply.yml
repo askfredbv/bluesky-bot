@@ -10,6 +10,9 @@ name: Approve Pending Proactive Reply
 #
 # Kill-switch: disable this workflow in the Actions UI to make Phase 4b
 # strictly read-only (drafts continue to stage; nothing posts).
+#
+# Parked (2026-11-18): no PROACTIVE_REPLY_WATCHLIST secret is set, at repo or
+# environment level, so a scan stages nothing. Replies are Frederik's (#273).
 
 on:
   workflow_dispatch:

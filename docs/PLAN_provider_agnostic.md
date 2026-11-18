@@ -1,5 +1,7 @@
 # Plan: Provider-agnostic AI platform — pick a flavour, and a failover
 
+> **History, not direction (2026-11-18).** [`PLAN_2027.md`](PLAN_2027.md) wins. Since this was written, Anthropic moved to primary: `ANTHROPIC_CHAIN_POSITION = "primary"` in `src/config.py`, live since 2026-10-12.
+
 > **Status — 2026-10-10. Planning only. Nothing here is built and nothing is scheduled.**
 > Agreed with Frederik on 2026-10-10 as a BHAG: the bot should let you choose which AI
 > platform writes it, plus a failover, and should *tell you what that choice costs you*.
