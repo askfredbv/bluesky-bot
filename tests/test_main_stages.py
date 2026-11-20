@@ -366,7 +366,7 @@ async def test_persistence_stage_updates_seen_articles(monkeypatch):
 @pytest.mark.asyncio
 async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
     calls = []
-    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="test-key", anthropic_api_key=None), platform=SimpleNamespace())
+    settings = SimpleNamespace(credentials=SimpleNamespace(gemini_api_key="test-key", anthropic_api_key=None, mastodon_access_token=None), platform=SimpleNamespace())
 
     async def fake_mode():
         calls.append("mode")
@@ -393,6 +393,7 @@ async def test_main_smoke_orchestrates_stage_pipeline(monkeypatch):
             chosen_topic="topic",
             thread_pause_profile="default",
             bsky_broadcast_client="client",
+            bsky_sent_uris=["at://post"],  # delivered, so the run ends green (#293)
         )
 
     async def fake_persistence(automation_payload):
