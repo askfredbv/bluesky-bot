@@ -359,8 +359,10 @@ TIME_DECAY_MIN_AGE_HOURS: float = 0.0
 # reserved seat instead of two. With floors of 1+2 and a gem cap of 2, every
 # shortlist that day was two arXiv papers, two OpenAI posts and ONE open slot,
 # and the one open slot went to the alarming Krebs story the grounding check
-# (#248) was built after. A paper still gets its seat by scoring well: the
-# keyword bonuses already lift most abstracts to 13-15 against 8-9 for news.
+# (#248) was built after. A paper still has to score its way onto the menu, and
+# since 2026-11-20 without the groundbreaking-keyword bonus: abstracts are
+# written in those words, so it lifted the best paper to 14.2 and to first place
+# on two mornings running.
 TIER1_SOURCE_SCORE: float = 10.0
 MIN_GEM_CANDIDATES: int = 0    # no reserved research seat: it must score its way in
 MAX_GEM_CANDIDATES: int = 1    # ... and at most one paper on the menu

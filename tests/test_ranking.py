@@ -32,6 +32,13 @@ def test_groundbreaking_boost():
     
     assert score_frontier > score_normal # The groundbreaking boost (+7) should beat the product boost (+5)
 
+def test_research_sources_get_no_groundbreaking_boost():
+    """Abstracts are written in the boost's words; a paper must not earn it (arXiv streak, 2026-11-20)."""
+    now = datetime.now(timezone.utc)
+    plain = {'title': 'A study', 'description': 'Results.', 'link': 'https://arxiv.org/abs/2611.00001'}
+    buzz = {'title': 'A Benchmark for Reasoning', 'description': 'SOTA scaling.', 'link': 'https://arxiv.org/abs/2611.00002'}
+    assert calculate_relevance_score(buzz, now, []) == pytest.approx(calculate_relevance_score(plain, now, []), abs=0.01)
+
 LLM_ITEM = {'title': 'LLM Scaling', 'description': 'GPT news.',
             'link': 'https://techcrunch.com/1'}
 
