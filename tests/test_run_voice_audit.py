@@ -55,3 +55,38 @@ def test_main_happy_path_emits_report_with_review_framing(monkeypatch, capsys):
     assert "verify" in out.lower()
     assert "not verdicts" in out.lower()
     assert "Post 1 holds the voice." in out
+
+
+def _fake_genai(monkeypatch, finish_reason):
+    from types import SimpleNamespace
+
+    from google import genai
+
+    seen = {}
+
+    class _Models:
+        def generate_content(self, model, contents, config):
+            seen["config"] = config
+            return SimpleNamespace(
+                text="Post 1 holds the voice.",
+                candidates=[SimpleNamespace(finish_reason=finish_reason)],
+            )
+
+    monkeypatch.setattr(genai, "Client", lambda api_key: SimpleNamespace(models=_Models()))
+    return seen
+
+
+def test_run_auditor_marks_a_report_cut_off_at_the_output_limit(monkeypatch):
+    """#297: a Pro model spent the 4096-token cap thinking and the issue body
+    stopped mid-sentence, looking like a finished audit."""
+    _fake_genai(monkeypatch, "FinishReason.MAX_TOKENS")
+    _, text = run_voice_audit._run_auditor("k", "task")
+    assert text.startswith("Post 1 holds the voice.")
+    assert "Cut off" in text
+
+
+def test_run_auditor_leaves_a_complete_report_alone_with_room_to_think(monkeypatch):
+    seen = _fake_genai(monkeypatch, "FinishReason.STOP")
+    _, text = run_voice_audit._run_auditor("k", "task")
+    assert text == "Post 1 holds the voice."
+    assert seen["config"]["max_output_tokens"] > 4096
