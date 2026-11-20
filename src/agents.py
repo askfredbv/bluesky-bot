@@ -2097,7 +2097,8 @@ async def generate_content(
                 )
                 retry_note = (
                     f"\n\nYOUR PREVIOUS DRAFT WAS REJECTED: {str(e)[:300]}\n"
-                    "Write a new draft that fixes this. Every other rule still applies."
+                    "Write a new draft that fixes this. Every other rule still applies, "
+                    "including the output format: return only the JSON, nothing around it."
                 )
                 if attempt < 1:
                     await asyncio.sleep(0.2 * (attempt + 1))
