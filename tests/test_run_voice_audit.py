@@ -1,4 +1,4 @@
-"""Tests for the monthly voice-audit entry point (scripts/run_voice_audit).
+"""Tests for the voice-audit entry point (scripts/run_voice_audit).
 
 Pure-logic + wiring only — no real API calls. The audit's value is human
 judgement on the report; here we just verify it builds the prompt, picks an
@@ -15,12 +15,14 @@ def test_build_task_numbers_posts_and_includes_prompt():
     assert "2. second post" in task
 
 
-def test_auditor_models_are_pro_tier_not_the_flash_writer():
-    """Independence guard: the auditor must differ from the gemini-3.5-flash
-    writer and be Pro-tier."""
+def test_auditor_models_are_not_the_writer():
+    """Independence guard: no auditor may be a model the bot writes with, and
+    none is a Flash or Lite tier."""
+    from src.config import GEMINI_MODEL_PRIORITY
+
     for m in run_voice_audit._AUDITOR_MODELS:
-        assert "flash" not in m            # not the writer's tier
-        assert "pro" in m                  # Pro-tier critic
+        assert m not in GEMINI_MODEL_PRIORITY
+        assert "flash" not in m and "lite" not in m
 
 
 def test_main_exits_zero_without_key(monkeypatch):
