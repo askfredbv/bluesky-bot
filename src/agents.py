@@ -1828,6 +1828,9 @@ async def generate_content(
                     "link": i.get("link"),
                     "score": round(i["score"], 1) if isinstance(i.get("score"), (int, float)) else None,
                     "topic": i.get("detected_topic"),
+                    # tier, product, momentum, groundbreaking, decay, cooldown,
+                    # consensus: what made the score (#264).
+                    "parts": i.get("score_parts"),
                 }
                 for i in news_items
             ],

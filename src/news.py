@@ -368,26 +368,30 @@ def select_candidates(ranked: List[Dict[str, Any]], limit: int) -> List[Dict[str
 
 def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_topics: List[str]) -> float:
     """Calculates a weighted 6-factor score (source tier, product signals, groundbreaking keywords, time decay, topic diversity, consensus synergy)."""
-    score = 0.0
+    # Each factor is kept apart and logged with the shortlist, so the size of a
+    # keyword bonus against the tier can be read from runs, not guessed (#264).
+    # Summed in this order, so the total is the same float as before.
+    parts: Dict[str, float] = {}
     text = f"{item['title']} {item['description']}".lower()
     
     # 1. Source Tier — guard against relative or malformed links
-    score += source_tier(item['link'])
+    parts['tier'] = source_tier(item['link'])
     
     # 2. Product Boost
-    if _keyword_hit(text, _PRODUCT_KEYWORD_RE): score += 5.0
+    parts['product'] = 5.0 if _keyword_hit(text, _PRODUCT_KEYWORD_RE) else 0.0
 
     # 2b. Momentum Product Boost — flagship 2026 models score higher than generic
     # product news. Still a plain substring test, deliberately: a momentum entry
     # is a version-qualified name ("gemini 4", "gpt-6") where matching inside a
     # longer string is the intent, and a separate test forbids bare words there.
-    if any(p in text for p in MOMENTUM_PRODUCTS): score += MOMENTUM_PRODUCT_BONUS
+    parts['momentum'] = MOMENTUM_PRODUCT_BONUS if any(p in text for p in MOMENTUM_PRODUCTS) else 0.0
 
     # 3. Groundbreaking Tech Boost — not for research sources: abstracts are
     # written in these words, so the best of ~150 daily papers always carried
     # the +7 and topped the menu (arXiv won 2026-11-19 and 11-20 at 14.2 vs <=11.7).
-    if not _is_gem(item['link']) and _keyword_hit(text, _GROUNDBREAKING_KEYWORD_RE):
-        score += 7.0
+    parts['groundbreaking'] = (
+        7.0 if not _is_gem(item['link']) and _keyword_hit(text, _GROUNDBREAKING_KEYWORD_RE) else 0.0
+    )
 
     # Measurement for the week after this lands: which keywords WOULD have
     # fired under the old substring rule but no longer do. Recorded on the item
@@ -405,7 +409,7 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # fetch_single_feed does not catch it — that only drops items too old.
     age_hours = (datetime.now(timezone.utc) - pub_date).total_seconds() / 3600
     age_hours = max(age_hours, TIME_DECAY_MIN_AGE_HOURS)
-    score -= min(age_hours * TIME_DECAY_PER_HOUR, TIME_DECAY_MAX)
+    parts['decay'] = -min(age_hours * TIME_DECAY_PER_HOUR, TIME_DECAY_MAX)
     
     # 5. Topic Repetition Cooldown
     item_topic = "General"
@@ -423,9 +427,10 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # replaced effectively did the latter, because the topic never left the
     # list). See TOPIC_REPEAT_PENALTY in config.py for the full history.
     window = recent_topics[-RECENT_TOPICS_WINDOW:] if recent_topics else []
+    parts['cooldown'] = 0.0
     for distance, topic in enumerate(reversed(window)):
         if topic == item_topic:
-            score -= TOPIC_REPEAT_PENALTY * (TOPIC_REPEAT_DECAY ** distance)
+            parts['cooldown'] = -TOPIC_REPEAT_PENALTY * (TOPIC_REPEAT_DECAY ** distance)
             break
 
     # 6. Consensus Synergy: reward stories covered by multiple independent
@@ -442,10 +447,17 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     publisher_count = item.get('cross_publisher_domains', 1)
     consensus_sources = min(max(feed_count, publisher_count),
                             _CROSS_PUBLISHER_MULTIPLIER_CAP + 1)
-    if consensus_sources > 1:
-        score += CONSENSUS_SYNERGY_BONUS * (consensus_sources - 1)
+    parts['consensus'] = (
+        CONSENSUS_SYNERGY_BONUS * (consensus_sources - 1) if consensus_sources > 1 else 0.0
+    )
 
     item['detected_topic'] = item_topic
+    item['score_parts'] = {k: round(v, 1) for k, v in parts.items()}
+    # A running total, not sum(): since Python 3.12 sum() compensates float
+    # rounding, which would move scores by ~1e-15 and could reorder a tie.
+    score = 0.0
+    for value in parts.values():
+        score += value
     return score
 async def fetch_single_feed(
     client: httpx.AsyncClient,

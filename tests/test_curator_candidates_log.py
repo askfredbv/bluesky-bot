@@ -39,9 +39,9 @@ async def test_a_curator_run_logs_every_item_it_offers_the_model(monkeypatch):
     await agents.generate_content("key", [], mode=Mode.CURATOR, news_items=_ITEMS)
     assert _candidates(events) == [{"count": 2, "candidates": [
         {"title": "We must pace the frontier", "link": "https://example.com/a",
-         "score": 12.3, "topic": "Policy/Society"},
+         "score": 12.3, "topic": "Policy/Society", "parts": None},
         {"title": "Altman tells staff OpenAI is open to slowing AI development",
-         "link": "https://example.com/b", "score": 9, "topic": "LLMs"},
+         "link": "https://example.com/b", "score": 9, "topic": "LLMs", "parts": None},
     ]}]
 
 
@@ -52,7 +52,7 @@ async def test_a_long_title_is_cut_and_a_missing_score_is_logged_as_none(monkeyp
     await agents.generate_content("key", [], mode=Mode.CURATOR, news_items=[item])
     (logged,) = _candidates(events)
     assert logged["candidates"] == [{"title": "x" * 120, "link": "https://example.com/c",
-                                     "score": None, "topic": None}]
+                                     "score": None, "topic": None, "parts": None}]
 
 
 @pytest.mark.asyncio
@@ -60,3 +60,15 @@ async def test_a_mentor_run_logs_no_candidates(monkeypatch):
     events = _capture(monkeypatch)
     await agents.generate_content("key", [], mode=Mode.MENTOR)
     assert _candidates(events) == []
+
+
+@pytest.mark.asyncio
+async def test_each_candidate_logs_what_made_its_score(monkeypatch):
+    # #264: the keyword bonuses against the tier can only be read if the parts are logged.
+    events = _capture(monkeypatch)
+    parts = {"tier": 7.0, "product": 5.0, "momentum": 0.0, "groundbreaking": 7.0,
+             "decay": -1.2, "cooldown": 0.0, "consensus": 0.0}
+    item = dict(_ITEMS[0], score_parts=parts)
+    await agents.generate_content("key", [], mode=Mode.CURATOR, news_items=[item])
+    (logged,) = _candidates(events)
+    assert logged["candidates"][0]["parts"] == parts

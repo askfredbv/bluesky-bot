@@ -292,3 +292,15 @@ def test_consensus_ignores_same_publisher_category_feeds():
 
     assert both_google == pytest.approx(one_google)          # same publisher: no bonus
     assert two_publishers == pytest.approx(one_google + CONSENSUS_SYNERGY_BONUS)
+
+
+def test_score_parts_name_every_factor_and_add_up_to_the_score():
+    # #264: the parts are logged with the shortlist; they must be the real score, not a guess.
+    item = {'title': 'OpenAI launches a frontier reasoning tool', 'description': 'Available now.',
+            'link': 'https://openai.com/x', 'cross_publisher_domains': 2}
+    score = calculate_relevance_score(item, datetime.now(timezone.utc) - timedelta(hours=10), ['LLMs'])
+    parts = item['score_parts']
+    assert list(parts) == ['tier', 'product', 'momentum', 'groundbreaking', 'decay', 'cooldown', 'consensus']
+    assert parts['product'] == 5.0 and parts['groundbreaking'] == 7.0
+    assert parts['decay'] < 0 and parts['consensus'] > 0
+    assert sum(parts.values()) == pytest.approx(score, abs=0.5)  # parts are rounded to 0.1
