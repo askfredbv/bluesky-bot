@@ -98,6 +98,13 @@ def _build_task(posts: list[str]) -> str:
     return _VOICE_AUDIT_PROMPT + numbered
 
 
+def _hit_output_limit(resp: object) -> bool:
+    """True when the model stopped because it ran out of output tokens."""
+    candidates = getattr(resp, "candidates", None) or []
+    reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+    return "MAX_TOKENS" in str(reason)
+
+
 def _run_auditor(api_key: str, task: str) -> tuple[str, str] | tuple[None, None]:
     """Call the first available Pro-tier auditor model. Returns (model, text)."""
     from google import genai
@@ -108,10 +115,17 @@ def _run_auditor(api_key: str, task: str) -> tuple[str, str] | tuple[None, None]
             resp = client.models.generate_content(
                 model=model,
                 contents=task,
-                config={"max_output_tokens": 4096},
+                # Pro models think, and thinking tokens count against this cap:
+                # at 4096 the 2026-11-20 audit (#297) stopped mid-report.
+                config={"max_output_tokens": 32768},
             )
             text = (resp.text or "").strip()
             if text:
+                if _hit_output_limit(resp):
+                    text += (
+                        "\n\n---\n\n**Cut off:** the auditor hit its output limit, "
+                        "so this report is incomplete."
+                    )
                 return model, text
         except Exception:
             continue
