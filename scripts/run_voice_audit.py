@@ -1,4 +1,4 @@
-"""Monthly voice-audit entry point — an independent critic, not an auto-fixer.
+"""Voice-audit entry point (run by hand) — an independent critic, not an auto-fixer.
 
 Pulls the bot's recent posts and asks a Pro-tier Gemini model (a DIFFERENT,
 more-capable model than the bot's own Flash-tier writer, for genuine
@@ -23,14 +23,15 @@ import os
 
 import httpx
 
-# Auditor models, newest-capable first. ALL are Pro-tier and DIFFERENT from
-# the bot's Flash-tier writer — the independence is the point. Tried in order;
-# the first that responds is used. 3.5-pro may not be GA to every key yet
-# (it was rolling out 2026-06), so 3.x Pro previews are the fallbacks.
+# Auditor models, tried in order; the first that responds is used. All are
+# Pro-class and none is in the writer's chain (GEMINI_MODEL_PRIORITY): the
+# independence is the point. Taken from the model-discovery run of 2026-11-18;
+# re-check there when one goes away. 3.1 Pro first so successive audits stay
+# comparable; 4 Carbon is Google's named successor to 3 Pro (output cap 32768).
 _AUDITOR_MODELS = [
-    "gemini-3.5-pro",
     "gemini-3.1-pro-preview",
-    "gemini-3-pro-preview",
+    "gemini-4-carbon",
+    "gemini-pro-latest",
 ]
 
 _POSTS_TO_AUDIT = 12

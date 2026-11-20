@@ -11,8 +11,8 @@ name: Voice Audit (on demand)
 # workflow stays as the lazy fallback: one click for a quick auto-issue when
 # you don't want to do the manual run. See docs/VOICE_AUDIT.md.
 #
-# The auditor is a Pro-tier model, different from the gemini-3.5-flash writer,
-# so the critic's blind spots differ from the author's.
+# The auditor is a Pro-class Gemini outside the writer's chain (Claude, then
+# the Gemini Flash fallbacks), so the critic's blind spots differ from the author's.
 
 on:
   workflow_dispatch:
