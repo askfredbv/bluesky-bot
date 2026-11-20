@@ -1,3 +1,5 @@
+import json
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -52,7 +54,31 @@ async def test_retry_tells_the_model_why_its_last_draft_failed(monkeypatch):
 
     assert content
     assert "REJECTED" not in tasks[0]
-    assert "YOUR PREVIOUS DRAFT WAS REJECTED: Post 0 is 310 chars, exceeds 300" in tasks[1]
+    assert "YOUR PREVIOUS DRAFT WAS REJECTED" in tasks[1]
+    # The reason sits inside a per-call boundary, never as a bare instruction.
+    assert re.search(r"<<<([0-9a-f]+)\nPost 0 is 310 chars, exceeds 300\n\1>>>", tasks[1])
+
+
+@pytest.mark.asyncio
+async def test_retry_reason_names_the_post_that_failed_not_post_0(monkeypatch):
+    """Codex on #303: with post 0 valid and post 1 failing, the reason was
+    post 0's "Success", so the retry was told it failed for "Success"."""
+    tasks = []
+    good = "This is a long enough primary post with #AI and enough detail to pass validation."
+
+    def _second_post_bad_then_ok(_api_key, _system_instr, task, _model, anthropic_api_key=None):
+        tasks.append(task)
+        if len(tasks) == 1:
+            return json.dumps([good, "Too short."])
+        return json.dumps([good])
+
+    monkeypatch.setattr("src.agents._sync_generate", _second_post_bad_then_ok)
+
+    content, _topic, _ = await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
+
+    assert content
+    assert "Success" not in tasks[1]
+    assert "YOUR PREVIOUS DRAFT WAS REJECTED" in tasks[1]
 
 
 @pytest.mark.asyncio
