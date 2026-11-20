@@ -63,7 +63,9 @@ async def test_bluesky_preflight_failure_still_runs_downstream_posting(monkeypat
     monkeypatch.setattr(main, "capture_post_metrics_stage", noop)
     monkeypatch.setattr(main, "capture_follower_snapshot_stage", noop)
 
-    await main.main()
+    # Bluesky got nothing, so the run now ends red (#293); the rest still ran.
+    with pytest.raises(SystemExit):
+        await main.main()
 
     assert calls["recent_posts"] == []
     # Both logins fail (FailingAsyncClient) → Bluesky is skipped, not attempted
@@ -118,7 +120,9 @@ async def test_bluesky_preflight_failure_uses_recent_posts_fallback_and_logs_err
     monkeypatch.setattr(main, "capture_follower_snapshot_stage", noop)
     monkeypatch.setattr(main.SafeLogger, "error", capture_error)
 
-    await main.main()
+    # Bluesky got nothing, so the run now ends red (#293); the rest still ran.
+    with pytest.raises(SystemExit):
+        await main.main()
 
     assert calls["recent_posts"] == []
     matching = [entry for entry in calls["error"] if entry[0] == "bluesky_preflight_failed"]
@@ -215,3 +219,68 @@ async def test_partial_broadcast_failure_keeps_successful_bluesky_client(monkeyp
     assert any(event == "broadcast_task_failed" and err_type == "RuntimeError" for event, err_type, _ in calls["errors"])
 
 
+
+
+def _payload(content, bsky, masto):
+    return main.BroadcastPayload(
+        mode="curator", seen_data={}, news_items=[], content_list=content,
+        chosen_topic="t", thread_pause_profile="default", bsky_broadcast_client=None,
+        bsky_sent_uris=bsky, mastodon_sent_ids=masto,
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "bsky", "masto", "mastodon_enabled", "expected"),
+    [
+        (["a"], ["at://1"], ["1"], True, []),                    # both delivered
+        (["a"], ["at://1"], [], True, ["mastodon"]),             # 2026-11-18: Mastodon 404
+        (["a", "b"], ["at://1", "at://2"], ["1"], True, ["mastodon"]),  # partial thread
+        (["a"], [], ["1"], True, ["bluesky"]),                   # Bluesky login failed
+        (["a"], [], [], True, ["bluesky", "mastodon"]),
+        (["a"], ["at://1"], [], False, []),                      # Mastodon not configured
+        ([], [], [], True, []),                                  # skipped run stays green
+    ],
+)
+def test_incomplete_platforms(content, bsky, masto, mastodon_enabled, expected):
+    assert main.incomplete_platforms(_payload(content, bsky, masto), mastodon_enabled) == expected
+
+
+@pytest.mark.asyncio
+async def test_main_exits_red_after_persisting_when_a_platform_misses(monkeypatch):
+    order = []
+    creds = SimpleNamespace(mastodon_access_token="tok", gemini_api_key="k", anthropic_api_key=None)
+    monkeypatch.setattr(main, "load_settings_or_exit", lambda: SimpleNamespace(credentials=creds))
+
+    async def fake_filter(*a, **k):
+        return ["m"]
+
+    async def fake_mode():
+        return SimpleNamespace(mode="curator")
+
+    async def fake_prep(*a, **k):
+        return None
+
+    async def fake_broadcast(*a, **k):
+        return _payload(["a"], ["at://1"], [])
+
+    async def fake_persist(*a, **k):
+        order.append("persisted")
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(main, "filter_available_models", fake_filter)
+    monkeypatch.setattr(main, "mode_selection_stage", fake_mode)
+    monkeypatch.setattr(main, "content_prep_stage", fake_prep)
+    monkeypatch.setattr(main, "broadcasting_stage", fake_broadcast)
+    monkeypatch.setattr(main, "build_automation_payload", lambda b: b)
+    monkeypatch.setattr(main, "persistence_stage", fake_persist)
+    monkeypatch.setattr(main, "capture_post_metrics_stage", noop)
+    monkeypatch.setattr(main, "capture_follower_snapshot_stage", noop)
+    monkeypatch.setattr(main.SafeLogger, "error", lambda event, *a, **f: order.append(event))
+
+    with pytest.raises(SystemExit) as exc:
+        await main.main()
+
+    assert exc.value.code == 1
+    assert order == ["persisted", "run_delivery_incomplete"]

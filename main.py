@@ -1068,6 +1068,21 @@ async def persistence_stage(automation: AutomationPayload) -> None:
     update_seen_articles(_apply)
 
 
+def incomplete_platforms(broadcast: BroadcastPayload, mastodon_enabled: bool) -> List[str]:
+    """The platforms that received fewer posts than the thread has.
+
+    Empty for a skipped run (no content), which stays green by design
+    (guardrail 3). Mastodon counts only when a token is configured.
+    """
+    wanted = len(broadcast.content_list)
+    if not wanted:
+        return []
+    sent = {"bluesky": len(broadcast.bsky_sent_uris)}
+    if mastodon_enabled:
+        sent["mastodon"] = len(broadcast.mastodon_sent_ids)
+    return [platform for platform, count in sent.items() if count < wanted]
+
+
 async def main():
     run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     SafeLogger.configure(run_id=run_id, platform="system")
@@ -1126,6 +1141,21 @@ async def main():
     # Frederik, not from a model. handle_interactions is parked, not deleted.
 
     SafeLogger.info("run_completed", "Intelligence cycle complete", mode=broadcast.mode, platform="system")
+
+    # A post that reached only part of its audience must not end green: on
+    # 2026-11-18 Mastodon 404'd every attempt, the run was green, and nobody
+    # knew until the feed was read (#293). Checked last, after the state write,
+    # so the story is recorded either way. Do NOT re-run a red run: it would
+    # generate and post a new post, on both platforms.
+    missing = incomplete_platforms(broadcast, bool(creds.mastodon_access_token))
+    if missing:
+        SafeLogger.error(
+            "run_delivery_incomplete",
+            "A platform did not receive the whole post; failing the run so it is seen. Do not re-run.",
+            platforms=missing,
+            posts=len(broadcast.content_list),
+        )
+        sys.exit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
