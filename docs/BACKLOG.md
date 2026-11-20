@@ -26,9 +26,10 @@ The four 2027 objectives, how each is measured, and the six guardrails are in
 
 Anything meant to be built is a GitHub issue, not a bullet here.
 
-- [#252](https://github.com/askfredbv/bluesky-bot/issues/252) — Curator grounding check: read the false-rejection rate (due 2026-11-19)
 - [#230](https://github.com/askfredbv/bluesky-bot/issues/230) — Read out the 19:00 Brussels afternoon-slot test (2026-11-24)
-- [#270](https://github.com/askfredbv/bluesky-bot/issues/270) — Stop repeating subjects (plan move 1; merge after the #230 readout)
+- [#293](https://github.com/askfredbv/bluesky-bot/issues/293) — Secrets now environment-only: live-verify every workflow that uses them
+- [#295](https://github.com/askfredbv/bluesky-bot/issues/295) — v4.33.0 and the loose ends from 2026-11-16
 - [#265](https://github.com/askfredbv/bluesky-bot/issues/265) — Pass an explicit mode on the scheduled dispatches
 - [#264](https://github.com/askfredbv/bluesky-bot/issues/264) — De-bias phase 2: bound the keyword magnitudes
 - [#269](https://github.com/askfredbv/bluesky-bot/issues/269) — Architecture direction: answer the five owner questions
+- [#255](https://github.com/askfredbv/bluesky-bot/issues/255) — Recheck Gemini Code Assist sunset impact before 2027-01-31
