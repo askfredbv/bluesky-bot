@@ -1940,12 +1940,17 @@ async def generate_content(
     # Rescue Pipeline: iterate models, retry content errors on same model.
     # model_priority is the pre-filtered list from filter_available_models;
     # falls back to GEMINI_MODEL_PRIORITY if not provided.
+    # The last rejection reason rides along on the next attempt, across models
+    # too: a blind retry just redrew. On 2026-11-20 Sonnet came back 310 then
+    # 311 chars; on 11-10 four models in a row repeated the claim the grounding
+    # check had just rejected. Every new draft still passes every check.
+    retry_note = ""
     for model in (model_priority or GEMINI_MODEL_PRIORITY):
         for attempt in range(2):
             response_text = ""  # bound before try so the except can see it
             try:
                 response_text = await asyncio.to_thread(
-                    _sync_generate, api_key, instr, user_task, model, anthropic_api_key
+                    _sync_generate, api_key, instr, user_task + retry_note, model, anthropic_api_key
                 )
                 clean_text = response_text.replace('```json', '').replace('```', '').strip()
                 parsed = json.loads(clean_text)
@@ -2089,6 +2094,10 @@ async def generate_content(
                     error_type=type(e).__name__,
                     error_msg=str(e)[:200],
                     response_text=response_text[:300] if response_text else "",
+                )
+                retry_note = (
+                    f"\n\nYOUR PREVIOUS DRAFT WAS REJECTED: {str(e)[:300]}\n"
+                    "Write a new draft that fixes this. Every other rule still applies."
                 )
                 if attempt < 1:
                     await asyncio.sleep(0.2 * (attempt + 1))

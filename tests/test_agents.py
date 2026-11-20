@@ -35,6 +35,27 @@ async def test_generate_content_returns_empty_when_all_models_fail(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_retry_tells_the_model_why_its_last_draft_failed(monkeypatch):
+    """A blind retry redrew: Sonnet came back 310 then 311 chars on 2026-11-20.
+    The next attempt (on the same model or the next one) carries the reason."""
+    tasks = []
+
+    def _too_long_then_ok(_api_key, _system_instr, task, _model, anthropic_api_key=None):
+        tasks.append(task)
+        if len(tasks) == 1:
+            return '["' + "x" * 310 + '"]'
+        return '["This is a long enough primary post with #AI and enough detail to pass validation."]'
+
+    monkeypatch.setattr("src.agents._sync_generate", _too_long_then_ok)
+
+    content, _topic, _ = await generate_content(api_key="fake-key", recent_posts=[], mode="mentor")
+
+    assert content
+    assert "REJECTED" not in tasks[0]
+    assert "YOUR PREVIOUS DRAFT WAS REJECTED: Post 0 is 310 chars, exceeds 300" in tasks[1]
+
+
+@pytest.mark.asyncio
 async def test_generate_content_includes_style_memory_constraints(monkeypatch):
     captured = {"prompt": ""}
 
