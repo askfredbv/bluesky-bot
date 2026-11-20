@@ -383,8 +383,11 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # longer string is the intent, and a separate test forbids bare words there.
     if any(p in text for p in MOMENTUM_PRODUCTS): score += MOMENTUM_PRODUCT_BONUS
 
-    # 3. Groundbreaking Tech Boost
-    if _keyword_hit(text, _GROUNDBREAKING_KEYWORD_RE): score += 7.0
+    # 3. Groundbreaking Tech Boost — not for research sources: abstracts are
+    # written in these words, so the best of ~150 daily papers always carried
+    # the +7 and topped the menu (arXiv won 2026-11-19 and 11-20 at 14.2 vs <=11.7).
+    if not _is_gem(item['link']) and _keyword_hit(text, _GROUNDBREAKING_KEYWORD_RE):
+        score += 7.0
 
     # Measurement for the week after this lands: which keywords WOULD have
     # fired under the old substring rule but no longer do. Recorded on the item
