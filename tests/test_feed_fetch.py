@@ -181,3 +181,41 @@ def test_fetch_single_feed_still_ok_on_2xx(monkeypatch):
                         lambda _: feedparser.FeedParserDict({"bozo": 0, "entries": []}))
     result = asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss"))
     assert result.ok is True
+
+
+def test_long_summary_is_kept_up_to_the_cap_and_marked_cut(monkeypatch):
+    """The writer gets up to FEED_SUMMARY_MAX_CHARS, and a cut is visible (#306)."""
+    feed = feedparser.FeedParserDict({"bozo": 0, "entries": [feedparser.FeedParserDict({
+        "title": "Long post",
+        "summary": "<p>" + "word " * 1000 + "</p>",
+        "link": "https://example.com/news/long",
+        "published_parsed": time.gmtime(),
+    })]})
+
+    async def _fake_safe_get(client, url, **kwargs):
+        return _safe_response()
+
+    monkeypatch.setattr(news, "get_with_safe_redirects", _fake_safe_get)
+    monkeypatch.setattr(news.feedparser, "parse", lambda _: feed)
+    description = asyncio.run(news.fetch_single_feed(object(), "https://example.com/rss")).entries[0]["description"]
+
+    assert len(description) == news.FEED_SUMMARY_MAX_CHARS
+    assert description.endswith("…")
+
+
+def test_scoring_reads_only_the_first_part_of_the_summary():
+    """A keyword past FEED_SUMMARY_SCORING_CHARS earns no bonus, so feeds that send
+    whole posts do not outscore feeds that send teasers (#264, #306)."""
+    from datetime import datetime, timezone
+
+    def item(description):
+        return {"title": "Plain title", "description": description, "link": "https://example.com/a"}
+
+    def bonus(description):
+        scored = item(description)
+        news.calculate_relevance_score(scored, datetime.now(timezone.utc), [])
+        return scored["score_parts"]["groundbreaking"]
+
+    filler = "x" * news.FEED_SUMMARY_SCORING_CHARS
+    assert bonus("a breakthrough " + filler) > 0
+    assert bonus(filler + " a breakthrough") == 0

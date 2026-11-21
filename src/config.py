@@ -168,7 +168,14 @@ MASTODON_TAGS_EXCLUDED: List[str] = [
     "ai", "tech", "technology", "technews", "news",
     "innovation", "thoughts", "future", "digital",
 ]
-FEED_SUMMARY_MAX_CHARS: int = 500
+# What the writer and the grounding check see of each feed summary. It was 500,
+# which cut Simon Willison's and LWN's feeds mid-sentence: on 2026-11-12 the
+# summary stopped at "OpenAI…" and two drafts filled the gap wrongly (#306).
+# Most feeds send under 500 anyway; at 5 items a run, 2000 costs ~2.5k tokens.
+FEED_SUMMARY_MAX_CHARS: int = 2000
+# Scoring keeps reading the first 500, so a feed that sends full posts does not
+# collect more keyword bonuses than one that sends a teaser (#264).
+FEED_SUMMARY_SCORING_CHARS: int = 500
 
 # State Files
 SEEN_FILE = Path("seen_articles.json")
@@ -1129,7 +1136,7 @@ You are sharing because you find it interesting. **You are not reporting on it.*
 DEFAULT TO ONE POST. A second post only if the story genuinely needs context the link won't carry. Three posts is rare and needs a real multi-part reason.
 
 TRUTH COMES FIRST. A post that says more than its source is worse than no post, and a separate check rejects it.
-- Every claim about the story (who did what, who is linked to whom, numbers, what happened) must be stated in the item text you are given. You have the feed summary, not the full article: do not fill its gaps with what is probably true. General background any practitioner would accept (how Git works, what a residential proxy is) is fine.
+- Every claim about the story (who did what, who is linked to whom, numbers, what happened) must be stated in the item text you are given. You have the feed summary, not the full article: do not fill its gaps with what is probably true. A summary ending in "…" was cut off there: do not finish its last sentence. General background any practitioner would accept (how Git works, what a residential proxy is) is fine.
 - Keep the source's certainty. If it says "appears", "alleged", "says" or "experts warned", keep that hedge or name who makes the claim. A report or an allegation never becomes a plain fact.
 - Do not shorten a chain of association into a direct link. "The founder's former hosting firm was used in the attacks" is not "the company is tied to the attacks".
 - Do not escalate. An IP address is not an identity, a vulnerability is not a breach, a claim is not a result.
