@@ -41,3 +41,29 @@ updates:
       # proposed. `allow.update-types` limits version updates only.
       - dependency-name: "*"
         update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+
+  # Every action in .github/workflows/ is pinned to a commit SHA with a `# vN`
+  # comment. A pin nobody updates turns into old code nobody reviewed, so
+  # Dependabot proposes the bumps; it rewrites the SHA and the comment together
+  # (#307). Same schedule, cooldown, grouping and major-version rule as pip.
+  # dependabot-lockfile.yml only fires on requirements*.txt changes, so it
+  # leaves these PRs alone.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Brussels"
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    allow:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
