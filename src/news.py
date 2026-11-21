@@ -29,6 +29,7 @@ from src.config import (
     FEED_REQUEST_READ_TIMEOUT_SECONDS,
     FEED_REQUEST_WRITE_TIMEOUT_SECONDS,
     FEED_SUMMARY_MAX_CHARS,
+    FEED_SUMMARY_SCORING_CHARS,
     GROUNDBREAKING_KEYWORDS,
     HIDDEN_GEM_SOURCES,
     MOMENTUM_PRODUCTS,
@@ -372,7 +373,7 @@ def calculate_relevance_score(item: Dict[str, Any], pub_date: datetime, recent_t
     # keyword bonus against the tier can be read from runs, not guessed (#264).
     # Summed in this order, so the total is the same float as before.
     parts: Dict[str, float] = {}
-    text = f"{item['title']} {item['description']}".lower()
+    text = f"{item['title']} {item['description'][:FEED_SUMMARY_SCORING_CHARS]}".lower()
     
     # 1. Source Tier — guard against relative or malformed links
     parts['tier'] = source_tier(item['link'])
@@ -539,7 +540,10 @@ async def fetch_single_feed(
                 continue
 
             summary = entry.get('summary', entry.get('description', ""))
-            clean_summary = re.sub('<[^<]+?>', '', summary)[:FEED_SUMMARY_MAX_CHARS]
+            clean_summary = re.sub('<[^<]+?>', '', summary)
+            if len(clean_summary) > FEED_SUMMARY_MAX_CHARS:
+                # Mark the cut, so the writer sees the text stops here rather than ends.
+                clean_summary = clean_summary[:FEED_SUMMARY_MAX_CHARS - 1] + "…"
             items.append({
                 "title": entry.title,
                 "description": clean_summary,
