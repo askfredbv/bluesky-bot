@@ -811,6 +811,16 @@ with open(_PIONEERS_FILE, encoding="utf-8") as _pf:
 PIONEER_EVENTS_DATED: List[Dict[str, object]] = _pioneers["dated"]
 PIONEER_FACTS_UNDATED: List[Dict[str, object]] = _pioneers["undated"]
 
+# The writer's half of the grounding check (#314). Without it 35 of 55 first drafts
+# failed the check, many on a year, name or cause from memory, and 9 entries skipped.
+_PIONEER_TRUTH_RULE: str = (
+    "- TRUE TO THE NOTE: a second model rejects any claim the note does not make. State only what is written\n"
+    "  above, however well you know the story: no year, number, first name, full name, place, cause, effect,\n"
+    "  quote, 'first' or 'still today' from memory, no explanation of how it worked, and no experience of\n"
+    "  your own. Keep its verbs and hedges (maintained is not wrote, early is not first, often is not mostly).\n"
+    "  If that makes a short post, write a short post.\n"
+)
+
 # Prompt templates filled in at runtime by agents.select_pioneer_topic + generate_content
 PIONEER_PROMPT_DATED: str = (
     "You're sharing an 'on this day' tech-history note. Today is the anniversary of:\n"
@@ -821,6 +831,7 @@ PIONEER_PROMPT_DATED: str = (
     "WRITE THE POST:\n"
     "- ONE single post. Open with 'On this day in {year},' or a quieter variant ('{year}.', 'In {year},').\n"
     "- The detail IS the post. No moral, no 'and that's why we should…', no link to the present.\n"
+    + _PIONEER_TRUTH_RULE +
     "- All voice rules from the style guide apply: first-person where natural, no hype words, no reader-bait\n"
     "  questions, default zero hashtags (max 1 if it's a clear topic anchor).\n"
     "- {link_directive}"
@@ -837,6 +848,7 @@ PIONEER_PROMPT_UNDATED: str = (
     "WRITE THE POST:\n"
     "- ONE single post. Lead with the detail directly. NEVER use 'Did you know', 'Fun fact', 'TIL', or 'Today I learned' as openers.\n"
     "- The detail IS the post. No moral, no link to the present, no 'this reminds us that…'.\n"
+    + _PIONEER_TRUTH_RULE +
     "- All voice rules from the style guide apply: first-person where natural, no hype words, no reader-bait\n"
     "  questions, default zero hashtags (max 1 if it's a clear topic anchor).\n"
     "- {link_directive}"

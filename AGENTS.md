@@ -38,7 +38,7 @@ put it there; the default answer to a new direction is "yes, with a check date".
 
    - The 2026-11-05 morning post turned Krebs's hedged lede into flat facts; every voice
      validator passed it and Frederik removed it by hand (#248). Flag a change that
-     weakens or bypasses the Curator grounding check.
+     weakens or bypasses the Curator or Pioneer grounding check.
 
 2. **Positive and useful.** No negativity, no clickbait, no politics. A strong, specific point is welcome: surprise comes from the fact, not from the tone.
 
