@@ -211,7 +211,7 @@ async def test_a_dated_entry_gives_the_checker_its_date(monkeypatch):
     seen = []
     _reviewer_returns(monkeypatch, '{"grounded": true, "problems": []}', seen)
     monkeypatch.setattr(agents, "check_curator_grounding", _real_check)
-    dated = {"pool": "dated", "entry": {"title": "T", "detail": "D", "year": 1992, "month": 9, "day": 2}}
+    dated = {"pool": "dated", "entry": {"title": "T", "detail": "D", "year": "1992", "month": 9, "day": 2}}  # a text year must not skip the day
     await agents.check_pioneer_grounding("k", ["post"], dated, "claude-sonnet-5-5", _CHAIN)
     assert "Date: 1992-09-02. Today is its anniversary." in seen[0][1]
 

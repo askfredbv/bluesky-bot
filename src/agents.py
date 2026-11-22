@@ -1436,7 +1436,7 @@ async def check_pioneer_grounding(
     facts = [entry["detail"]]
     if pioneer["pool"] == "dated":
         # The writer is told the year and the anniversary, so the checker is too.
-        date = "-".join(f"{entry[k]:02d}" for k in ("year", "month", "day") if k in entry)
+        date = "-".join(f"{int(entry[k]):02d}" for k in ("year", "month", "day") if k in entry)
         facts.append(f"Date: {date}. Today is its anniversary.")
     if link:
         facts.append(f"Link: {link}")
