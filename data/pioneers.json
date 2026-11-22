@@ -85,7 +85,7 @@
       "id": "agc-rope-memory",
       "category": "pioneer",
       "title": "Women hand-wove Apollo's core rope memory",
-      "detail": "Each bit was a wire physically threaded through (or around) a tiny magnetic core. It got the nickname LOL memory, for Little Old Ladies. Errors were very hard to fix once woven.",
+      "detail": "Each bit was a wire physically threaded through (or around) a tiny magnetic core: the software was the wiring. Errors were very hard to fix once woven.",
       "link_required": false
     },
     {
@@ -141,7 +141,7 @@
       "id": "altavista-babelfish",
       "category": "artifact",
       "title": "AltaVista's Babelfish",
-      "detail": "Launched 1997. Free machine translation, named after the Hitchhiker's Guide creature. Grew to 13 languages. Yahoo killed it in 2012.",
+      "detail": "Launched 1997. Free machine translation, named after the Hitchhiker's Guide creature. Grew to 13 languages. It ran until 2012, by then at Yahoo.",
       "link_required": false
     },
     {
@@ -162,7 +162,7 @@
       "id": "plan9-from-bell",
       "category": "artifact",
       "title": "Plan 9 from Bell Labs",
-      "detail": "From the group that built Unix. Everything is a file: even network connections, even the window system. Never caught on. Named in homage to the Ed Wood film, and to make marketeers wince.",
+      "detail": "From the group that built Unix. Everything is a file: even network connections, even the window system. Named in homage to the Ed Wood film, and to make marketeers wince.",
       "link_required": false
     },
     {
@@ -350,8 +350,8 @@
     {
       "id": "dreyfus-mac-hack",
       "category": "artifact",
-      "title": "A critic of computer chess lost to a computer",
-      "detail": "Hubert Dreyfus wrote about chess programs as if the latest event was a child beating one in 1960. Then Seymour Papert had him play Richard Greenblatt's MIT program. He was roundly trounced.",
+      "title": "MIT's chess program played a philosopher",
+      "detail": "Richard Greenblatt wrote a chess program at MIT. Seymour Papert arranged a game between it and Hubert Dreyfus, a philosopher who questioned AI. The program won, and the SIGART newsletter printed the game.",
       "link": "https://dailypapert.com/the-artificial-intelligence-of-hubert-l-dreyfus/"
     },
     {
