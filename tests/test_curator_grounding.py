@@ -1,4 +1,4 @@
-"""The Curator grounding check: a post may claim only what its source says.
+"""The grounding check: a Curator or Pioneer post may claim only what its source says.
 
 Built after the 2026-11-05 Krebs post, which turned "security experts warned"
 and a founder's former hosting firm into flat facts.
@@ -170,3 +170,85 @@ async def test_a_post_that_never_grounds_is_not_shipped(monkeypatch):
     content, _, _ = await agents.generate_content(
         "k", [], mode="curator", news_items=[_KREBS], model_priority=["gemini-3.7-flash"])
     assert content == []
+
+
+_VIXIE = {
+    "pool": "undated",
+    "entry": {
+        "id": "vixie-bind",
+        "title": "Paul Vixie looked after the internet's DNS software",
+        "detail": "He started maintaining BIND in 1988.",
+        "link": "https://www.internethalloffame.org/inductee/paul-vixie/",
+    },
+}
+_PIONEER_POST = (
+    "Paul Vixie started maintaining BIND in 1988 and kept looking after the DNS software of the internet.\n\n"
+    + _VIXIE["entry"]["link"]
+)
+
+
+@pytest.mark.asyncio
+async def test_a_pioneer_post_is_judged_on_its_entry_by_the_stricter_rules(monkeypatch):
+    seen = []
+    _reviewer_returns(monkeypatch, '{"grounded": true, "problems": []}', seen)
+    monkeypatch.setattr(agents, "check_curator_grounding", _real_check)
+    assert await agents.check_pioneer_grounding("k", ["post"], _VIXIE, "claude-sonnet-5-5", _CHAIN) == (True, [])
+    system, task, _ = seen[0]
+    assert system == agents._PIONEER_GROUNDING_SYSTEM
+    assert "ONLY evidence" in system and "general background any practitioner" not in system
+    for given in (_VIXIE["entry"]["title"], _VIXIE["entry"]["detail"], _VIXIE["entry"]["link"]):
+        assert given in task
+
+
+@pytest.mark.parametrize("pool", ["dated", "undated"])
+def test_the_pioneer_writer_is_told_the_rule_it_is_checked_on(pool):
+    task = agents._build_pioneer_task({"pool": pool, "entry": dict(_VIXIE["entry"], year=1988)})
+    assert "TRUE TO THE NOTE" in task and _VIXIE["entry"]["detail"] in task
+
+
+@pytest.mark.asyncio
+async def test_a_dated_entry_gives_the_checker_its_date(monkeypatch):
+    seen = []
+    _reviewer_returns(monkeypatch, '{"grounded": true, "problems": []}', seen)
+    monkeypatch.setattr(agents, "check_curator_grounding", _real_check)
+    dated = {"pool": "dated", "entry": {"title": "T", "detail": "D", "year": 1992, "month": 9, "day": 2}}
+    await agents.check_pioneer_grounding("k", ["post"], dated, "claude-sonnet-5-5", _CHAIN)
+    assert "Date: 1992-09-02. Today is its anniversary." in seen[0][1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["mentor", "strategist"])
+@pytest.mark.parametrize("verdicts, shipped", [
+    ([(False, ["wrote is not maintained"]), (True, [])], True),
+    ([(False, ["wrote is not maintained"])] * 10, False),
+    ([(None, ["no grounding reviewer returned a usable verdict"])] * 10, False),
+])
+async def test_a_pioneer_post_ships_only_after_it_grounds(monkeypatch, mode, verdicts, shipped):
+    queue, tasks = list(verdicts), []
+
+    def _write(_key, _system, task, *_a, **_k):
+        tasks.append(task)
+        return json.dumps([_PIONEER_POST])
+
+    async def _check(_key, posts, pioneer, *_a, **_k):
+        assert pioneer is _VIXIE
+        return queue.pop(0)
+
+    monkeypatch.setattr(agents, "_sync_generate", _write)
+    monkeypatch.setattr(agents, "check_pioneer_grounding", _check)
+    content, _, _ = await agents.generate_content(
+        "k", [], mode=mode, pioneer_entry=_VIXIE, model_priority=["gemini-3.7-flash"])
+    assert content == ([_PIONEER_POST] if shipped else [])
+    assert len(tasks) == 2 and verdicts[0][1][0] in tasks[1]  # the retry is told why
+
+
+@pytest.mark.asyncio
+async def test_a_list_topic_post_has_no_source_and_no_check(monkeypatch):
+    async def _never(*_a, **_k):
+        raise AssertionError("nothing to check against")
+
+    monkeypatch.setattr(agents, "_sync_generate", lambda *_a, **_k: json.dumps([_POST]))
+    monkeypatch.setattr(agents, "check_curator_grounding", _never)
+    monkeypatch.setattr(agents, "check_pioneer_grounding", _never)
+    content, _, _ = await agents.generate_content("k", [], mode="mentor", model_priority=["gemini-3.7-flash"])
+    assert content == [_POST]

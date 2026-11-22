@@ -34,7 +34,7 @@ A post claims only what its source says, with no invented numbers, versions or q
 
 The 2026-11-05 morning post turned Krebs's hedged lede into flat facts; every voice
 validator passed it and Frederik removed it by hand (#248). Flag a change that weakens or
-bypasses the Curator grounding check.
+bypasses the Curator or Pioneer grounding check.
 
 ### 2. Positive and useful
 
