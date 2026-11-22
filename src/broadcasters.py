@@ -9,7 +9,7 @@ from mastodon import Mastodon
 from src.config import (
     MAX_POST_LENGTH_BSKY, MAX_POST_LENGTH_MASTODON,
     THREAD_PAUSE_PROFILES, DEFAULT_THREAD_PAUSE_PROFILE,
-    MAX_HASHTAGS_PER_POST,
+    MAX_HASHTAGS_PER_POST, GENERATED_IMAGE_ALT_TEXT,
 )
 from src.retry import classify_retry, sleep_for_rate_limit, sleep_for_transient
 from src.utils import compress_image_to_fit
@@ -351,7 +351,7 @@ async def post_to_bluesky(
                             embed = models.AppBskyEmbedImages.Main(
                                 images=[models.AppBskyEmbedImages.Image(
                                     image=upload.blob,
-                                    alt=f"Illustration: {content_list[0][:100]}"
+                                    alt=GENERATED_IMAGE_ALT_TEXT
                                 )]
                             )
                             SafeLogger.info(
@@ -526,10 +526,9 @@ async def post_to_mastodon(
         else:
             try:
                 mime = _detect_image_mime(image_bytes)
-                alt = f"Illustration: {content_list[0][:100]}" if content_list else "Illustration"
                 media = await asyncio.to_thread(
                     mastodon.media_post, image_bytes,
-                    mime_type=mime, description=alt
+                    mime_type=mime, description=GENERATED_IMAGE_ALT_TEXT
                 )
                 media_id = media.get('id') if isinstance(media, dict) else getattr(media, 'id', None)
                 if media_id:

@@ -287,6 +287,50 @@ async def test_post_to_bluesky_uses_link_card_when_no_image_bytes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_image_alt_is_the_same_on_both_platforms_and_repeats_no_post_text(monkeypatch):
+    """The 2026-11-20 Vim post: alt text cut from the post carried its false claim."""
+    alts = {}
+
+    class DummyAsyncClient:
+        async def upload_blob(self, data):
+            class FakeUploadResult:
+                blob = {"$type": "blob", "ref": {"$link": "bafyfake"},
+                        "mimeType": "image/png", "size": len(data)}
+            return FakeUploadResult()
+
+        async def send_post(self, text, embed=None, reply_to=None, facets=None):
+            alts["bluesky"] = embed.images[0].alt
+
+            class FakePost:
+                cid = "cid-1"
+                uri = "at://post/1"
+            return FakePost()
+
+    class DummyMastodon:
+        def __init__(self, access_token, api_base_url):
+            pass
+
+        def media_post(self, data, mime_type=None, description=None):
+            alts["mastodon"] = description
+            return {"id": "media-1"}
+
+        def status_post(self, status, in_reply_to_id, visibility, media_ids=None, idempotency_key=None):
+            return {"id": 1}
+
+    monkeypatch.setattr(broadcasters, "Mastodon", DummyMastodon)
+    post = ["Bram Moolenaar maintained Vim alone from 1991 until he died in 2023."]
+
+    await broadcasters.post_to_bluesky(DummyAsyncClient(), post, image_bytes=b"image-bytes")
+    await broadcasters.post_to_mastodon(
+        "token", "https://mastodon.example", post, image_bytes=b"image-bytes",
+        tags=["Vim"], source_url="https://example.com/vim",
+    )
+
+    # Literal on purpose: an alt built from the post or the prompt must fail here.
+    assert alts == {"bluesky": "AI-generated illustration", "mastodon": "AI-generated illustration"}
+
+
+@pytest.mark.asyncio
 async def test_post_to_mastodon_attaches_image_to_first_post_only(monkeypatch):
     """When image_bytes is provided, media is uploaded and attached to the root post."""
     posted = []
@@ -317,7 +361,6 @@ async def test_post_to_mastodon_attaches_image_to_first_post_only(monkeypatch):
     )
 
     assert len(media_posted) == 1
-    assert media_posted[0]["description"].startswith("Illustration:")
     assert posted[0]["media_ids"] == ["media-42"]  # first post only
     assert posted[1]["media_ids"] is None           # reply gets no media
 

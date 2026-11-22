@@ -549,6 +549,11 @@ VISUAL_PROMPT_CONSTRAINTS: str = (
     "no labels, no captions, no signage, no watermark. No people, no hands, no faces."
 )
 
+# Alt text for every generated image, on both platforms. A constant on purpose: the
+# post text and the image prompt (written from that text) both repeat the post's
+# claims where a correction misses them, and neither says what was actually drawn.
+GENERATED_IMAGE_ALT_TEXT: str = "AI-generated illustration"
+
 TOPIC_MAP: Dict[str, List[str]] = {
     "LLMs": ["gpt", "claude", "llama", "reasoning", "prompt", "transformer", "7b", "70b", "llm", "gemini", "mistral"],
     "Vision/Robot": ["sora", "vision", "robot", "humanoid", "image", "video", "figure"],
