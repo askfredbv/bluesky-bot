@@ -198,6 +198,8 @@ async def test_a_pioneer_post_is_judged_on_its_entry_by_the_stricter_rules(monke
     assert "ONLY evidence" in system and "general background any practitioner" not in system
     for given in (_VIXIE["entry"]["title"], _VIXIE["entry"]["detail"], _VIXIE["entry"]["link"]):
         assert given in task
+    assert "Published by: unknown" in task  # the link's site did not say it
+    assert "a link is only an address" in system
 
 
 @pytest.mark.parametrize("pool", ["dated", "undated"])

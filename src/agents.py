@@ -1285,6 +1285,8 @@ _PIONEER_GROUNDING_SYSTEM = (
     "- drops a hedge or attribution, or turns part of something into the whole "
     "(maintained into wrote, helped into built, one of into the);\n"
     "- claims an experience, memory or action of the post's author;\n"
+    "- credits a claim to a person, site or publisher the source does not credit: "
+    "a link is only an address, not who said it;\n"
     "- adds a URL, or puts down a person or group.\n"
     "These do NOT fail:\n"
     "- leaving out facts or reordering them, as long as that changes no meaning;\n"
@@ -1442,7 +1444,8 @@ async def check_pioneer_grounding(
         facts.append(f"Link: {link}")
     return await check_curator_grounding(
         api_key, posts,
-        {"title": entry["title"], "description": "\n".join(facts), "link": link},
+        # No "link" key: the news task turns one into "Published by", and an entry's link published nothing.
+        {"title": entry["title"], "description": "\n".join(facts)},
         writer, chain, anthropic_api_key, system=_PIONEER_GROUNDING_SYSTEM,
     )
 
