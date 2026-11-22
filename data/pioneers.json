@@ -27,17 +27,17 @@
       "day": 21,
       "year": 1999,
       "title": "Carmack open-sourced the Quake engine",
-      "detail": "Three years after release, the full source went up on id's FTP. Spawned a generation of engines.",
-      "link": "https://github.com/id-Software/Quake"
+      "detail": "Three years after release, id put the engine's full source online under the GPL. Programmers were soon releasing new versions of it.",
+      "link": "https://en.wikipedia.org/wiki/Quake_engine"
     }
   ],
   "undated": [
     {
       "id": "sparck-jones-idf",
       "category": "pioneer",
-      "title": "Karen Spärck Jones invented IDF in 1972",
-      "detail": "Inverse Document Frequency. It became a standard part of web search engines.",
-      "link": "https://www.cl.cam.ac.uk/archive/ksj21/"
+      "title": "Karen Spärck Jones introduced IDF in 1972",
+      "detail": "Inverse Document Frequency. It underlies most modern search engines.",
+      "link": "https://en.wikipedia.org/wiki/Karen_Sp%C3%A4rck_Jones"
     },
     {
       "id": "grep-etymology",
@@ -49,22 +49,22 @@
     {
       "id": "perlman-spanning-tree",
       "category": "pioneer",
-      "title": "Radia Perlman wrote spanning tree as a poem",
-      "detail": "The original 1985 paper includes 'Algorhyme': twelve lines explaining the algorithm in verse.",
+      "title": "Radia Perlman wrote a poem about spanning tree",
+      "detail": "She published 'Algorhyme' on the protocol she invented. It opens: 'I think that I shall never see / A graph more lovely than a tree.'",
       "link": "https://en.wikipedia.org/wiki/Radia_Perlman"
     },
     {
       "id": "alan-kay-messaging",
       "category": "pioneer",
       "title": "Alan Kay regretted the term 'objects'",
-      "detail": "He coined 'object-oriented', but said the big idea was messaging. Of 'objects', he wrote in 1998 that 'it gets many people to focus on the lesser idea.'",
+      "detail": "The big idea, he said, was messaging. Of 'objects', a term he'd coined, he wrote in 1998 that 'it gets many people to focus on the lesser idea.'",
       "link": "https://lists.squeakfoundation.org/pipermail/squeak-dev/1998-October/017019.html"
     },
     {
       "id": "liskov-adt",
       "category": "pioneer",
       "title": "Barbara Liskov built CLU on abstract data types",
-      "detail": "She's known for the substitution principle. She also led CLU in the 1970s: the first implemented language with built-in data abstraction. It had iterators and exceptions too.",
+      "detail": "She's known for the substitution principle. She also led the design of CLU, built on data abstraction: one of the foundations of object-oriented languages like Java and C#.",
       "link": "https://amturing.acm.org/award_winners/liskov_1108679.cfm"
     },
     {
@@ -92,7 +92,7 @@
       "id": "hamilton-software-engineering",
       "category": "pioneer",
       "title": "Margaret Hamilton popularized 'software engineering'",
-      "detail": "She led MIT's Apollo on-board flight software team, and used the term to get code taken as seriously as hardware. The famous photo of her beside a tower of printouts shows that code.",
+      "detail": "She led the Software Engineering Division of MIT's Instrumentation Laboratory for Apollo. The famous 1969 photo shows her with her team's code that sent humans to the Moon.",
       "link": "https://science.nasa.gov/people/margaret-hamilton/"
     },
     {
@@ -105,23 +105,23 @@
     {
       "id": "dijkstra-handwritten",
       "category": "pioneer",
-      "title": "Dijkstra wrote most later papers by hand",
-      "detail": "His numbered notes run up to EWD1318. He distributed them by photocopy and had no use for word processors. Over a thousand are online at UT Austin.",
-      "link": "https://www.cs.utexas.edu/~EWD/"
+      "title": "Dijkstra had no use for word processors",
+      "detail": "He favoured a Montblanc fountain pen and sent photocopies of his numbered EWD notes to colleagues. They photocopied them again, and that's how they spread through computer science.",
+      "link": "https://en.wikipedia.org/wiki/Edsger_W._Dijkstra"
     },
     {
       "id": "zimmermann-pgp-book",
       "category": "pioneer",
       "title": "PGP source code was published as a book",
-      "detail": "Phil Zimmermann printed the full source in a hardback so it could be exported. US crypto export laws had a loophole for printed books. MIT Press published it in 1995.",
-      "link": "https://philzimmermann.com/EN/essays/BookPreface.html"
+      "detail": "Phil Zimmermann challenged US crypto export rules in 1995: he published the full source as a hardback, via MIT Press. Anyone could cut off the covers, scan the pages and build PGP.",
+      "link": "https://en.wikipedia.org/wiki/Pretty_Good_Privacy"
     },
     {
       "id": "trojan-coffee-pot",
       "category": "artifact",
       "title": "First webcam was a coffee pot",
       "detail": "Cambridge Computer Lab, 1991. Pointed at the Trojan Room coffee pot so researchers wouldn't trek to an empty one. Ran for 10 years. The pot is in a German museum.",
-      "link": "https://www.cl.cam.ac.uk/coffee/qsf/coffee.html"
+      "link": "https://en.wikipedia.org/wiki/Trojan_Room_coffee_pot"
     },
     {
       "id": "mother-of-all-demos",
@@ -175,30 +175,30 @@
     {
       "id": "curl-one-person",
       "category": "project",
-      "title": "curl has had the same lead since 1996",
-      "detail": "Daniel Stenberg started it from a tiny tool called httpget. It runs in cars, satellites and on more than 100 operating systems. His rough estimate: 30 billion installations.",
-      "link": "https://daniel.haxx.se/"
+      "title": "curl started as a tiny tool called httpget",
+      "detail": "Daniel Stenberg took it over in 1996 to fetch currency rates. Thirty years later curl runs in cars, fridges, printers, medical devices and espresso machines.",
+      "link": "https://daniel.haxx.se/blog/2026/11/11/30-years-of-internet-transfers-with-curl/"
     },
     {
       "id": "bofh-still-shipping",
       "category": "lore",
       "title": "BOFH has been running since 1992",
-      "detail": "Simon Travaglia's Bastard Operator From Hell started on Usenet, moved to The Register in 2000, still posts new instalments. Thirty-plus years of one sysadmin's revenge on management and users.",
-      "link": "https://www.theregister.com/data_centre/bofh/"
+      "detail": "Simon Travaglia's Bastard Operator From Hell started on Usenet in 1992 and has appeared in The Register since 2000. The stories moved from a university to an office.",
+      "link": "https://en.wikipedia.org/wiki/Bastard_Operator_From_Hell"
     },
     {
       "id": "rfc-1149-avian-carriers",
       "category": "lore",
       "title": "RFC 1149: IP over avian carriers",
-      "detail": "April Fools' RFC from 1990 specifying how to carry IP packets by pigeon. In 2001 a Norwegian Linux user group actually implemented it: nine pings logged, four replies, 55% packet loss. They declared it a success.",
-      "link": "https://datatracker.ietf.org/doc/html/rfc1149"
+      "detail": "April Fools' RFC from 1990 for carrying IP packets by pigeon. In 2001 the Bergen Linux user group implemented it: nine packets sent over about 3 km, 55% lost, and at least 50 minutes per response.",
+      "link": "https://en.wikipedia.org/wiki/IP_over_Avian_Carriers"
     },
     {
       "id": "rfc-2324-htcpcp",
       "category": "lore",
       "title": "RFC 2324: the coffee pot protocol",
-      "detail": "April 1998. Hyper Text Coffee Pot Control Protocol. Defines a BREW method and adds the immortal status code 418 'I'm a teapot'. A Google Easter egg still returns it.",
-      "link": "https://datatracker.ietf.org/doc/html/rfc2324"
+      "detail": "April 1998. Hyper Text Coffee Pot Control Protocol. Defines a BREW method and status code 418 'I'm a teapot'. Google uses it as an Easter egg.",
+      "link": "https://en.wikipedia.org/wiki/Hyper_Text_Coffee_Pot_Control_Protocol"
     },
     {
       "id": "knuth-hex-bounty",
@@ -232,29 +232,29 @@
       "id": "moolenaar-vim-uganda",
       "category": "hero",
       "title": "Bram Moolenaar made Vim charityware",
-      "detail": "Bram Moolenaar led Vim until he died in 2023. He made it charityware in 1995: if you like it, help children in Uganda. Vim's start screen still says so. His charity, ICCF Holland, closed in 2025, and Kuwasha in Canada carries the work on.",
-      "link": "https://www.kuwasha.net"
+      "detail": "Bram Moolenaar made Vim charityware: if you like it, help children in Uganda. He died in 2023. His charity, ICCF Holland, closed in 2025, and Kuwasha in Canada carries the work on.",
+      "link": "https://vimhelp.org/uganda.txt.html"
     },
     {
       "id": "bellard-output",
       "category": "hero",
       "title": "Fabrice Bellard's output is implausible",
-      "detail": "Wrote QEMU and TinyCC. Started FFmpeg. Co-wrote a JavaScript engine. Computed pi to a then-record 2.7 trillion digits, mostly on one desktop. Released LTE base station software.",
-      "link": "https://bellard.org/"
+      "detail": "QEMU, FFmpeg and TinyCC. The QuickJS JavaScript engine. A pi record of nearly 2.7 trillion digits in 2009, on a desktop PC costing under $3,000. Co-founded a telecoms company, Amarisoft.",
+      "link": "https://en.wikipedia.org/wiki/Fabrice_Bellard"
     },
     {
       "id": "gosling-not-just-java",
       "category": "hero",
       "title": "James Gosling wrote more than Java",
-      "detail": "Also: Gosling Emacs, an early Emacs for Unix; NeWS, a window system that lost to X11, as lead engineer; and, while still in high school, software to analyse ISIS-II satellite data for the University of Calgary.",
+      "detail": "Also: a text editor called Emacs for Unix, satellite data acquisition systems, a multiprocessor Unix and several compilers. At Sun, he was lead engineer of the NeWS window system.",
       "link": "https://nighthacks.com/jag/bio/index.html"
     },
     {
       "id": "venema-postfix",
       "category": "hero",
       "title": "Wietse Venema wrote Postfix",
-      "detail": "Written at IBM Research, released 1998. An alternative to sendmail, built to be fast, easy to administer and secure. Venema also wrote TCP Wrapper and, with Dan Farmer, SATAN: an early network security scanner.",
-      "link": "https://www.postfix.org/"
+      "detail": "He's known for the Postfix mail system. He also wrote TCP Wrapper and, with Dan Farmer, produced the security tools SATAN and The Coroner's Toolkit.",
+      "link": "https://en.wikipedia.org/wiki/Wietse_Venema"
     },
     {
       "id": "allman-sendmail-student",
@@ -281,36 +281,36 @@
       "id": "vixie-bind",
       "category": "hero",
       "title": "Paul Vixie looked after the internet's DNS software",
-      "detail": "Became the main maintainer of BIND, the DNS server born at Berkeley, and co-founded ISC to look after it. Also founded MAPS, a pioneering anti-spam nonprofit.",
+      "detail": "He started maintaining BIND, the Berkeley Internet Name Domain, in 1988 and became the primary author of BIND 8. He also founded MAPS, an anti-spam nonprofit.",
       "link": "https://www.internethalloffame.org/inductee/paul-vixie/"
     },
     {
       "id": "postel-rfcs",
       "category": "hero",
-      "title": "Jon Postel was the RFC editor for 28 years",
-      "detail": "He edited the internet's RFC series until 1998. He coined the robustness principle: 'Be conservative in what you do, be liberal in what you accept from others.' Quietly held the standards process together until his death at 55.",
-      "link": "https://datatracker.ietf.org/doc/html/rfc2555"
+      "title": "Jon Postel was the RFC Editor from 1969 to 1998",
+      "detail": "He held the job until his death at 55. He's also behind the robustness principle, often called Postel's law: be conservative in what you send, be liberal in what you receive.",
+      "link": "https://en.wikipedia.org/wiki/Jon_Postel"
     },
     {
       "id": "theo-openssh",
       "category": "hero",
       "title": "Theo de Raadt and OpenSSH",
-      "detail": "He started OpenSSH in 1999 with fellow OpenBSD developers. It now ships with Linux, macOS and Windows. He still runs OpenBSD, with the same rigour. Both projects live on donations.",
-      "link": "https://www.openssh.com/"
+      "detail": "Theo de Raadt founded and leads both OpenBSD and OpenSSH, from Calgary. He was also a founding member of NetBSD. In 2004 he won the Free Software Award for OpenBSD and OpenSSH.",
+      "link": "https://en.wikipedia.org/wiki/Theo_de_Raadt"
     },
     {
       "id": "daubechies-jpeg2000",
       "category": "pioneer",
       "title": "JPEG 2000's wavelet is named after a Belgian",
-      "detail": "Its lossy mode uses the Cohen-Daubechies-Feauveau 9/7 wavelet. The middle name is Ingrid Daubechies, a mathematician from Houthalen. She later became the first woman to lead the International Mathematical Union.",
+      "detail": "It uses a wavelet from the Cohen-Daubechies-Feauveau family. The middle name is Ingrid Daubechies, a mathematician from Houthalen. She later became the first woman to lead the International Mathematical Union.",
       "link": "https://en.wikipedia.org/wiki/Ingrid_Daubechies"
     },
     {
       "id": "cailliau-web-belgian",
       "category": "pioneer",
       "title": "The Web had a Belgian champion",
-      "detail": "Tim Berners-Lee wrote the first proposal alone in 1989. Robert Cailliau, a Belgian engineer at CERN, co-wrote the 1990 version asking for staff, and co-built the first browser for the Mac.",
-      "link": "https://home.cern/science/computing/the-birth-of-the-web/short-history-web/"
+      "detail": "Robert Cailliau, a Belgian engineer at CERN, co-wrote the 1990 funding proposal for Tim Berners-Lee's Web, became one of its key proponents and helped build the first browser for the Mac.",
+      "link": "https://en.wikipedia.org/wiki/Robert_Cailliau"
     },
     {
       "id": "pouzin-datagram",
@@ -322,22 +322,22 @@
     {
       "id": "tanenbaum-minix-me",
       "category": "artifact",
-      "title": "A teaching OS ended up inside Intel PCs",
-      "detail": "Andrew Tanenbaum wrote MINIX as a teaching OS: the one Linus learned from. From 2015, Intel quietly put a version in the Management Engine of its PC chipsets. Tanenbaum found out from the press.",
+      "title": "MINIX ended up inside Intel PCs",
+      "detail": "Intel put a version of Andrew Tanenbaum's MINIX inside its ME-11 management engine. He didn't know until he read a press report. So he wrote Intel an open letter, starting with thanks.",
       "link": "https://www.cs.vu.nl/~ast/intel/"
     },
     {
       "id": "hopper-nanoseconds",
       "category": "pioneer",
       "title": "Grace Hopper handed out nanoseconds",
-      "detail": "To show admirals why a satellite link lags, she gave them 30 cm wires — the distance light travels in a billionth of a second. A 300-metre coil was her microsecond. She also wrote an early compiler and coined the term 'compiler'.",
-      "link": "https://americanhistory.si.edu/collections/object/nmah_692464"
+      "detail": "When admirals asked why satellite links lag, she gave out 30 cm wires: the distance light travels in a nanosecond. A 300-metre coil was her microsecond. Later, grains of pepper were picoseconds.",
+      "link": "https://en.wikipedia.org/wiki/Grace_Hopper"
     },
     {
       "id": "eliza-weizenbaum",
       "category": "pioneer",
-      "title": "ELIZA's creator turned against it",
-      "detail": "Joseph Weizenbaum wrote it in 1966: a pattern-matching script imitating a therapist. People grew attached to a few hundred lines of code. His secretary asked him to leave the room while she used it. He later became an AI critic.",
+      "title": "ELIZA surprised its own creator",
+      "detail": "Joseph Weizenbaum wrote it in 1966: a pattern-matching script imitating a therapist. His secretary reportedly asked him to leave the room so she could talk to it. He was surprised that people saw feelings in a program.",
       "link": "https://en.wikipedia.org/wiki/ELIZA"
     },
     {
@@ -351,14 +351,14 @@
       "id": "dreyfus-mac-hack",
       "category": "artifact",
       "title": "A critic of computer chess lost to a computer",
-      "detail": "Hubert Dreyfus's 1965 RAND paper noted that a 10-year-old novice had beaten a chess program. In 1967, MIT's Mac Hack VI beat Dreyfus.",
+      "detail": "Hubert Dreyfus wrote about chess programs as if the latest event was a child beating one in 1960. Then Seymour Papert had him play Richard Greenblatt's MIT program. He was roundly trounced.",
       "link": "https://dailypapert.com/the-artificial-intelligence-of-hubert-l-dreyfus/"
     },
     {
       "id": "ellis-operational-transformation",
       "category": "hero",
-      "title": "The first Black CS PhD built the tech behind Google Docs",
-      "detail": "Clarence Ellis earned his doctorate in 1969. In 1989 he and Simon Gibbs created operational transformation — the technique that lets many people edit one document at once.",
+      "title": "The first Black CS PhD pioneered real-time co-editing",
+      "detail": "Clarence Ellis earned his doctorate in 1969. He went on to pioneer operational transformation: the techniques that let many people edit one document in real time.",
       "link": "https://en.wikipedia.org/wiki/Clarence_Ellis_(computer_scientist)"
     },
     {
@@ -366,13 +366,13 @@
       "category": "hero",
       "title": "The .com/.edu/.gov scheme came from one team",
       "detail": "Elizabeth Feinler ran the ARPANET's information center until 1989. Her group invented WHOIS and the top-level-domain naming still in use: .com, .edu, .gov, .org.",
-      "link": "https://www.internethalloffame.org/inductees/elizabeth-feinler"
+      "link": "https://en.wikipedia.org/wiki/Elizabeth_J._Feinler"
     },
     {
       "id": "berezin-word-processor",
       "category": "hero",
       "title": "Evelyn Berezin built secretaries a word processor",
-      "detail": "With management all but closed to women, she co-founded Redactron in 1969. In 1971 it shipped the Data Secretary: an early standalone computerised word processor.",
+      "detail": "She was often the first or only woman technologist where she worked. Then she founded Redactron, whose Data Secretary was a standalone computerised word processor. She pitched it in Ms. magazine in 1971.",
       "link": "https://www.invent.org/inductees/evelyn-berezin"
     },
     {
@@ -393,8 +393,8 @@
       "id": "sqlite-aviation-testing",
       "category": "project",
       "title": "SQLite is tested to aviation standards",
-      "detail": "It's on every iPhone and Android, and in the Airbus A350's flight software. Public domain, its core tested to 100% MC/DC: the bar for the most critical avionics code.",
-      "link": "https://sqlite.org/testing.html"
+      "detail": "Avionics makers showed interest, so its developers built a test harness to support DO-178B, the avionics software standard. Ten months of intense work later, in 2009, it hit 100% MC/DC on the SQLite core.",
+      "link": "https://sqlite.org/th3.html"
     }
   ]
 }
