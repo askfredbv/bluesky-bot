@@ -819,13 +819,15 @@ _PIONEER_TRUTH_RULE: str = (
     "  quote, 'first' or 'still today' from memory, no explanation of how it worked, and no experience of\n"
     "  your own. Keep its verbs and hedges (maintained is not wrote, early is not first, often is not mostly).\n"
     "  If that makes a short post, write a short post.\n"
+    "- NOT A COPY: do not repeat the note sentence by sentence. Open on the single most surprising fact,\n"
+    "  reorder and compress the rest, and let one plain, dry clause carry the point. Same facts, your sentences.\n"
 )
 
 # Prompt templates filled in at runtime by agents.select_pioneer_topic + generate_content
 PIONEER_PROMPT_DATED: str = (
     "You're sharing an 'on this day' tech-history note. Today is the anniversary of:\n"
     "  {title} ({year})\n\n"
-    "DETAIL TO USE (this is the post: your job is to phrase it, not to add to it):\n"
+    "DETAIL TO USE (these are the facts: write the post from them, in your own words, without adding to them):\n"
     "{detail}\n"
     "{link_line}\n"
     "WRITE THE POST:\n"
@@ -841,7 +843,7 @@ PIONEER_PROMPT_DATED: str = (
 
 PIONEER_PROMPT_UNDATED: str = (
     "You're sharing a tech-history note that fits the 'huh, I didn't know that / I'd forgotten that' bar.\n\n"
-    "NOTE TO USE (this is the post: your job is to phrase it, not to add to it):\n"
+    "NOTE TO USE (these are the facts: write the post from them, in your own words, without adding to them):\n"
     "Title: {title}\n"
     "Detail: {detail}\n"
     "{link_line}\n"

@@ -254,3 +254,11 @@ async def test_a_list_topic_post_has_no_source_and_no_check(monkeypatch):
     monkeypatch.setattr(agents, "check_pioneer_grounding", _never)
     content, _, _ = await agents.generate_content("k", [], mode="mentor", model_priority=["gemini-3.7-flash"])
     assert content == [_POST]
+
+
+def test_copies_pioneer_note_catches_the_verbatim_vixie_post():
+    entry = _VIXIE["entry"]
+    copy = entry["detail"] + "\n\n" + entry["link"]
+    assert agents._copies_pioneer_note([copy], entry) is True
+    own = "BIND ran much of the internet's DNS, and from 1988 Paul Vixie looked after it. He also founded MAPS, an anti-spam nonprofit."
+    assert agents._copies_pioneer_note([own], entry) is False

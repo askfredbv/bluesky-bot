@@ -1,3 +1,4 @@
+import difflib
 import json
 import random
 import asyncio
@@ -644,6 +645,16 @@ def select_pioneer_topic(
     if not available:
         return None
     return {"entry": rng.choice(available), "pool": "undated"}
+
+
+def _copies_pioneer_note(posts: List[str], entry: Dict[str, Any]) -> bool:
+    """True when the post, minus its URL, is (nearly) the entry's detail text."""
+    text = re.sub(r"https?://\S+|www\.\S+", "", " ".join(posts))
+
+    def norm(t: str) -> str:
+        return " ".join(re.findall(r"\w+", t.lower()))
+
+    return difflib.SequenceMatcher(None, norm(text), norm(str(entry["detail"]))).ratio() >= 0.9
 
 
 def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
@@ -2069,6 +2080,15 @@ async def generate_content(
                             raise ValueError(
                                 f"pioneer post missing required URL: {required_url}"
                             )
+                    # A post that is the entry's own text is a database row, not a
+                    # post. The truth rule pushed the writer to copy it (2026-11-23).
+                    if pioneer_entry and _copies_pioneer_note(
+                        content_list, pioneer_entry["entry"]
+                    ):
+                        raise ValueError(
+                            "the post repeats the note's own sentences: reorder, compress "
+                            "and put it in your own words, keeping only the note's facts"
+                        )
                     # v4.14: defensive voice trim — strip reader-bait questions,
                     # teasers and excess hashtags. No truncation since v4.15.3:
                     # length is a hard invariant in _validate_thread_shape.
