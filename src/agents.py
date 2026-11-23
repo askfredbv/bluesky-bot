@@ -647,14 +647,24 @@ def select_pioneer_topic(
     return {"entry": rng.choice(available), "pool": "undated"}
 
 
-def _copies_pioneer_note(posts: List[str], entry: Dict[str, Any]) -> bool:
-    """True when the post, minus its URL, is (nearly) the entry's detail text."""
+def _copies_pioneer_note(posts: List[str], entry: Optional[Dict[str, Any]]) -> bool:
+    """True when one unbroken run of the entry's detail makes up most of it and is in the post.
+
+    Measured against the detail, not the whole post, so a title or an extra
+    sentence around a verbatim copy does not hide it. Under 60 characters a
+    faithful post has to repeat the detail, so a short detail never counts.
+    """
+    detail = (entry or {}).get("detail")
+    if not detail:
+        return False
     text = re.sub(r"https?://\S+|www\.\S+", "", " ".join(posts))
 
     def norm(t: str) -> str:
         return " ".join(re.findall(r"\w+", t.lower()))
 
-    return difflib.SequenceMatcher(None, norm(text), norm(str(entry["detail"]))).ratio() >= 0.9
+    want = norm(str(detail))
+    run = difflib.SequenceMatcher(None, norm(text), want, autojunk=False).find_longest_match()
+    return run.size >= 60 and run.size >= 0.6 * len(want)
 
 
 def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
@@ -2083,7 +2093,7 @@ async def generate_content(
                     # A post that is the entry's own text is a database row, not a
                     # post. The truth rule pushed the writer to copy it (2026-11-23).
                     if pioneer_entry and _copies_pioneer_note(
-                        content_list, pioneer_entry["entry"]
+                        content_list, pioneer_entry.get("entry")
                     ):
                         raise ValueError(
                             "the post repeats the note's own sentences: reorder, compress "

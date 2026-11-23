@@ -257,8 +257,16 @@ async def test_a_list_topic_post_has_no_source_and_no_check(monkeypatch):
 
 
 def test_copies_pioneer_note_catches_the_verbatim_vixie_post():
-    entry = _VIXIE["entry"]
-    copy = entry["detail"] + "\n\n" + entry["link"]
+    entry = {
+        "title": "Paul Vixie looked after the internet's DNS software",
+        "detail": "Paul Vixie started maintaining BIND, the Berkeley Internet Name Domain, in 1988 and became the primary author of BIND 8. He also founded MAPS, an anti-spam nonprofit.",
+        "link": "https://www.internethalloffame.org/inductee/paul-vixie/",
+    }
+    copy = entry["detail"] + " " + entry["link"]
     assert agents._copies_pioneer_note([copy], entry) is True
-    own = "BIND ran much of the internet's DNS, and from 1988 Paul Vixie looked after it. He also founded MAPS, an anti-spam nonprofit."
+    assert agents._copies_pioneer_note([entry["title"] + ". " + copy], entry) is True
+    assert agents._copies_pioneer_note([copy], None) is False
+    assert agents._copies_pioneer_note([copy], {}) is False
+    assert agents._copies_pioneer_note([copy], {"detail": "He started maintaining BIND in 1988."}) is False
+    own = "BIND is the Berkeley Internet Name Domain, the internet's DNS software. Paul Vixie started maintaining it in 1988, became primary author of BIND 8, and also founded MAPS, an anti-spam nonprofit."
     assert agents._copies_pioneer_note([own], entry) is False
