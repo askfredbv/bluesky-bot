@@ -2,7 +2,7 @@ annotated-types==0.8.0
 anthropic==1.17.0
 anyio==4.16.0
 ast-serialize==0.13.1
-atproto==0.0.73
+atproto==0.0.75
 beautifulsoup4==4.15.0
 certifi==2026.10.23
 cffi==2.1.1
