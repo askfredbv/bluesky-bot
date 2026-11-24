@@ -1057,7 +1057,8 @@ async def persistence_stage(automation: AutomationPayload) -> None:
         # Pioneer cooldown bookkeeping — only when a pioneer post actually fired
         if pioneer_entry:
             # Not pruned: an undated entry, once posted, never returns (#320).
-            pioneers = list(current.get("pioneer_recent", []) or [])
+            raw_pioneers = current.get("pioneer_recent")
+            pioneers = list(raw_pioneers) if isinstance(raw_pioneers, list) else []
             pioneers.append({
                 "id": pioneer_entry["entry"]["id"],
                 "posted_at": datetime.now(timezone.utc).isoformat(),

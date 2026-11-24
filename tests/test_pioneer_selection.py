@@ -150,6 +150,14 @@ def test_undated_never_repeats_however_old(patched_pools):
     assert result["entry"]["id"] == "test-undated-b"
 
 
+@pytest.mark.parametrize("junk", [7, {"id": "x"}, "text"])
+def test_corrupt_non_list_history_does_not_crash(patched_pools, junk):
+    rng = random.Random(); rng.random = lambda: 0.0; rng.choice = lambda items: items[0]
+    seen = {"links": [], "recent_topics": [], "pioneer_recent": junk}
+    result = select_pioneer_topic(seen, now=_now(3, 14), rng=rng)
+    assert result["entry"]["id"] == "test-undated-a"
+
+
 def test_dated_entry_returns_after_its_cooldown(patched_pools):
     """The anniversary comes back a year later: only undated entries are one-shot."""
     rng = random.Random(); rng.random = lambda: 0.99
