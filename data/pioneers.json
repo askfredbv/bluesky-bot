@@ -463,7 +463,7 @@
       "id": "tomlinson-at-sign",
       "category": "hero",
       "title": "Ray Tomlinson and the @ sign",
-      "detail": "In 1971 Ray Tomlinson adapted an existing program, SNDMSG, to run on TENEX, creating the first networked email system. He chose the @ sign to separate the username from the name of the machine, because it was not used in usernames or in TENEX programming. The user@host format is still standard in email addresses.",
+      "detail": "In 1971 Ray Tomlinson adapted an existing program, SNDMSG, to run on TENEX. He incorporated source code from CPYNET, his file-transfer program for the ARPANET, into SNDMSG, so users could send messages to others on different computers: the first networked email system. He chose the @ sign to separate the username from the name of the machine, because it was not used in usernames or in TENEX programming. The user@host format is still standard in email addresses.",
       "link": "https://en.wikipedia.org/wiki/Ray_Tomlinson"
     },
     {
@@ -498,7 +498,7 @@
       "id": "turing-turochamp",
       "category": "project",
       "title": "Alan Turing's Turochamp",
-      "detail": "In 1948 Alan Turing and David Champernowne designed Turochamp, a chess program that was never run on a computer, because its algorithm was too complex for the early computers of the time. In the summer of 1952 Turing played a match against Alick Glennie by executing the program by hand, step by step. The program lost in 29 moves.",
+      "detail": "In 1948 Alan Turing and David Champernowne designed Turochamp, a chess program that Turing never managed to run on a computer, because its algorithm was too complex for the early computers of the time. In the summer of 1952 Turing played a match against Alick Glennie by executing the program by hand, step by step. The program lost in 29 moves.",
       "link": "https://en.wikipedia.org/wiki/Turochamp"
     },
     {
@@ -506,7 +506,7 @@
       "category": "artifact",
       "title": "Spacewar! on the PDP-1",
       "detail": "Steve Russell, in collaboration with others, developed Spacewar! for the newly installed DEC PDP-1 minicomputer at MIT, released in April 1962. Two players each fly a ship, the needle or the wedge, and try to shoot each other while avoiding the star. The game was in the public domain and was widely recreated on other computers.",
-      "link": "https://en.wikipedia.org/wiki/Spacewar!"
+      "link": "https://en.wikipedia.org/wiki/Spacewar%21"
     },
     {
       "id": "babbage-difference-engine-2",
