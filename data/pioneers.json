@@ -458,6 +458,76 @@
       "title": "Susan Kare drew the first Mac icons",
       "detail": "Susan Kare drew the first Macintosh icons on graph paper, mocking up commands at 32 by 32 pixels: scissors for cut, a finger for paste. Andy Hertzfeld had asked her in 1982, in exchange for an Apple II. She had no computer-graphics experience.",
       "link": "https://en.wikipedia.org/wiki/Susan_Kare"
+    },
+    {
+      "id": "tomlinson-at-sign",
+      "category": "hero",
+      "title": "Ray Tomlinson and the @ sign",
+      "detail": "In 1971 Ray Tomlinson adapted an existing program, SNDMSG, to run on TENEX, creating the first networked email system. He chose the @ sign to separate the username from the name of the machine, because it was not used in usernames or in TENEX programming. The user@host format is still standard in email addresses.",
+      "link": "https://en.wikipedia.org/wiki/Ray_Tomlinson"
+    },
+    {
+      "id": "zuse-z3",
+      "category": "hero",
+      "title": "Konrad Zuse and the Z3",
+      "detail": "Konrad Zuse completed the Z3 in Berlin in 1941. It is described as the world's first working programmable, fully automatic digital computer. It ran at a clock frequency of about 5 to 10 Hz and was never put into everyday operation.",
+      "link": "https://en.wikipedia.org/wiki/Z3_%28computer%29"
+    },
+    {
+      "id": "cocks-gchq-public-key",
+      "category": "hero",
+      "title": "Clifford Cocks and public-key cryptography at GCHQ",
+      "detail": "Clifford Cocks joined GCHQ's CESG in September 1973. Nick Patterson told him about James Ellis's non-secret encryption, and Cocks used prime factorization to develop what later became known as the RSA algorithm. The work stayed secret until Cocks gave a public talk on GCHQ's public-key research on 18 December 1997.",
+      "link": "https://en.wikipedia.org/wiki/Clifford_Cocks"
+    },
+    {
+      "id": "shannon-theseus",
+      "category": "project",
+      "title": "Claude Shannon's maze mouse, Theseus",
+      "detail": "In 1950 Claude Shannon designed and built a learning machine called Theseus, with the help of his wife, Betty. A mechanical mouse searched the corridors of a maze until it found the target. After much trial and error it learned the shortest path. It appears to have been the first artificial learning device of its kind.",
+      "link": "https://en.wikipedia.org/wiki/Claude_Shannon"
+    },
+    {
+      "id": "paterson-qdos",
+      "category": "hero",
+      "title": "Tim Paterson and QDOS",
+      "detail": "In April 1980 Tim Paterson began QDOS, the Quick and Dirty Operating System, because an 8086 board was selling slowly without a true operating system. It was soon renamed 86-DOS. Microsoft secured the rights to market 86-DOS to other hardware manufacturers, and renamed it MS-DOS on 27 July 1981.",
+      "link": "https://en.wikipedia.org/wiki/Tim_Paterson"
+    },
+    {
+      "id": "turing-turochamp",
+      "category": "project",
+      "title": "Alan Turing's Turochamp",
+      "detail": "In 1948 Alan Turing and David Champernowne designed Turochamp, a chess program that was never run on a computer, because its algorithm was too complex for the early computers of the time. In the summer of 1952 Turing played a match against Alick Glennie by executing the program by hand, step by step. The program lost in 29 moves.",
+      "link": "https://en.wikipedia.org/wiki/Turochamp"
+    },
+    {
+      "id": "spacewar-pdp1",
+      "category": "artifact",
+      "title": "Spacewar! on the PDP-1",
+      "detail": "Steve Russell, in collaboration with others, developed Spacewar! for the newly installed DEC PDP-1 minicomputer at MIT, released in April 1962. Two players each fly a ship, the needle or the wedge, and try to shoot each other while avoiding the star. The game was in the public domain and was widely recreated on other computers.",
+      "link": "https://en.wikipedia.org/wiki/Spacewar!"
+    },
+    {
+      "id": "babbage-difference-engine-2",
+      "category": "project",
+      "title": "Babbage's Difference Engine No. 2, built in 1991",
+      "detail": "Under Doron Swade, then Curator of Computing, the Science Museum in London built a working calculating section of Babbage's Difference Engine No. 2, from 1985 to 1991. The printer Babbage originally designed for it was completed in 2002. Both were built to tolerances achievable with 19th-century technology.",
+      "link": "https://en.wikipedia.org/wiki/Difference_engine"
+    },
+    {
+      "id": "thompson-trusting-trust",
+      "category": "artifact",
+      "title": "Ken Thompson's Reflections on Trusting Trust",
+      "detail": "In his Turing Award acceptance speech, \"Reflections on Trusting Trust\", Ken Thompson outlined a compiler backdoor. The compiler was modified to put an invisible backdoor in the Unix login command whenever it noticed the login program being compiled. It would also add the same feature, undetectably, to future compiler versions, so the compiler's source code would look clean.",
+      "link": "https://en.wikipedia.org/wiki/Backdoor_%28computing%29"
+    },
+    {
+      "id": "sutherland-sketchpad",
+      "category": "artifact",
+      "title": "Ivan Sutherland's Sketchpad",
+      "detail": "Ivan Sutherland wrote Sketchpad in 1963 in the course of his PhD thesis. It ran on the MIT Lincoln Laboratory TX-2, and the user drew on the screen with a light pen.",
+      "link": "https://en.wikipedia.org/wiki/Sketchpad"
     }
   ]
 }
