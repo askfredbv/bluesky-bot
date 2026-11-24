@@ -254,3 +254,19 @@ async def test_a_list_topic_post_has_no_source_and_no_check(monkeypatch):
     monkeypatch.setattr(agents, "check_pioneer_grounding", _never)
     content, _, _ = await agents.generate_content("k", [], mode="mentor", model_priority=["gemini-3.7-flash"])
     assert content == [_POST]
+
+
+def test_copies_pioneer_note_catches_the_verbatim_vixie_post():
+    entry = {
+        "title": "Paul Vixie looked after the internet's DNS software",
+        "detail": "Paul Vixie started maintaining BIND, the Berkeley Internet Name Domain, in 1988 and became the primary author of BIND 8. He also founded MAPS, an anti-spam nonprofit.",
+        "link": "https://www.internethalloffame.org/inductee/paul-vixie/",
+    }
+    copy = entry["detail"] + " " + entry["link"]
+    assert agents._copies_pioneer_note([copy], entry) is True
+    assert agents._copies_pioneer_note([entry["title"] + ". " + copy], entry) is True
+    assert agents._copies_pioneer_note([copy], None) is False
+    assert agents._copies_pioneer_note([copy], {}) is False
+    assert agents._copies_pioneer_note([copy], {"detail": "He started maintaining BIND in 1988."}) is False
+    own = "BIND is the Berkeley Internet Name Domain, the internet's DNS software. Paul Vixie started maintaining it in 1988, became primary author of BIND 8, and also founded MAPS, an anti-spam nonprofit."
+    assert agents._copies_pioneer_note([own], entry) is False
