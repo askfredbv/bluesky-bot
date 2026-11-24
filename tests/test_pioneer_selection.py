@@ -141,6 +141,24 @@ def test_handles_missing_pioneer_recent_key(patched_pools):
     assert result is not None
 
 
+def test_undated_never_repeats_however_old(patched_pools):
+    """#320: an undated entry posted long ago stays out; b and c are free."""
+    rng = random.Random(); rng.random = lambda: 0.0; rng.choice = lambda items: items[0]
+    old = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat()
+    seen = _seen([{"id": "test-undated-a", "posted_at": old}])
+    result = select_pioneer_topic(seen, now=_now(3, 14), rng=rng)
+    assert result["entry"]["id"] == "test-undated-b"
+
+
+def test_dated_entry_returns_after_its_cooldown(patched_pools):
+    """The anniversary comes back a year later: only undated entries are one-shot."""
+    rng = random.Random(); rng.random = lambda: 0.99
+    old = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+    seen = _seen([{"id": "test-dated-jan-1", "posted_at": old}])
+    result = select_pioneer_topic(seen, now=_now(1, 1), rng=rng)
+    assert result["entry"]["id"] == "test-dated-jan-1"
+
+
 # ── prune_pioneer_recent ─────────────────────────────────────────────────────
 
 def test_prune_drops_entries_older_than_cooldown(monkeypatch):

@@ -18,7 +18,7 @@ from src.config import (
 )
 from src.utils import get_link_metadata, compress_image, is_usable_image
 from src.state_store import (
-    load_seen_articles, update_seen_articles, prune_pioneer_recent, prune_mode_topic_history,
+    load_seen_articles, update_seen_articles, prune_mode_topic_history,
     reserve_broadcast, reserved_links, settle_broadcast,
 )
 from src.news import fetch_news
@@ -1056,7 +1056,8 @@ async def persistence_stage(automation: AutomationPayload) -> None:
 
         # Pioneer cooldown bookkeeping — only when a pioneer post actually fired
         if pioneer_entry:
-            pioneers = prune_pioneer_recent(current.get("pioneer_recent", []) or [])
+            # Not pruned: an undated entry, once posted, never returns (#320).
+            pioneers = list(current.get("pioneer_recent", []) or [])
             pioneers.append({
                 "id": pioneer_entry["entry"]["id"],
                 "posted_at": datetime.now(timezone.utc).isoformat(),
