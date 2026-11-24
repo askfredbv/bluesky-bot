@@ -796,11 +796,11 @@ OWN_POST_HISTORY_DAYS: int = 30
 PIONEER_DIMENSION_ENABLED: bool = True
 # 2026-11-16 (plan 2027, move 1): 0.35 -> 0.5. Pioneer is now a main source of
 # the afternoon, next to the day's unused news, not a side branch: its posts get
-# the "I didn't know that" reaction the plan asks for. 52 undated entries at
-# about one fire every other afternoon is ~30 per 60-day cooldown window, which
-# still leaves ~20 fresh.
+# the "I didn't know that" reaction the plan asks for. Undated entries are
+# one-shot (#320): once posted, never again, so the pool is finite and the
+# afternoon falls back to the news when it runs out.
 PIONEER_FALLBACK_PROBABILITY: float = 0.5
-PIONEER_COOLDOWN_DAYS: int = 60             # 2026-06-04: 30 → 60. User noticed `computer-was-a-job` re-firing exactly 30 days after its previous use. Math: 37 undated entries × 0.35/day fire probability ≈ 21 firings per 60-day window — still leaves ~16 fresh entries available. The audience tolerates 30-day repeats fine; the user (who reads every post) does not.
+PIONEER_COOLDOWN_DAYS: int = 60             # now only for dated anniversaries (#320). 2026-06-04: 30 → 60. User noticed `computer-was-a-job` re-firing exactly 30 days after its previous use. Math: 37 undated entries × 0.35/day fire probability ≈ 21 firings per 60-day window — still leaves ~16 fresh entries available. The audience tolerates 30-day repeats fine; the user (who reads every post) does not.
 
 # Pioneer corpus (dated anniversaries + undated facts) lives in
 # data/pioneers.json, so tuning the history content does not mean editing this

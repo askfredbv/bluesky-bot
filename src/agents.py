@@ -625,10 +625,13 @@ def select_pioneer_topic(
     # the random.Random parameter type.
     rng = cast(random.Random, rng or random)
 
-    # Build the cooldown set from prune_pioneer_recent (drops stale entries)
-    raw_recent = (seen_data or {}).get("pioneer_recent", []) or []
-    fresh_recent = prune_pioneer_recent(raw_recent)
-    cooldown_ids = {e["id"] for e in fresh_recent}
+    # Dated entries repeat once a year by design, so they keep the cooldown.
+    # Undated entries never repeat (#320): every id ever posted is excluded.
+    raw_recent = (seen_data or {}).get("pioneer_recent", [])
+    if not isinstance(raw_recent, list):
+        raw_recent = []  # corrupt state: treat as empty, never crash the run
+    cooldown_ids = {e["id"] for e in prune_pioneer_recent(raw_recent)}
+    posted_ids = {e["id"] for e in raw_recent if isinstance(e, dict) and "id" in e}
 
     # 1. Date match
     for entry in PIONEER_EVENTS_DATED:
@@ -640,9 +643,9 @@ def select_pioneer_topic(
     if rng.random() >= PIONEER_FALLBACK_PROBABILITY:
         return None
 
-    available = [e for e in PIONEER_FACTS_UNDATED if e["id"] not in cooldown_ids]
+    available = [e for e in PIONEER_FACTS_UNDATED if e["id"] not in posted_ids]
     if not available:
-        return None
+        return None  # pool used up: the caller falls back to the news
     return {"entry": rng.choice(available), "pool": "undated"}
 
 
