@@ -395,6 +395,69 @@
       "title": "SQLite is tested to aviation standards",
       "detail": "Avionics makers showed interest, so its developers built a test harness to support DO-178B, the avionics software standard. Ten months of intense work later, in 2009, it hit 100% MC/DC on the SQLite core.",
       "link": "https://sqlite.org/th3.html"
+    },
+    {
+      "id": "daemen-rijmen-aes",
+      "category": "hero",
+      "title": "Joan Daemen and Vincent Rijmen designed the cipher behind AES",
+      "detail": "AES, the encryption standard the US government announced in November 2001, is a variant of Rijndael, designed by two Belgian cryptographers, Joan Daemen and Vincent Rijmen. Fifteen designs were presented and evaluated over a five-year process.",
+      "link": "https://en.wikipedia.org/wiki/Advanced_Encryption_Standard"
+    },
+    {
+      "id": "otlet-mundaneum",
+      "category": "pioneer",
+      "title": "Paul Otlet and the Mundaneum",
+      "detail": "Paul Otlet and Henri La Fontaine, two Belgian lawyers, set out to gather all the world's knowledge on index cards: more than 12 million by the end. In 1934 Otlet drew plans for a network of \"electric telescopes\" reading from connected libraries. The Mundaneum is now an archive and museum in Mons.",
+      "link": "https://en.wikipedia.org/wiki/Mundaneum"
+    },
+    {
+      "id": "haartsen-bluetooth",
+      "category": "hero",
+      "title": "Jaap Haartsen and Bluetooth",
+      "detail": "Dutch engineer Jaap Haartsen worked on Bluetooth at Ericsson in Lund. The name was meant as a placeholder, after the Danish king Harald Bluetooth, proposed in 1997 by Jim Kardach of Intel. It stuck because the trademark search on the alternative, RadioWire, could not be finished in time.",
+      "link": "https://en.wikipedia.org/wiki/Bluetooth"
+    },
+    {
+      "id": "flowers-colossus",
+      "category": "hero",
+      "title": "Tommy Flowers built Colossus",
+      "detail": "Tommy Flowers, a Post Office engineer, built Colossus to break the German Lorenz cipher. He paid part of it himself and was granted £1,000 afterwards, which did not cover it. The Official Secrets Act kept him from claiming the work, and it was not fully acknowledged until the 1970s.",
+      "link": "https://en.wikipedia.org/wiki/Tommy_Flowers"
+    },
+    {
+      "id": "leo-lyons",
+      "category": "project",
+      "title": "LEO, the tea-shop computer",
+      "detail": "J. Lyons and Co., a British tea-shop company, built its own computer, LEO I. Its first business job, bakery valuations, ran on 5 September 1951. Later, shop orders phoned in each afternoon drove the next night's production and delivery schedules.",
+      "link": "https://en.wikipedia.org/wiki/LEO_(computer)"
+    },
+    {
+      "id": "strachey-draughts-love",
+      "category": "artifact",
+      "title": "Christopher Strachey's draughts and love letters",
+      "detail": "Christopher Strachey wrote a draughts program in 1951, first on the Pilot ACE, and by summer 1952 it played a full game at reasonable speed on the Manchester machine. That summer he also wrote a love-letter generator, described as the first example of computer-generated literature.",
+      "link": "https://en.wikipedia.org/wiki/Christopher_Strachey"
+    },
+    {
+      "id": "booth-assembly",
+      "category": "hero",
+      "title": "Kathleen Booth and assembly language",
+      "detail": "Kathleen Booth is credited with co-writing the first assembly language. At Birkbeck College she and Andrew Booth built three machines between 1947 and 1953: ARC, SEC and APE(X)C. In 1955 the group demonstrated a machine translating a French sentence into English.",
+      "link": "https://en.wikipedia.org/wiki/Kathleen_Booth"
+    },
+    {
+      "id": "shirley-freelance",
+      "category": "hero",
+      "title": "Steve Shirley and Freelance Programmers",
+      "detail": "Stephanie Shirley started Freelance Programmers with £6 of capital, to give women with dependents work they could do from home. It had only three men among its first 300 staff. She signed as \"Steve\" because letters under her real name went unanswered.",
+      "link": "https://en.wikipedia.org/wiki/Steve_Shirley"
+    },
+    {
+      "id": "kare-mac-icons",
+      "category": "artifact",
+      "title": "Susan Kare drew the first Mac icons",
+      "detail": "Susan Kare drew the first Macintosh icons on graph paper, mocking up commands at 32 by 32 pixels: scissors for cut, a finger for paste. Andy Hertzfeld had asked her in 1982, in exchange for an Apple II. She had no computer-graphics experience.",
+      "link": "https://en.wikipedia.org/wiki/Susan_Kare"
     }
   ]
 }
