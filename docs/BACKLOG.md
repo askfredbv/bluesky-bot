@@ -33,3 +33,4 @@ Anything meant to be built is a GitHub issue, not a bullet here.
 - [#264](https://github.com/askfredbv/bluesky-bot/issues/264) — De-bias phase 2: bound the keyword magnitudes
 - [#269](https://github.com/askfredbv/bluesky-bot/issues/269) — Architecture direction: answer the five owner questions
 - [#255](https://github.com/askfredbv/bluesky-bot/issues/255) — Recheck Gemini Code Assist sunset impact before 2027-01-31
+- [#332](https://github.com/askfredbv/bluesky-bot/issues/332) — Voice drift: anecdote posts read as summary; contraction in a Register A post
