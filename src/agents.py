@@ -844,36 +844,31 @@ def _is_gemma(model_name: str) -> bool:
 
 
 def _thinking_budget_for(model_name: str) -> Optional[int]:
-    """Return the explicit thinking_budget to use for a 2.5-family model.
+    """Return the explicit thinking_budget to use for a Gemini 3.x Flash model.
 
-    The Gemini 2.5 family runs in thinking-mode by default, and the thinking
-    tokens count against `max_output_tokens`. With the bot's tight cap, a
-    default thinking budget can consume so much of the output budget that
-    the model returns no visible text — surfaced 2026-05-11 on gemini-2.5-pro
-    as ``AttributeError: 'NoneType' object has no attribute 'replace'`` (the
-    parse step tried to clean a None response).
+    These models run thinking by default, and the thinking tokens count
+    against `max_output_tokens`. With the bot's tight cap, a default thinking
+    budget can consume so much of the output budget that the model returns no
+    visible text — surfaced 2026-05-11 on gemini-2.5-pro as ``AttributeError:
+    'NoneType' object has no attribute 'replace'`` (the parse step tried to
+    clean a None response). Budget 0 disables thinking, so the full output
+    budget goes to content.
 
-    Per Google's docs, thinking_budget has model-specific ranges:
-      - gemini-2.5-pro:   [128, 32768], cannot fully disable
-      - gemini-2.5-flash: [0, 24576], can fully disable
-      - gemini-2.5-flash-lite: [0, 24576], default off
-      - older / non-2.5 models: no thinking_config
-
-    We pin each thinking-capable model to its minimum so most of
-    MAX_OUTPUT_TOKENS goes to actual content. Returns None for models
-    where no thinking_config should be sent.
+    Returns None for everything else, meaning "send no thinking_config". The
+    2.5 branches (2.5-pro pinned to 128, 2.5-flash to 0) were removed on
+    2026-11-25 with the models themselves: Google redirects both on
+    2026-12-01 and one redirect target rejects the budget (see config.py).
     """
     lower = model_name.lower()
-    if "2.5-pro" in lower:
-        return 128   # 2.5-pro minimum; cannot fully disable
-    # 2.5-flash and the whole Gemini 3.x Flash line (3.5, 3.7, …) run thinking
-    # by default and accept budget 0 to disable it, so the full output budget
-    # goes to content and we avoid the 2026-05-11 empty-output bug. Matching the
-    # 3.x family by regex means a new 3.x-flash primary needs no code change.
-    # NOTE: 1.5-flash has no thinking mode — sending thinking_config errors —
-    # so it must NOT match here; it falls through to None. (The regex excludes
-    # it by requiring the "3." / "2.5-" prefix.)
-    if "2.5-flash" in lower or re.search(r"gemini-3(\.\d+)?-flash", lower):
+    # Matching the 3.x family by regex means a new 3.x-flash primary needs no
+    # code change. NOTE: 1.5-flash has no thinking mode — sending
+    # thinking_config errors — so it must NOT match here; it falls through to
+    # None. (The regex requires the "3." prefix.)
+    # NOTE: this also matches gemini-3.5-flash-lite, which answered
+    # thinking_budget=0 with 400 INVALID_ARGUMENT on 2026-11-25 (Fallback Probe
+    # run 45696676512; the same call without thinking_config succeeded). Nothing
+    # in the chain uses it. Exclude "flash-lite" here before adding it.
+    if re.search(r"gemini-3(\.\d+)?-flash", lower):
         return 0
     return None
 
@@ -1668,7 +1663,7 @@ def _sync_generate_image(api_key: str, prompt: str) -> Optional[bytes]:
 def _sync_generate_text(api_key: str, system_instr: str, task: str) -> str:
     """Synchronous Gemini text call with separate system and user content.
 
-    Uses gemini-2.5-flash (first in priority list) — fast enough for the
+    Uses the head of GEMINI_MODEL_PRIORITY — fast enough for the
     auxiliary visual-prompt crafting step where latency matters more than depth.
 
     The client carries a request-level SDK timeout (see _get_client) so a hung

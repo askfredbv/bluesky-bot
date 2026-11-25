@@ -4,7 +4,7 @@ Read-only — posts nothing, changes nothing.
 
 Why this exists
 ---------------
-The Anthropic model sits at the BOTTOM of the chain, below four Gemini models.
+The Anthropic model sits at the BOTTOM of the chain, below the Gemini models.
 In normal operation it never runs, which means no amount of watching daily runs
 tells you whether it still works. An insurance path nobody has exercised is the
 backup that turns out not to restore. This is the only way to find out on a
@@ -288,7 +288,7 @@ async def main() -> int:
         return 1
 
     # Needed for real, not as a placeholder: with --outage anthropic the Gemini
-    # rung has to actually answer, so a dummy key fails all four models and the
+    # rung has to actually answer, so a dummy key fails every Gemini model and the
     # probe reports a false negative.
     gemini_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if not gemini_key:
