@@ -131,8 +131,63 @@ async def one_run(
     return True
 
 
+def _listed_ids(gemini_key: str):
+    """IDs models.list() returns, or None when the call fails (restricted key)."""
+    import src.agents as agents
+
+    try:
+        return {m.name.split("/")[-1] for m in agents._get_client(gemini_key).models.list()}
+    except Exception:
+        return None
+
+
+async def one_model(gemini_key: str, model: str, listed) -> bool:
+    """Make ONE model the whole chain and report listed / attempted / passed.
+
+    The outage probe stops at the first model that passes, so a healthy lead
+    keeps the rungs below it from ever being called. That hides a deprecated ID
+    (gemini-2.5-* redirects on 2026-12-01) until the day it is needed. Here each
+    ID is called on its own, through the real request builder, so the three
+    questions get three separate answers: does discovery list it, was it
+    attempted (and what did the API say), and did its output pass the validators.
+    """
+    import src.agents as agents
+
+    real = agents._sync_generate
+    calls: list[str] = []
+
+    def _recording(api_key, instr, task, m, anthropic_api_key=None, timeout_seconds=None):
+        try:
+            out = real(api_key, instr, task, m, anthropic_api_key, timeout_seconds)
+        except Exception as e:
+            calls.append(f"{type(e).__name__}: {str(e)[:200]}")
+            raise
+        calls.append("returned text")
+        return out
+
+    agents._sync_generate = _recording
+    try:
+        posts, _topic, _link = await generate_content(
+            gemini_key, [], mode=Mode.CURATOR, news_items=ITEMS, model_priority=[model]
+        )
+    finally:
+        agents._sync_generate = real
+
+    in_list = "unknown" if listed is None else ("yes" if model in listed else "no")
+    passed = bool(posts)
+    print(f"\n{model}: listed={in_list} attempted={len(calls)} passed={'yes' if passed else 'no'}")
+    for i, outcome in enumerate(calls, 1):
+        print(f"  call {i}: {outcome}")
+    return passed
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--models",
+        default=os.environ.get("PROBE_MODELS") or "",
+        help="comma-separated Gemini ids; probe each ALONE instead of the outage walk",
+    )
     # `or "3"` rather than a dict default: a workflow_dispatch input that is
     # present but empty arrives as "", which int() would reject.
     ap.add_argument("--runs", type=int, default=int(os.environ.get("PROBE_RUNS") or "3"))
@@ -156,6 +211,17 @@ async def main() -> int:
             load_dotenv()
         except ImportError:
             pass
+
+    if args.models:
+        gkey = (os.environ.get("GEMINI_API_KEY") or "").strip()
+        if not gkey:
+            print("GEMINI_API_KEY is not set; nothing to probe.")
+            return 1
+        ids = [m.strip() for m in args.models.split(",") if m.strip()]
+        listed = _listed_ids(gkey)
+        results = [await one_model(gkey, m, listed) for m in ids]
+        print(f"\n{sum(results)}/{len(results)} models produced a publishable post.")
+        return 0 if all(results) else 1
 
     key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not key:
