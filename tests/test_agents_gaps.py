@@ -439,7 +439,7 @@ def test_a_month_of_own_posts_is_quoted_not_three():
 
 @pytest.mark.parametrize("model, budget", [
     ("gemini-3.7-flash", 0),
-    ("gemini-2.5-pro", 128),
+    ("gemini-2.5-pro", None),     # removed with the model (2026-12-01 redirect)
     ("gemini-1.5-flash", None),   # no thinking mode: sending the config errors
 ])
 def test_the_thinking_budget_is_sent_only_where_it_applies(model, budget):

@@ -2,7 +2,7 @@
 
 Why this module exists
 ----------------------
-``GEMINI_MODEL_PRIORITY`` is four models deep, but all four are Gemini on one
+``GEMINI_MODEL_PRIORITY`` is a short list, but every entry is Gemini on one
 key and one account. A revoked key, a quota decision or a surprise deprecation
 takes the whole chain down at once, and the project's history is full of
 Google moving things unilaterally (imagen-3 and imagen-4 shutdowns, 2.0-flash

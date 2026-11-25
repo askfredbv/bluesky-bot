@@ -31,10 +31,9 @@ MAX_POST_LENGTH_MASTODON: int = 500
 # enforced at MAX_POST_LENGTH_BSKY=300 in the broadcaster's invariant
 # check, so the bump doesn't loosen the user-visible length contract.
 #
-# Thinking budget (gemini-2.5-pro / gemini-2.5-flash) is configured
-# separately in _build_generate_kwargs and counts against this cap.
-# At thinking_budget=128 (pro min) we have ~1370 tokens left for
-# content output; plenty.
+# The thinking budget is configured separately in _build_generate_kwargs
+# (pinned to 0 for the 3.x flash line, see _thinking_budget_for) and would
+# count against this cap if it were not zero.
 MAX_OUTPUT_TOKENS: int = 1500
 STYLE_MEMORY_POST_WINDOW: int = 10
 STYLE_MEMORY_MAX_OPENERS: int = 5
@@ -142,7 +141,6 @@ MASTODON_TAG_ECONOMY_MODELS: List[str] = [
     "claude-haiku-5-5",
     "gemini-3.7-flash",
     "gemini-3.5-flash",
-    "gemini-2.5-flash",
 ]
 
 # Total wall-clock budget for naming tags. Tagging runs concurrently with the
@@ -435,15 +433,22 @@ GEMINI_MODEL_PRIORITY: List[str] = [
     # now the immediate fallback. Held the two-register voice as sharp/terse/
     # first-person as 2.5-pro while it was primary (2026-06-09 → 2026-08-18).
     "gemini-3.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
     # v4.18 (2026-05-11): gemini-2.0-flash dropped (deprecated for new users).
     # 2026-08-18: gemini-1.5-flash-latest and gemma-3-27b-it removed too — the
     # Model Discovery workflow confirmed the key can no longer reach either, so
-    # filter_available_models() was pruning them every run anyway. The reachable
-    # chain (3.7-flash -> 3.5-flash -> 2.5-pro -> 2.5-flash) has ample fallback
-    # depth. Re-add a model here if Google re-enables it for this account.
+    # filter_available_models() was pruning them every run anyway. Re-add a model
+    # here if Google re-enables it for this account.
     # (The Gemma prompt-inlining path in agents.py stays — harmless if unused.)
+    #
+    # 2026-11-25: gemini-2.5-pro and gemini-2.5-flash removed. Google routes both
+    # to other models on 2026-12-01 (2.5-pro -> gemini-3.8-flash, 2.5-flash ->
+    # gemini-3.5-flash-lite; changelog entry 2026-11-02). Fallback Probe runs the
+    # same day: gemini-3.5-flash-lite answered the request this bot sends for
+    # 2.5-flash (thinking_budget=0) with 400 INVALID_ARGUMENT on 5/5 runs and
+    # answered 6/6 once thinking_config was dropped; gemini-3.8-flash was never
+    # sent the thinking_budget=128 that 2.5-pro carried. Rather than guess how the
+    # redirect treats the old request, the two rungs are gone. A Gemini-side
+    # failure now means the run is skipped after two Gemini models, not four.
 ]
 
 # The Anthropic rung of the model chain, in its own preference order.

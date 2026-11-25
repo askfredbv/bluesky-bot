@@ -529,9 +529,9 @@ def test_a_single_model_chain_yields_no_reviewer():
 
 _ANTHROPIC_PRIMARY = [
     "claude-sonnet-5-5", "claude-haiku-5-5",
-    "gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash",
+    "gemini-3.7-flash", "gemini-3.5-flash",
 ]
-_GEMINI_ONLY = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"]
+_GEMINI_ONLY = ["gemini-3.7-flash", "gemini-3.5-flash"]
 
 
 def test_tagging_skips_the_expensive_head_of_the_chain():
@@ -555,15 +555,15 @@ def test_a_gemini_only_chain_selects_exactly_as_before():
 
 def test_selection_falls_back_to_chain_order_without_two_economy_models():
     """A model missing from the declared list costs money, never correctness."""
-    assert agents._select_tag_models(["gemini-2.5-pro", "claude-sonnet-5-5"]) == (
-        "gemini-2.5-pro", "claude-sonnet-5-5")
+    assert agents._select_tag_models(["gemini-3.1-pro", "claude-sonnet-5-5"]) == (
+        "gemini-3.1-pro", "claude-sonnet-5-5")
 
 
 def test_a_lone_economy_model_does_not_strand_the_reviewer():
     """One economy entry is not a pair, so the whole chain is used instead of
     returning a proposer with no reviewer (which would mean no tags)."""
-    assert agents._select_tag_models(["claude-sonnet-5-5", "gemini-2.5-flash"]) == (
-        "claude-sonnet-5-5", "gemini-2.5-flash")
+    assert agents._select_tag_models(["claude-sonnet-5-5", "gemini-3.5-flash"]) == (
+        "claude-sonnet-5-5", "gemini-3.5-flash")
 
 
 @pytest.mark.asyncio

@@ -603,8 +603,8 @@ async def test_model_failover_advances_to_next_model_on_api_error(monkeypatch):
 
 
 def test_thinking_budget_for_covers_model_families():
-    """Guards the empty-output protection (the 2026-05-11 bug): 2.5-pro and the
-    whole 2.5 / 3.x-flash line must pin a thinking budget, while 1.5-flash —
+    """Guards the empty-output protection (the 2026-05-11 bug): the whole
+    3.x-flash line must pin a thinking budget, while 1.5-flash —
     which has no thinking mode — must stay None (sending thinking_config would
     error and break that fallback). The failover test stubs _sync_generate, so
     this is the only place the regex branch is actually exercised."""
@@ -614,9 +614,9 @@ def test_thinking_budget_for_covers_model_families():
     assert budget("gemini-3.7-flash") == 0
     assert budget("gemini-3.6-flash") == 0
     assert budget("gemini-3.5-flash") == 0
-    # 2.5 family: flash disables, pro pins to its minimum (cannot fully disable).
-    assert budget("gemini-2.5-flash") == 0
-    assert budget("gemini-2.5-pro") == 128
+    # The 2.5 branches went with the models (redirected 2026-12-01).
+    assert budget("gemini-2.5-flash") is None
+    assert budget("gemini-2.5-pro") is None
     # No thinking mode → must NOT send thinking_config (return None).
     assert budget("gemini-1.5-flash-latest") is None
     assert budget("gemma-3-27b-it") is None
@@ -643,7 +643,7 @@ async def test_model_failover_does_not_advance_on_json_error(monkeypatch):
 
     # Should have retried the same models 2x each — never jumped early due to JSON error
     # All models will be tried (2 attempts each), ending in exhaustion (empty list)
-    assert models_tried.count("gemini-2.5-flash") == 2
+    assert models_tried.count("gemini-3.5-flash") == 2
     assert content == []  # v4.18: exhausted chain returns empty, not placeholder
 
 

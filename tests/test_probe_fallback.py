@@ -130,7 +130,7 @@ def test_drop_thinking_removes_thinking_config_only_during_the_call(monkeypatch,
     seen = {}
 
     def config():
-        return agents._build_generate_kwargs("gemini-2.5-flash", "s", "t")["config"]
+        return agents._build_generate_kwargs("gemini-3.7-flash", "s", "t")["config"]
 
     async def fake_generate(key, recent, **kw):
         seen["during"] = "thinking_config" in config()
@@ -141,7 +141,7 @@ def test_drop_thinking_removes_thinking_config_only_during_the_call(monkeypatch,
 
     monkeypatch.setattr(probe, "generate_content", fake_generate)
     assert "thinking_config" in config()  # production shape, before
-    assert _run(probe.one_model("k", "gemini-2.5-flash", None, drop_thinking=True)) is True
+    assert _run(probe.one_model("k", "gemini-3.7-flash", None, drop_thinking=True)) is True
     assert seen["during"] is False
     assert seen["reviewer"] is True
     assert "thinking_config" in config()  # restored, after
@@ -154,11 +154,11 @@ def test_thinking_config_is_kept_by_default(monkeypatch):
 
     async def fake_generate(key, recent, **kw):
         seen["during"] = "thinking_config" in agents._build_generate_kwargs(
-            "gemini-2.5-flash", "s", "t")["config"]
+            "gemini-3.7-flash", "s", "t")["config"]
         return ["a post"], "t", "https://x"
 
     monkeypatch.setattr(probe, "generate_content", fake_generate)
-    _run(probe.one_model("k", "gemini-2.5-flash", None))
+    _run(probe.one_model("k", "gemini-3.7-flash", None))
     assert seen["during"] is True
 
 
