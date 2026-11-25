@@ -27,6 +27,10 @@ on:
         description: 'Optional comma-separated Gemini ids, each probed alone (skips the outage walk)'
         required: false
         default: ''
+      no_thinking_config:
+        description: 'With models: send no thinking_config (isolates it as the cause of a 400)'
+        type: boolean
+        default: false
 
 jobs:
   probe:
@@ -56,4 +60,5 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PROBE_RUNS: ${{ inputs.runs }}
           PROBE_MODELS: ${{ inputs.models }}
+          PROBE_NO_THINKING_CONFIG: ${{ inputs.no_thinking_config }}
         run: python -m scripts.probe_fallback

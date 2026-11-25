@@ -71,7 +71,7 @@ def test_runs_repeat_each_model_and_summarise(monkeypatch, capsys):
     monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
     outcomes = iter([True, False, True, False, False, False])  # a: 2/3, b: 0/3
 
-    async def fake_one_model(key, model, listed, akey=None):
+    async def fake_one_model(key, model, listed, akey=None, **kw):
         return next(outcomes)
 
     monkeypatch.setattr(probe, "one_model", fake_one_model)
@@ -86,7 +86,7 @@ def test_partial_passes_are_not_a_failure(monkeypatch):
     monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
     outcomes = iter([True, False])
 
-    async def fake_one_model(key, model, listed, akey=None):
+    async def fake_one_model(key, model, listed, akey=None, **kw):
         return next(outcomes)
 
     monkeypatch.setattr(probe, "one_model", fake_one_model)
@@ -114,7 +114,7 @@ def test_repeated_ids_are_probed_once(monkeypatch, capsys):
     monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
     seen = []
 
-    async def fake_one_model(key, model, listed, akey=None):
+    async def fake_one_model(key, model, listed, akey=None, **kw):
         seen.append(model)
         return True
 
@@ -123,3 +123,51 @@ def test_repeated_ids_are_probed_once(monkeypatch, capsys):
     assert _run(probe.main()) == 0
     assert seen == ["a", "a", "b", "b"]
     assert "  a: 2/2" in capsys.readouterr().out
+
+
+def test_drop_thinking_removes_thinking_config_only_during_the_call(monkeypatch, capsys):
+    monkeypatch.setattr(agents, "_sync_generate", lambda *a, **k: "ok")
+    seen = {}
+
+    def config():
+        return agents._build_generate_kwargs("gemini-2.5-flash", "s", "t")["config"]
+
+    async def fake_generate(key, recent, **kw):
+        seen["during"] = "thinking_config" in config()
+        return ["a post"], "t", "https://x"
+
+    monkeypatch.setattr(probe, "generate_content", fake_generate)
+    assert "thinking_config" in config()  # production shape, before
+    assert _run(probe.one_model("k", "gemini-2.5-flash", None, drop_thinking=True)) is True
+    assert seen["during"] is False
+    assert "thinking_config" in config()  # restored, after
+    assert "[thinking_config dropped]" in capsys.readouterr().out
+
+
+def test_thinking_config_is_kept_by_default(monkeypatch):
+    monkeypatch.setattr(agents, "_sync_generate", lambda *a, **k: "ok")
+    seen = {}
+
+    async def fake_generate(key, recent, **kw):
+        seen["during"] = "thinking_config" in agents._build_generate_kwargs(
+            "gemini-2.5-flash", "s", "t")["config"]
+        return ["a post"], "t", "https://x"
+
+    monkeypatch.setattr(probe, "generate_content", fake_generate)
+    _run(probe.one_model("k", "gemini-2.5-flash", None))
+    assert seen["during"] is True
+
+
+def test_flag_reaches_one_model(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
+    got = []
+
+    async def fake_one_model(key, model, listed, akey=None, drop_thinking=False):
+        got.append(drop_thinking)
+        return True
+
+    monkeypatch.setattr(probe, "one_model", fake_one_model)
+    monkeypatch.setattr("sys.argv", ["probe", "--models", "a", "--runs", "1", "--no-thinking-config"])
+    assert _run(probe.main()) == 0
+    assert got == [True]
