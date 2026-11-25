@@ -1,4 +1,5 @@
 """Security boundary checks for the dependency-audit workflow."""
+import re
 from pathlib import Path
 
 
@@ -19,7 +20,7 @@ def test_issue_writer_never_installs_or_runs_pip_audit():
     assert "issues: write" in writer
     assert "python -m pip install" not in writer
     assert "python -m pip_audit" not in writer
-    assert "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" in writer
+    assert re.search(r"actions/download-artifact@[0-9a-f]{40}(?=\s|$)", writer)
 
 
 def test_read_only_job_produces_the_audit_artifact():
@@ -29,7 +30,8 @@ def test_read_only_job_produces_the_audit_artifact():
     assert "permissions:\n      contents: read" in producer
     assert "pip-audit==2.10.1" in producer
     assert "--format json --output audit.json" in producer
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in producer
+    # Pinned by full SHA, not by a specific one: Dependabot moves the SHA.
+    assert re.search(r"actions/upload-artifact@[0-9a-f]{40}(?=\s|$)", producer)
 
 
 def test_writer_preserves_freshness_and_reporting_path():
