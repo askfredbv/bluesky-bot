@@ -26,7 +26,6 @@ The four 2027 objectives, how each is measured, and the six guardrails are in
 
 Anything meant to be built is a GitHub issue, not a bullet here.
 
-- [#230](https://github.com/askfredbv/bluesky-bot/issues/230) — Read out the 19:00 Brussels afternoon-slot test (2026-11-24)
 - [#293](https://github.com/askfredbv/bluesky-bot/issues/293) — Secrets now environment-only: live-verify every workflow that uses them
 - [#295](https://github.com/askfredbv/bluesky-bot/issues/295) — v4.33.0 and the loose ends from 2026-11-16
 - [#265](https://github.com/askfredbv/bluesky-bot/issues/265) — Pass an explicit mode on the scheduled dispatches
