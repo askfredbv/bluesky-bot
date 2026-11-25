@@ -189,7 +189,8 @@ async def one_model(
     if drop_thinking:
         # None is what _build_generate_kwargs reads as "send no thinking_config".
         def _no_budget(model_name: str) -> int | None:
-            return None
+            # Only the model under test; a grounding reviewer keeps its real shape.
+            return None if model_name == model else real_budget(model_name)
 
         agents._thinking_budget_for = _no_budget
     try:
