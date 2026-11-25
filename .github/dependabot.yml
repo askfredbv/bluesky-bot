@@ -12,9 +12,10 @@ updates:
     # passed `lockfile`. Example: #96 (2026-08-29) bumped pydantic-core alone,
     # which pydantic pins exactly, giving ResolutionImpossible.
     # Two things keep that from happening again:
-    #   1. One group for every minor and patch bump, so packages that move
-    #      together (pydantic + pydantic-core, httpx + httpcore, ...) land in a
-    #      single weekly PR instead of a stream of half-PRs.
+    #   1. One group for every minor and patch bump (atproto aside, see the
+    #      groups below), so packages that move together (pydantic +
+    #      pydantic-core, httpx + httpcore, ...) land in a single weekly PR
+    #      instead of a stream of half-PRs.
     #   2. .github/workflows/dependabot-lockfile.yml regenerates both lockfiles
     #      with pip-compile on every Dependabot PR and pushes the result, so the
     #      PR passes `lockfile` by construction.
@@ -27,9 +28,23 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
+      # atproto alone: it is 0.0.x, so every release can break something, and a
+      # type or API problem in it must not hold back the other six bumps (#310
+      # sat red for that reason). First match wins, so it is listed first and
+      # left out of the group below.
+      atproto:
+        applies-to: version-updates
+        patterns: ["atproto"]
       python-minor-and-patch:
         applies-to: version-updates
         update-types: ["minor", "patch"]
+        exclude-patterns: ["atproto"]
+    # Deliberately NO `ignore` for tenacity, although google-genai caps
+    # tenacity<9.2.0 (still true for 3.6.1, checked 2026-11-25) and a lone
+    # tenacity 9.2.x PR is therefore a no-op (#268): `ignore` also filters
+    # security updates, and a tenacity fix that exists only in 9.2+ must stay
+    # visible. Close such a PR by hand; in the group it is harmless, the
+    # lockfile fix-up regenerates it back to 9.1.4.
     allow:
       # Majors stay a human decision. Every runtime dependency has a ceiling in
       # pyproject.toml (`<2`, `<14`, ...), so a major bump means editing that
