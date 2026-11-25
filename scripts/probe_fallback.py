@@ -141,7 +141,7 @@ def _listed_ids(gemini_key: str):
         return None
 
 
-async def one_model(gemini_key: str, model: str, listed) -> bool:
+async def one_model(gemini_key: str, model: str, listed, anthropic_key=None) -> bool:
     """Make ONE model the whole chain and report listed / attempted / passed.
 
     The outage probe stops at the first model that passes, so a healthy lead
@@ -154,30 +154,48 @@ async def one_model(gemini_key: str, model: str, listed) -> bool:
     import src.agents as agents
 
     real = agents._sync_generate
+    real_reviewers = agents._grounding_reviewers
     calls: list[str] = []
+    review_calls: list[str] = []
+    # A one-model chain leaves the grounding check no distinct reviewer, so it
+    # would reject every post and report a healthy model as failed. The writer
+    # is the single model; the reviewers come from the production chain.
+    prod_chain = (
+        ANTHROPIC_MODELS + GEMINI_MODEL_PRIORITY
+        if ANTHROPIC_CHAIN_POSITION == "primary"
+        else GEMINI_MODEL_PRIORITY + ANTHROPIC_MODELS
+    )
 
     def _recording(api_key, instr, task, m, anthropic_api_key=None, timeout_seconds=None):
+        # Only the tested model's own calls count as "attempted"; the
+        # reviewer's are listed apart so they cannot be mistaken for it.
+        sink = calls if m == model else review_calls
         try:
             out = real(api_key, instr, task, m, anthropic_api_key, timeout_seconds)
         except Exception as e:
-            calls.append(f"{type(e).__name__}: {str(e)[:200]}")
+            sink.append(f"{m} {type(e).__name__}: {str(e)[:200]}")
             raise
-        calls.append("returned text")
+        sink.append(f"{m} returned text")
         return out
 
     agents._sync_generate = _recording
+    agents._grounding_reviewers = lambda writer, chain: real_reviewers(writer, prod_chain)
     try:
         posts, _topic, _link = await generate_content(
-            gemini_key, [], mode=Mode.CURATOR, news_items=ITEMS, model_priority=[model]
+            gemini_key, [], mode=Mode.CURATOR, news_items=ITEMS,
+            model_priority=[model], anthropic_api_key=anthropic_key,
         )
     finally:
         agents._sync_generate = real
+        agents._grounding_reviewers = real_reviewers
 
     in_list = "unknown" if listed is None else ("yes" if model in listed else "no")
     passed = bool(posts)
     print(f"\n{model}: listed={in_list} attempted={len(calls)} passed={'yes' if passed else 'no'}")
     for i, outcome in enumerate(calls, 1):
         print(f"  call {i}: {outcome}")
+    for outcome in review_calls:
+        print(f"  grounding reviewer: {outcome}")
     return passed
 
 
@@ -219,7 +237,8 @@ async def main() -> int:
             return 1
         ids = [m.strip() for m in args.models.split(",") if m.strip()]
         listed = _listed_ids(gkey)
-        results = [await one_model(gkey, m, listed) for m in ids]
+        akey = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
+        results = [await one_model(gkey, m, listed, akey) for m in ids]
         print(f"\n{sum(results)}/{len(results)} models produced a publishable post.")
         return 0 if all(results) else 1
 
