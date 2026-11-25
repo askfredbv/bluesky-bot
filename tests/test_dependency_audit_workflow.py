@@ -20,7 +20,7 @@ def test_issue_writer_never_installs_or_runs_pip_audit():
     assert "issues: write" in writer
     assert "python -m pip install" not in writer
     assert "python -m pip_audit" not in writer
-    assert re.search(r"actions/download-artifact@[0-9a-f]{40}", writer)
+    assert re.search(r"actions/download-artifact@[0-9a-f]{40}(?=\s|$)", writer)
 
 
 def test_read_only_job_produces_the_audit_artifact():
@@ -31,7 +31,7 @@ def test_read_only_job_produces_the_audit_artifact():
     assert "pip-audit==2.10.1" in producer
     assert "--format json --output audit.json" in producer
     # Pinned by full SHA, not by a specific one: Dependabot moves the SHA.
-    assert re.search(r"actions/upload-artifact@[0-9a-f]{40}", producer)
+    assert re.search(r"actions/upload-artifact@[0-9a-f]{40}(?=\s|$)", producer)
 
 
 def test_writer_preserves_freshness_and_reporting_path():
