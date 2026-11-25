@@ -27,9 +27,24 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
+      # atproto alone: it is 0.0.x, so every release can break something, and a
+      # type or API problem in it must not hold back the other six bumps (#310
+      # sat red for that reason). First match wins, so it is listed first and
+      # left out of the group below.
+      atproto:
+        applies-to: version-updates
+        patterns: ["atproto"]
       python-minor-and-patch:
         applies-to: version-updates
         update-types: ["minor", "patch"]
+        exclude-patterns: ["atproto"]
+    ignore:
+      # google-genai caps tenacity<9.2.0 (still true for google-genai 3.6.1,
+      # checked 2026-11-25), so pip-compile pulls any bump back and the PR is a
+      # no-op (#268). Remove this when google-genai lifts the cap. Scoped to
+      # versions >= 9.2.0, which could not be installed under that cap anyway.
+      - dependency-name: "tenacity"
+        versions: [">=9.2.0"]
     allow:
       # Majors stay a human decision. Every runtime dependency has a ceiling in
       # pyproject.toml (`<2`, `<14`, ...), so a major bump means editing that
