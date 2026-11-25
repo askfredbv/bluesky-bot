@@ -99,3 +99,11 @@ def test_zero_runs_is_rejected(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["probe", "--models", "a", "--runs", "0"])
     assert _run(probe.main()) == 1
     assert "at least 1" in capsys.readouterr().out
+
+
+def test_zero_runs_is_rejected_in_the_outage_walk_too(monkeypatch, capsys):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr("sys.argv", ["probe", "--runs", "0"])
+    assert _run(probe.main()) == 1
+    assert "at least 1" in capsys.readouterr().out

@@ -222,6 +222,10 @@ async def main() -> int:
         help="which provider to simulate as down",
     )
     args = ap.parse_args()
+    if args.runs < 1:
+        # 0 runs would print 0/0 and exit 0 in either mode.
+        print("--runs must be at least 1.")
+        return 1
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         # Same convenience as scripts/discover_models.py: in CI the key comes
@@ -245,9 +249,6 @@ async def main() -> int:
             return 1
         listed = _listed_ids(gkey)
         akey = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
-        if args.runs < 1:
-            print("--runs must be at least 1.")
-            return 1
         # One sample per model cannot rank anything: two runs of the same four
         # ids flipped three of the four verdicts.
         passes = {m: 0 for m in ids}
