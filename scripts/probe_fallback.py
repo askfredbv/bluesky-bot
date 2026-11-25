@@ -175,7 +175,10 @@ async def one_model(gemini_key: str, model: str, listed, anthropic_key=None) -> 
         except Exception as e:
             sink.append(f"{m} {type(e).__name__}: {str(e)[:200]}")
             raise
-        sink.append(f"{m} returned text")
+        # Length and tail, because the log keeps ~200 chars of a bad response:
+        # a string that ends mid-sentence at the token cap looks different from
+        # one that ends in a stray character.
+        sink.append(f"{m} returned {len(out)} chars, ends {out[-80:]!r}")
         return out
 
     agents._sync_generate = _recording
@@ -242,9 +245,21 @@ async def main() -> int:
             return 1
         listed = _listed_ids(gkey)
         akey = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
-        results = [await one_model(gkey, m, listed, akey) for m in ids]
-        print(f"\n{sum(results)}/{len(results)} models produced a publishable post.")
-        return 0 if all(results) else 1
+        if args.runs < 1:
+            print("--runs must be at least 1.")
+            return 1
+        # One sample per model cannot rank anything: two runs of the same four
+        # ids flipped three of the four verdicts.
+        passes = {m: 0 for m in ids}
+        for m in ids:
+            for _ in range(args.runs):
+                passes[m] += await one_model(gkey, m, listed, akey)
+        print("\nSUMMARY (publishable posts per model):")
+        for m in ids:
+            print(f"  {m}: {passes[m]}/{args.runs}")
+        # Failing some runs is the thing being measured; a model that never
+        # passes is the failure.
+        return 0 if all(passes.values()) else 1
 
     key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     if not key:

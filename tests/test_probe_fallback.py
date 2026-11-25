@@ -53,7 +53,7 @@ def test_passing_model_and_unknown_listing(monkeypatch, capsys):
     assert _run(probe.one_model("k", "gemini-3.7-flash", None)) is True
     out = capsys.readouterr().out
     assert "listed=unknown attempted=1 passed=yes" in out  # reviewer not counted
-    assert "grounding reviewer: gemini-3.5-flash returned text" in out
+    assert "grounding reviewer: gemini-3.5-flash returned 2 chars, ends 'ok'" in out
     assert seen["reviewers"] and "gemini-3.7-flash" not in seen["reviewers"]
     assert agents._grounding_reviewers is original
 
@@ -63,3 +63,39 @@ def test_models_that_normalize_to_nothing_is_a_failure(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["probe", "--models", " , ,"])
     assert _run(probe.main()) == 1
     assert "named no model ids" in capsys.readouterr().out
+
+
+def test_runs_repeat_each_model_and_summarise(monkeypatch, capsys):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
+    outcomes = iter([True, False, True, False, False, False])  # a: 2/3, b: 0/3
+
+    async def fake_one_model(key, model, listed, akey=None):
+        return next(outcomes)
+
+    monkeypatch.setattr(probe, "one_model", fake_one_model)
+    monkeypatch.setattr("sys.argv", ["probe", "--models", "a,b", "--runs", "3"])
+    assert _run(probe.main()) == 1  # b never passed
+    out = capsys.readouterr().out
+    assert "  a: 2/3" in out and "  b: 0/3" in out
+
+
+def test_partial_passes_are_not_a_failure(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
+    outcomes = iter([True, False])
+
+    async def fake_one_model(key, model, listed, akey=None):
+        return next(outcomes)
+
+    monkeypatch.setattr(probe, "one_model", fake_one_model)
+    monkeypatch.setattr("sys.argv", ["probe", "--models", "a", "--runs", "2"])
+    assert _run(probe.main()) == 0
+
+
+def test_zero_runs_is_rejected(monkeypatch, capsys):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr("sys.argv", ["probe", "--models", "a", "--runs", "0"])
+    assert _run(probe.main()) == 1
+    assert "at least 1" in capsys.readouterr().out
