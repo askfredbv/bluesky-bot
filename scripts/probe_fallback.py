@@ -236,6 +236,10 @@ async def main() -> int:
             print("GEMINI_API_KEY is not set; nothing to probe.")
             return 1
         ids = [m.strip() for m in args.models.split(",") if m.strip()]
+        if not ids:
+            # "," or " " is truthy but names nothing; 0/0 must not read as green.
+            print("--models named no model ids.")
+            return 1
         listed = _listed_ids(gkey)
         akey = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
         results = [await one_model(gkey, m, listed, akey) for m in ids]

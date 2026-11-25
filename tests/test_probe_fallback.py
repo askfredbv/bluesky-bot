@@ -56,3 +56,10 @@ def test_passing_model_and_unknown_listing(monkeypatch, capsys):
     assert "grounding reviewer: gemini-3.5-flash returned text" in out
     assert seen["reviewers"] and "gemini-3.7-flash" not in seen["reviewers"]
     assert agents._grounding_reviewers is original
+
+
+def test_models_that_normalize_to_nothing_is_a_failure(monkeypatch, capsys):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr("sys.argv", ["probe", "--models", " , ,"])
+    assert _run(probe.main()) == 1
+    assert "named no model ids" in capsys.readouterr().out
