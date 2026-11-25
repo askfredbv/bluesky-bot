@@ -128,7 +128,7 @@ a different lockfile (dropped and added packages), which `lockfile` then rejects
 Windows or newer-Python machine, run the same commands in the CI image:
 
 ```
-docker run --rm -v "${PWD}:/w" -w /w python:3.11-slim sh -c "pip install -q pip-tools && pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml && pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml"
+docker run --rm -v "${PWD}:/w" -w /w python:3.11-slim sh -c "python -m pip install -q --upgrade pip pip-tools && pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml && pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml"
 ```
 
 `requirements.txt` (runtime) and `requirements-dev.txt` (runtime + dev tools) are both
