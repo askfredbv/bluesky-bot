@@ -141,7 +141,9 @@ def _listed_ids(gemini_key: str):
         return None
 
 
-async def one_model(gemini_key: str, model: str, listed, anthropic_key=None) -> bool:
+async def one_model(
+    gemini_key: str, model: str, listed, anthropic_key=None, drop_thinking: bool = False
+) -> bool:
     """Make ONE model the whole chain and report listed / attempted / passed.
 
     The outage probe stops at the first model that passes, so a healthy lead
@@ -155,6 +157,7 @@ async def one_model(gemini_key: str, model: str, listed, anthropic_key=None) -> 
 
     real = agents._sync_generate
     real_reviewers = agents._grounding_reviewers
+    real_budget = agents._thinking_budget_for
     calls: list[str] = []
     review_calls: list[str] = []
     # A one-model chain leaves the grounding check no distinct reviewer, so it
@@ -183,6 +186,13 @@ async def one_model(gemini_key: str, model: str, listed, anthropic_key=None) -> 
 
     agents._sync_generate = _recording
     agents._grounding_reviewers = lambda writer, chain: real_reviewers(writer, prod_chain)
+    if drop_thinking:
+        # None is what _build_generate_kwargs reads as "send no thinking_config".
+        def _no_budget(model_name: str) -> int | None:
+            # Only the model under test; a grounding reviewer keeps its real shape.
+            return None if model_name == model else real_budget(model_name)
+
+        agents._thinking_budget_for = _no_budget
     try:
         posts, _topic, _link = await generate_content(
             gemini_key, [], mode=Mode.CURATOR, news_items=ITEMS,
@@ -191,10 +201,12 @@ async def one_model(gemini_key: str, model: str, listed, anthropic_key=None) -> 
     finally:
         agents._sync_generate = real
         agents._grounding_reviewers = real_reviewers
+        agents._thinking_budget_for = real_budget
 
     in_list = "unknown" if listed is None else ("yes" if model in listed else "no")
     passed = bool(posts)
-    print(f"\n{model}: listed={in_list} attempted={len(calls)} passed={'yes' if passed else 'no'}")
+    dropped = "  [thinking_config dropped]" if drop_thinking else ""
+    print(f"\n{model}: listed={in_list} attempted={len(calls)} passed={'yes' if passed else 'no'}{dropped}")
     for i, outcome in enumerate(calls, 1):
         print(f"  call {i}: {outcome}")
     for outcome in review_calls:
@@ -211,6 +223,12 @@ async def main() -> int:
     )
     # `or "3"` rather than a dict default: a workflow_dispatch input that is
     # present but empty arrives as "", which int() would reject.
+    ap.add_argument(
+        "--no-thinking-config",
+        action="store_true",
+        default=(os.environ.get("PROBE_NO_THINKING_CONFIG") or "").lower() == "true",
+        help="send no thinking_config (isolates it as the cause of a 400); --models only",
+    )
     ap.add_argument("--runs", type=int, default=int(os.environ.get("PROBE_RUNS") or "3"))
     # Default to failing whichever provider currently writes the posts, because
     # the rung worth probing is the one production never reaches.
@@ -255,7 +273,8 @@ async def main() -> int:
         passes = {m: 0 for m in ids}
         for m in ids:
             for _ in range(args.runs):
-                passes[m] += await one_model(gkey, m, listed, akey)
+                passes[m] += await one_model(
+                    gkey, m, listed, akey, drop_thinking=args.no_thinking_config)
         print("\nSUMMARY (publishable posts per model):")
         for m in ids:
             print(f"  {m}: {passes[m]}/{args.runs}")
