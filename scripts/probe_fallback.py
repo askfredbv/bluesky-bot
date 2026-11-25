@@ -242,7 +242,8 @@ async def main() -> int:
         if not gkey:
             print("GEMINI_API_KEY is not set; nothing to probe.")
             return 1
-        ids = [m.strip() for m in args.models.split(",") if m.strip()]
+        # dict.fromkeys: a repeated id would be probed twice but counted once.
+        ids = list(dict.fromkeys(m.strip() for m in args.models.split(",") if m.strip()))
         if not ids:
             # "," or " " is truthy but names nothing; 0/0 must not read as green.
             print("--models named no model ids.")

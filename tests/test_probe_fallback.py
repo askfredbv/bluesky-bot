@@ -107,3 +107,19 @@ def test_zero_runs_is_rejected_in_the_outage_walk_too(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["probe", "--runs", "0"])
     assert _run(probe.main()) == 1
     assert "at least 1" in capsys.readouterr().out
+
+
+def test_repeated_ids_are_probed_once(monkeypatch, capsys):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(probe, "_listed_ids", lambda key: None)
+    seen = []
+
+    async def fake_one_model(key, model, listed, akey=None):
+        seen.append(model)
+        return True
+
+    monkeypatch.setattr(probe, "one_model", fake_one_model)
+    monkeypatch.setattr("sys.argv", ["probe", "--models", "a, b,a", "--runs", "2"])
+    assert _run(probe.main()) == 0
+    assert seen == ["a", "a", "b", "b"]
+    assert "  a: 2/2" in capsys.readouterr().out
