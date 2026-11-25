@@ -123,6 +123,14 @@ pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requi
 pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml
 ```
 
+CI compiles on Python 3.11 and Linux; compiling on another Python or on Windows gives
+a different lockfile (dropped and added packages), which `lockfile` then rejects. From a
+Windows or newer-Python machine, run the same commands in the CI image:
+
+```
+docker run --rm -v "${PWD}:/w" -w /w python:3.11-slim sh -c "pip install -q pip-tools && pip-compile --quiet --no-header --no-annotate --strip-extras --output-file requirements.txt pyproject.toml && pip-compile --quiet --no-header --no-annotate --strip-extras --extra dev --output-file requirements-dev.txt pyproject.toml"
+```
+
 `requirements.txt` (runtime) and `requirements-dev.txt` (runtime + dev tools) are both
 generated from `pyproject.toml` via `pip-compile` (the lockfile check in CI enforces they
 match). Add new deps to `pyproject.toml` — runtime under `[project.dependencies]`, dev
