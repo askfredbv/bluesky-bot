@@ -329,7 +329,7 @@ async def post_to_bluesky(
 
     try:
         for i, post_text in enumerate(content_list):
-            embed = None
+            embed: models.AppBskyEmbedImages.Main | models.AppBskyEmbedExternal.Main | None = None
             if i == 0:
                 if image_bytes:
                     # Image embed (Mentor/Strategist). The image model's output
@@ -400,6 +400,8 @@ async def post_to_bluesky(
                 async def _do_send():
                     return await client.send_post(text=post_text, embed=embed, facets=facets)
             else:
+                # parent_ref and root_ref are set together after the first send.
+                assert root_ref is not None, "thread continuation without a root"
                 reply_ref = models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
                 async def _do_send():
                     return await client.send_post(text=post_text, reply_to=reply_ref, facets=facets)
