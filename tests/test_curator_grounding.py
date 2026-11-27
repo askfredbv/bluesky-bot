@@ -270,3 +270,51 @@ def test_copies_pioneer_note_catches_the_verbatim_vixie_post():
     assert agents._copies_pioneer_note([copy], {"detail": "He started maintaining BIND in 1988."}) is False
     own = "BIND is the Berkeley Internet Name Domain, the internet's DNS software. Paul Vixie started maintaining it in 1988, became primary author of BIND 8, and also founded MAPS, an anti-spam nonprofit."
     assert agents._copies_pioneer_note([own], entry) is False
+
+
+# Real posts and the entries they came from (#319 follow-up, calibrated 2026-11-27).
+# A lightly reworded copy has no long unbroken run, so only the share test sees it.
+_REWORDED_COPIES = [
+    (  # 2026-11-26, 97% of the post is the entry's wording
+        "J. Lyons and Co., a British tea-shop company, built its own computer, LEO I. Its first business job, bakery valuations, ran on 5 September 1951. Later, shop orders phoned in each afternoon drove the next night's production and delivery schedules.",
+        "J. Lyons and Co., a British tea-shop company, built its own computer. LEO I ran its first business job, bakery valuations, on 5 September 1951. Later, shop orders phoned in each afternoon set the next night's production and delivery schedules.",
+    ),
+    (  # 2026-11-27, 81%
+        "Avionics makers showed interest, so its developers built a test harness to support DO-178B, the avionics software standard. Ten months of intense work later, in 2009, it hit 100% MC/DC on the SQLite core.",
+        "Avionics makers showed interest in SQLite, so its developers built a test harness for DO-178B, the avionics software standard. Ten months of intense work later, in 2009, the core hit 100% MC/DC.",
+    ),
+    (  # 2026-10-06, 64%: synonyms swapped, nothing added
+        "The 1955 proposal that coined 'artificial intelligence' asked for a 2-month, 10-man study at Dartmouth. McCarthy, Minsky, Shannon and Rochester expected to make a serious dent in machine intelligence over the summer of 1956.",
+        "The 1955 Dartmouth proposal that coined 'artificial intelligence' asked for a two-month, ten-man study. McCarthy, Minsky, Shannon, and Rochester genuinely expected to make a significant dent in the problem over the summer of 1956.",
+    ),
+]
+_OWN_WORDS = [
+    (  # 2026-11-18, 46%: adds the 1989 date and a co-inventor
+        "Clarence Ellis earned his doctorate in 1969. He went on to pioneer operational transformation: the techniques that let many people edit one document in real time.",
+        "Clarence Ellis earned his CS doctorate in 1969, the first Black person to do so. In 1989 he and Simon Gibbs devised operational transformation, the technique that lets many people edit one document at the same time.",
+    ),
+    (  # 2026-11-01, 41%: adds a point of view
+        "Two Stanford grad students, 1994, manually adding new sites to a hierarchy of folders. Originally called 'Jerry and David's Guide to the World Wide Web'. The directory survived until 2014.",
+        "Two Stanford grad students started Yahoo in 1994 by adding sites by hand to a hierarchy of folders. It was called 'Jerry and David's Guide to the World Wide Web'. No crawler, no ranking: two people deciding where each site belonged. The directory itself lasted until 2014.",
+    ),
+    (  # 2026-07-22, 37%
+        "Cambridge Computer Lab, 1991. Pointed at the Trojan Room coffee pot so researchers wouldn't trek to an empty one. Ran for 10 years. The pot is in a German museum.",
+        "In 1991, researchers at the Cambridge Computer Lab set up the first webcam. They pointed it at the Trojan Room coffee pot so they would not walk down the hall for an empty carafe. It ran for ten years. Today, the pot is in a German museum.",
+    ),
+]
+
+
+@pytest.mark.parametrize("detail,post", _REWORDED_COPIES)
+def test_copies_pioneer_note_catches_a_lightly_reworded_copy(detail, post):
+    assert agents._copies_pioneer_note([post], {"detail": detail}) is True
+
+
+@pytest.mark.parametrize("detail,post", _OWN_WORDS)
+def test_copies_pioneer_note_leaves_a_post_that_adds_something(detail, post):
+    assert agents._copies_pioneer_note([post], {"detail": detail}) is False
+
+
+def test_copies_pioneer_note_empty_post_is_not_a_copy():
+    detail = _REWORDED_COPIES[0][0]
+    assert agents._copies_pioneer_note([""], {"detail": detail}) is False
+    assert agents._copies_pioneer_note([], {"detail": detail}) is False

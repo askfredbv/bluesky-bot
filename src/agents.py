@@ -22,6 +22,7 @@ from src.config import (
     FALLBACK_VISUAL_PROMPT, VISUAL_PROMPT_CONSTRAINTS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
+    PIONEER_COPY_POST_SHARE, PIONEER_COPY_MIN_RUN,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
     PIONEER_PROMPT_DATED, PIONEER_PROMPT_UNDATED,
     BANNED_OPENERS,
@@ -651,11 +652,19 @@ def select_pioneer_topic(
 
 
 def _copies_pioneer_note(posts: List[str], entry: Optional[Dict[str, Any]]) -> bool:
-    """True when one unbroken run of the entry's detail makes up most of it and is in the post.
+    """True when the post is the entry's own text, whole or lightly reworded.
 
-    Measured against the detail, not the whole post, so a title or an extra
-    sentence around a verbatim copy does not hide it. Under 60 characters a
-    faithful post has to repeat the detail, so a short detail never counts.
+    Two tests, either one is enough:
+    1. One unbroken run of the detail makes up most of the detail (#319). Measured
+       against the detail, so a title or an extra sentence around a verbatim copy
+       does not hide it.
+    2. Runs of the detail, each at least PIONEER_COPY_MIN_RUN characters, make up
+       PIONEER_COPY_POST_SHARE of the post. This catches a copy with a word swapped
+       every few words, which test 1 misses because no single run is long. A post
+       that adds a fact or a point of view stays well under it.
+
+    Under 60 characters a faithful post has to repeat the detail, so a short
+    detail never counts.
     """
     detail = (entry or {}).get("detail")
     if not detail:
@@ -665,9 +674,13 @@ def _copies_pioneer_note(posts: List[str], entry: Optional[Dict[str, Any]]) -> b
     def norm(t: str) -> str:
         return " ".join(re.findall(r"\w+", t.lower()))
 
-    want = norm(str(detail))
-    run = difflib.SequenceMatcher(None, norm(text), want, autojunk=False).find_longest_match()
-    return run.size >= 60 and run.size >= 0.6 * len(want)
+    want, have = norm(str(detail)), norm(text)
+    matcher = difflib.SequenceMatcher(None, have, want, autojunk=False)
+    run = matcher.find_longest_match()
+    if run.size >= 60 and run.size >= 0.6 * len(want):
+        return True
+    shared = sum(b.size for b in matcher.get_matching_blocks() if b.size >= PIONEER_COPY_MIN_RUN)
+    return len(want) >= 60 and shared > 0 and shared >= PIONEER_COPY_POST_SHARE * len(have)
 
 
 def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
