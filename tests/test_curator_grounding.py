@@ -268,7 +268,12 @@ def test_copies_pioneer_note_catches_the_verbatim_vixie_post():
     assert agents._copies_pioneer_note([copy], None) is False
     assert agents._copies_pioneer_note([copy], {}) is False
     assert agents._copies_pioneer_note([copy], {"detail": "He started maintaining BIND in 1988."}) is False
-    own = "BIND is the Berkeley Internet Name Domain, the internet's DNS software. Paul Vixie started maintaining it in 1988, became primary author of BIND 8, and also founded MAPS, an anti-spam nonprofit."
+    # The post this test once let through is the note with one sentence added in front
+    # and a few words dropped. The share test (#337) counts it as a copy: 64% of its
+    # words sit in runs of four or more that the detail also has.
+    near_copy = "BIND is the Berkeley Internet Name Domain, the internet's DNS software. Paul Vixie started maintaining it in 1988, became primary author of BIND 8, and also founded MAPS, an anti-spam nonprofit."
+    assert agents._copies_pioneer_note([near_copy], entry) is True
+    own = "BIND is the reason a domain name finds a server. Paul Vixie ran it from 1988, wrote most of BIND 8, and later founded MAPS to fight spam."
     assert agents._copies_pioneer_note([own], entry) is False
 
 
@@ -312,6 +317,33 @@ def test_copies_pioneer_note_catches_a_lightly_reworded_copy(detail, post):
 @pytest.mark.parametrize("detail,post", _OWN_WORDS)
 def test_copies_pioneer_note_leaves_a_post_that_adds_something(detail, post):
     assert agents._copies_pioneer_note([post], {"detail": detail}) is False
+
+
+def test_copies_pioneer_note_catches_the_sentences_in_another_order():
+    detail, post = _REWORDED_COPIES[0]
+    sentences = post.split(". ")
+    reversed_post = ". ".join(reversed(sentences))
+    assert reversed_post != post
+    assert agents._copies_pioneer_note([reversed_post], {"detail": detail}) is True
+
+
+@pytest.mark.asyncio
+async def test_a_copy_cannot_hide_behind_text_the_voice_trim_removes(monkeypatch):
+    detail, copy = _REWORDED_COPIES[2]
+    bait = copy + " What do you think about how they approached this?"
+    assert agents._copies_pioneer_note([bait], {"detail": detail}) is False  # diluted to under the share
+    checked = []
+
+    async def _check(_key, posts, *_a, **_k):
+        checked.append(posts)
+        return (True, [])
+
+    monkeypatch.setattr(agents, "_sync_generate", lambda *_a, **_k: json.dumps([bait]))
+    monkeypatch.setattr(agents, "check_pioneer_grounding", _check)
+    pioneer = {"pool": "undated", "entry": {"id": "dartmouth-1956", "category": "project", "title": "Dartmouth", "detail": detail}}
+    content, _, _ = await agents.generate_content(
+        "k", [], mode="strategist", pioneer_entry=pioneer, model_priority=["gemini-3.7-flash"])
+    assert content == [] and checked == []  # trimmed first, then seen as a copy, never shipped
 
 
 def test_copies_pioneer_note_empty_post_is_not_a_copy():

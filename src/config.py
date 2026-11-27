@@ -806,11 +806,12 @@ PIONEER_DIMENSION_ENABLED: bool = True
 # afternoon falls back to the news when it runs out.
 PIONEER_FALLBACK_PROBABILITY: float = 0.5
 # Copy guard (agents._copies_pioneer_note). A post is the entry's own text when
-# runs of it, each at least PIONEER_COPY_MIN_RUN characters, make up this share
-# of the post. Calibrated 2026-11-27 on the 40 Pioneer posts matched to their
-# entries: copies sat at 64-97%, every post that added something at 46% or less.
-PIONEER_COPY_POST_SHARE: float = 0.55
-PIONEER_COPY_MIN_RUN: int = 20
+# words sitting in a run of PIONEER_COPY_MIN_WORDS or more words also found in the
+# entry, in any order, make up this share of the post. Calibrated 2026-11-27 on the
+# 40 Pioneer posts matched to their entries: copies sat at 61-95%, every post that
+# added something at 42% or less.
+PIONEER_COPY_POST_SHARE: float = 0.5
+PIONEER_COPY_MIN_WORDS: int = 4
 PIONEER_COOLDOWN_DAYS: int = 60             # now only for dated anniversaries (#320). 2026-06-04: 30 → 60. User noticed `computer-was-a-job` re-firing exactly 30 days after its previous use. Math: 37 undated entries × 0.35/day fire probability ≈ 21 firings per 60-day window — still leaves ~16 fresh entries available. The audience tolerates 30-day repeats fine; the user (who reads every post) does not.
 
 # Pioneer corpus (dated anniversaries + undated facts) lives in
