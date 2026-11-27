@@ -22,6 +22,7 @@ from src.config import (
     FALLBACK_VISUAL_PROMPT, VISUAL_PROMPT_CONSTRAINTS,
     BANNED_QUESTION_PATTERNS, BANNED_HYPE_WORDS, BANNED_TEASER_PATTERNS,
     PIONEER_DIMENSION_ENABLED, PIONEER_FALLBACK_PROBABILITY,
+    PIONEER_COPY_POST_SHARE, PIONEER_COPY_MIN_WORDS,
     PIONEER_EVENTS_DATED, PIONEER_FACTS_UNDATED,
     PIONEER_PROMPT_DATED, PIONEER_PROMPT_UNDATED,
     BANNED_OPENERS,
@@ -651,23 +652,42 @@ def select_pioneer_topic(
 
 
 def _copies_pioneer_note(posts: List[str], entry: Optional[Dict[str, Any]]) -> bool:
-    """True when one unbroken run of the entry's detail makes up most of it and is in the post.
+    """True when the post is the entry's own text, whole or lightly reworded.
 
-    Measured against the detail, not the whole post, so a title or an extra
-    sentence around a verbatim copy does not hide it. Under 60 characters a
-    faithful post has to repeat the detail, so a short detail never counts.
+    Two tests, either one is enough:
+    1. One unbroken run of the detail makes up most of the detail (#319). Measured
+       against the detail, so a title or an extra sentence around a verbatim copy
+       does not hide it.
+    2. Words of the post that sit in a run of PIONEER_COPY_MIN_WORDS or more words
+       also found in the detail make up PIONEER_COPY_POST_SHARE of the post. This
+       catches a copy with a word swapped every few words, which test 1 misses
+       because no single run is long. The runs are matched wherever they sit in the
+       detail, so putting the sentences in another order does not hide a copy. A
+       post that adds a fact or a point of view stays well under it.
+
+    Under 60 characters a faithful post has to repeat the detail, so a short
+    detail never counts.
     """
     detail = (entry or {}).get("detail")
     if not detail:
         return False
     text = re.sub(r"https?://\S+|www\.\S+", "", " ".join(posts))
 
-    def norm(t: str) -> str:
-        return " ".join(re.findall(r"\w+", t.lower()))
+    def words(t: str) -> List[str]:
+        return re.findall(r"\w+", t.lower())
 
-    want = norm(str(detail))
-    run = difflib.SequenceMatcher(None, norm(text), want, autojunk=False).find_longest_match()
-    return run.size >= 60 and run.size >= 0.6 * len(want)
+    want_words, have_words = words(str(detail)), words(text)
+    want, have = " ".join(want_words), " ".join(have_words)
+    run = difflib.SequenceMatcher(None, have, want, autojunk=False).find_longest_match()
+    if run.size >= 60 and run.size >= 0.6 * len(want):
+        return True
+    n = PIONEER_COPY_MIN_WORDS
+    grams = {tuple(want_words[i:i + n]) for i in range(len(want_words) - n + 1)}
+    copied = [False] * len(have_words)
+    for i in range(len(have_words) - n + 1):
+        if tuple(have_words[i:i + n]) in grams:
+            copied[i:i + n] = [True] * n
+    return len(want) >= 60 and sum(copied) >= PIONEER_COPY_POST_SHARE * len(have_words) > 0
 
 
 def _build_pioneer_task(pioneer: Dict[str, Any]) -> str:
@@ -2088,19 +2108,21 @@ async def generate_content(
                             raise ValueError(
                                 f"pioneer post missing required URL: {required_url}"
                             )
+                    # v4.14: defensive voice trim — strip reader-bait questions,
+                    # teasers and excess hashtags. No truncation since v4.15.3:
+                    # length is a hard invariant in _validate_thread_shape.
+                    # It runs before the copy guard: text the trim removes would
+                    # dilute the share and let a copy through.
+                    content_list = _apply_voice_trim(content_list)
                     # A post that is the entry's own text is a database row, not a
                     # post. The truth rule pushed the writer to copy it (2026-11-23).
                     if pioneer_entry and _copies_pioneer_note(
                         content_list, pioneer_entry.get("entry")
                     ):
                         raise ValueError(
-                            "the post repeats the note's own sentences: reorder, compress "
-                            "and put it in your own words, keeping only the note's facts"
+                            "the post repeats the note's own sentences: put it in your own "
+                            "words and keep only the note's facts"
                         )
-                    # v4.14: defensive voice trim — strip reader-bait questions,
-                    # teasers and excess hashtags. No truncation since v4.15.3:
-                    # length is a hard invariant in _validate_thread_shape.
-                    content_list = _apply_voice_trim(content_list)
 
                     # Resolve the chosen item so both metrics
                     # attribution (topic / source_domain downstream) and the
